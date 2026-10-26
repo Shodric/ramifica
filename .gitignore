@@ -26,3 +26,16 @@ yarn-error.log*
 
 # Environment files (local configs)
 /.env.*
+
+# Flutter/Dart
+.fvm/
+.DS_Store
+.dart_tool/
+.idea/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
