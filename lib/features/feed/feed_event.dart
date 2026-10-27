@@ -23,3 +23,25 @@ final class MuteToggled extends FeedEvent {
 final class VoiceFinished extends FeedEvent {
   const VoiceFinished();
 }
+
+/// A finger pressed a zone during the window.
+final class HoldStarted extends FeedEvent {
+  const HoldStarted(this.choiceId);
+
+  final String choiceId;
+}
+
+/// The finger came up, or the pointer was cancelled, before one second.
+final class HoldCancelled extends FeedEvent {
+  const HoldCancelled();
+}
+
+/// The portal covered the screen. `commitChoice` is the next slice.
+final class HoldCompleted extends FeedEvent {
+  const HoldCompleted();
+}
+
+/// `windowSeconds` ran out. Starts the default portal when nobody is holding.
+final class WindowElapsed extends FeedEvent {
+  const WindowElapsed();
+}

@@ -1,6 +1,6 @@
 import 'package:ramifica/data/models/playback.dart';
 
-/// `holding` and `committing` are entered by the hold, in the next slice.
+/// `committing` waits for `commitChoice`, in the next slice.
 enum FeedPhase {
   loading,
   playing,
@@ -21,6 +21,8 @@ class FeedState {
     this.failure,
     this.muted = true,
     this.autoMuted = true,
+    this.holdChoiceId,
+    this.holdSerial = 0,
   });
 
   final FeedPhase phase;
@@ -35,7 +37,20 @@ class FeedState {
   /// The browser muted the clip. The first manual toggle clears it.
   final bool autoMuted;
 
-  FeedState copy({FeedPhase? phase, bool? muted, bool? autoMuted}) {
+  /// The zone under the portal. Null while the window has no finger on it.
+  final String? holdChoiceId;
+
+  /// Bumps each time a hold starts, so the portal animation restarts.
+  final int holdSerial;
+
+  FeedState copy({
+    FeedPhase? phase,
+    bool? muted,
+    bool? autoMuted,
+    String? holdChoiceId,
+    int? holdSerial,
+    bool clearHold = false,
+  }) {
     return FeedState(
       phase: phase ?? this.phase,
       storyId: storyId,
@@ -44,6 +59,8 @@ class FeedState {
       failure: failure,
       muted: muted ?? this.muted,
       autoMuted: autoMuted ?? this.autoMuted,
+      holdChoiceId: clearHold ? null : holdChoiceId ?? this.holdChoiceId,
+      holdSerial: clearHold ? 0 : holdSerial ?? this.holdSerial,
     );
   }
 
@@ -56,10 +73,21 @@ class FeedState {
         other.playback == playback &&
         other.failure == failure &&
         other.muted == muted &&
-        other.autoMuted == autoMuted;
+        other.autoMuted == autoMuted &&
+        other.holdChoiceId == holdChoiceId &&
+        other.holdSerial == holdSerial;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(phase, storyId, runId, playback, failure, muted, autoMuted);
+  int get hashCode => Object.hash(
+    phase,
+    storyId,
+    runId,
+    playback,
+    failure,
+    muted,
+    autoMuted,
+    holdChoiceId,
+    holdSerial,
+  );
 }

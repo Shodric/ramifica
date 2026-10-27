@@ -6,6 +6,7 @@ import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/core/web_audio.dart';
 import 'package:ramifica/data/models/app_failure.dart';
+import 'package:ramifica/data/models/playback.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
@@ -24,14 +25,22 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<PauseReached>(_onPause);
     on<MuteToggled>(_onMute);
     on<VoiceFinished>(_onVoice);
+    on<HoldStarted>(_onHold);
+    on<HoldCancelled>(_onCancel);
+    on<HoldCompleted>(_onHeld);
+    on<WindowElapsed>(_onWindow);
   }
 
   final RunRepository repository;
   final Prefetcher prefetcher;
   final Narrator narrator;
   final CueClock _clock;
+  var _windowSpent = false;
+  var _holdSealed = false;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
+    _windowSpent = false;
+    _holdSealed = false;
     _silence();
     final raw = event.storyId?.trim();
     final storyId = raw == null || raw.isEmpty ? null : raw;
@@ -74,8 +83,94 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   void _onVoice(VoiceFinished event, Emitter<FeedState> emit) {
     if (state.phase != .speaking) return;
     _clock.cancel();
-    emit(state.copy(phase: .window));
     narrator.stop();
+    _windowSpent = false;
+    _holdSealed = false;
+    emit(state.copy(phase: .window, clearHold: true));
+    _armWindow();
+  }
+
+  void _onHold(HoldStarted event, Emitter<FeedState> emit) {
+    if (state.phase != .window) return;
+    final choice = _choice(event.choiceId);
+    if (choice == null) return;
+    _startHold(choice, emit);
+  }
+
+  void _onCancel(HoldCancelled event, Emitter<FeedState> emit) {
+    if (state.phase != .holding || _holdSealed) return;
+    if (_windowSpent) {
+      final fallback = _defaultChoice;
+      if (fallback != null) {
+        _startHold(fallback, emit);
+        return;
+      }
+    }
+    _holdSealed = false;
+    emit(state.copy(phase: .window, clearHold: true));
+  }
+
+  void _onHeld(HoldCompleted event, Emitter<FeedState> emit) {
+    if (state.phase != .holding) return;
+    _holdSealed = true;
+  }
+
+  void _onWindow(WindowElapsed event, Emitter<FeedState> emit) {
+    if (state.phase == .holding) {
+      _windowSpent = true;
+      return;
+    }
+    if (state.phase != .window) return;
+    _windowSpent = true;
+    final fallback = _defaultChoice;
+    if (fallback == null) return;
+    _startHold(fallback, emit);
+  }
+
+  void _armWindow() {
+    final playback = state.playback;
+    if (playback == null || playback.node.isEnding) return;
+    if (playback.choices.isEmpty || playback.node.windowSeconds <= 0) return;
+    _clock.schedule(
+      Duration(milliseconds: playback.node.windowSeconds * 1000),
+      _finishWindow,
+    );
+  }
+
+  void _finishWindow() {
+    if (isClosed) return;
+    add(const WindowElapsed());
+  }
+
+  void _startHold(PlaybackChoice choice, Emitter<FeedState> emit) {
+    _holdSealed = false;
+    final url = choice.target?.videoUrl.trim();
+    if (url != null && url.isNotEmpty) prefetcher.promote(url);
+    emit(
+      state.copy(
+        phase: .holding,
+        holdChoiceId: choice.choiceId,
+        holdSerial: state.holdSerial + 1,
+      ),
+    );
+  }
+
+  PlaybackChoice? _choice(String id) {
+    final choices = state.playback?.choices;
+    if (choices == null) return null;
+    for (final choice in choices) {
+      if (choice.choiceId == id) return choice;
+    }
+    return null;
+  }
+
+  PlaybackChoice? get _defaultChoice {
+    final choices = state.playback?.choices;
+    if (choices == null) return null;
+    for (final choice in choices) {
+      if (choice.isDefault) return choice;
+    }
+    return null;
   }
 
   void _startCue() {
