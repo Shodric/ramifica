@@ -215,9 +215,9 @@ Issue titles that still say Acceso, Explorar, Grafo, Crear, or Perfil mean the E
 
 Other blocs are created with `BlocProvider` on their tab.
 
-`ShellView` is an `IndexedStack` of the five tabs. Leaving Feed pauses the video and the voice. Coming back stays on the same phase.
+`ShellView` is one `IndexedStack` of the five tabs. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase. The player itself arrives with `FeedBloc`.
 
-Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar stays visible over the video.
+Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar is a `NavigationBar` drawn over the body.
 
 ## Routes
 
@@ -264,7 +264,7 @@ There is no guest route.
 
 `main` calls `configureFirebaseAuth` before it creates the repository. That sets `Persistence.LOCAL`, which is `browserLocalPersistence`, so the session survives closing the tab. `authDomain` is `meta-ramifica.web.app`. Hosting on that domain serves `/__/auth/`, and the password-reset email link is `https://meta-ramifica.web.app/__/auth/action`. The redirect return is read with `getRedirectResult` when the bloc starts.
 
-`AccessView` is the column on `surface` at `/access`. It has no tab bar. The order is the title "Sign in", Continue with Google, email, password, Forgot my password, Sign in, and Create account. `FailureText` shows `failure`. The reset `notice` is secondary text. While `signingIn`, the actions are disabled. When the phase becomes `signedIn`, the view opens `/` or `/story/{id}` from `pendingStoryId`. `ShellBloc` still consumes that id later.
+`AccessView` is the column on `surface` at `/access`. It has no tab bar. The order is the title "Sign in", Continue with Google, email, password, Forgot my password, Sign in, and Create account. `FailureText` shows `failure`. The reset `notice` is secondary text. While `signingIn`, the actions are disabled. When the phase becomes `signedIn`, the view opens `/` or `/story/{id}` from `pendingStoryId`. `ShellView` then sends `StoryOpenRequested` and `PendingStoryConsumed`.
 
 `/` and `/story/{id}` show that same column until the phase is `signedIn`. With no `AuthBloc`, they still show it, because there is no session. A story link sends `PendingStorySaved` before the form is used. `/explore`, `/graph/{id}`, `/profile`, and `/create` stay open.
 

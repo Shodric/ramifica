@@ -37,6 +37,9 @@ void main() {
     expect(parseLocation('/access'), isA<AccessLocation>());
     expect(parseLocation('/create'), isA<CreateLocation>());
     expect(parseLocation('/profile'), isA<ProfileLocation>());
+    expect(pathOf(parseLocation('/story/a%20b')), '/story/a%20b');
+    expect(pathOf(parseLocation('/graph/story_1')), '/graph/story_1');
+    expect(pathOf(const ExploreLocation()), '/explore');
   });
 
   test('rejects paths that are missing an id', () {

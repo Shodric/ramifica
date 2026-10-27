@@ -44,7 +44,24 @@ AppLocation parseLocation(String? name) {
     return GraphLocation(graphId);
   }
 
-  return const UnknownLocation();
+  return UnknownLocation(path);
+}
+
+String pathOf(AppLocation location) {
+  return switch (location) {
+    FeedLocation(:final storyId) =>
+      storyId == null || storyId.isEmpty
+          ? AppRoutes.feed
+          : AppRoutes.storyPath(Uri.encodeComponent(storyId)),
+    ExploreLocation() => AppRoutes.explore,
+    GraphLocation(:final storyId) => AppRoutes.graphPath(
+      Uri.encodeComponent(storyId),
+    ),
+    ProfileLocation() => AppRoutes.profile,
+    AccessLocation() => AppRoutes.access,
+    CreateLocation() => AppRoutes.create,
+    UnknownLocation(:final path) => path.isEmpty ? '/' : path,
+  };
 }
 
 String? _oneSegment(String path, String prefix) {
@@ -113,5 +130,7 @@ final class ProfileLocation extends AppLocation {
 }
 
 final class UnknownLocation extends AppLocation {
-  const UnknownLocation();
+  const UnknownLocation([this.path = '']);
+
+  final String path;
 }

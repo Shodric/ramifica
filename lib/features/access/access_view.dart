@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
@@ -83,7 +84,7 @@ class _AccessViewState extends State<AccessView> {
     final route = pending == null || pending.isEmpty
         ? AppRoutes.feed
         : AppRoutes.storyPath(Uri.encodeComponent(pending));
-    Navigator.of(context).pushReplacementNamed(route);
+    AppNavigation.read(context).go(route);
   }
 }
 

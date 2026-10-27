@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
+import 'package:ramifica/features/create/create_view.dart';
+import 'package:ramifica/features/explore/explore_view.dart';
+import 'package:ramifica/features/graph/graph_view.dart';
+import 'package:ramifica/features/profile/profile_view.dart';
 
 void main() {
   testWidgets('opens Sign in at / when there is no session', (tester) async {
@@ -43,25 +47,36 @@ void main() {
       const RamificaApp(initialRoute: '/graph/story_temple'),
     );
 
-    expect(find.text('Map'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.text('Map'), findsNWidgets(2));
+    expect(
+      tester.widget<GraphView>(find.byType(GraphView)).storyId,
+      'story_temple',
+    );
   });
 
   testWidgets('opens Explore at /explore', (tester) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/explore'));
 
-    expect(find.text('Explore'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(ExploreView), findsOneWidget);
+    expect(find.text('Explore'), findsNWidgets(2));
   });
 
   testWidgets('opens Create at /create', (tester) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/create'));
 
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(CreateView), findsOneWidget);
     expect(find.text('Create'), findsOneWidget);
   });
 
   testWidgets('opens Profile at /profile', (tester) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/profile'));
 
-    expect(find.text('Profile'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(ProfileView), findsOneWidget);
+    expect(find.text('Profile'), findsNWidgets(2));
   });
 
   testWidgets('unknown path says the page does not exist', (tester) async {
