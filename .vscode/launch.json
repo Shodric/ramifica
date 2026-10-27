@@ -6,7 +6,11 @@
       "request": "launch",
       "type": "dart",
       "program": "lib/main.dart",
-      "deviceId": "chrome"
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--web-hostname=localhost",
+        "--web-port=5000"
+      ]
     }
   ]
 }

@@ -7,8 +7,10 @@ import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/pending_story_store.dart';
+import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/access/access_bloc.dart';
 import 'package:ramifica/features/access/access_event.dart';
+import 'package:ramifica/features/feed/feed_bloc.dart';
 
 class RamificaApp extends StatefulWidget {
   const RamificaApp({
@@ -16,11 +18,13 @@ class RamificaApp extends StatefulWidget {
     this.initialRoute = AppRoutes.feed,
     this.authRepository,
     this.pendingStoryStore,
+    this.runRepository,
   });
 
   final String initialRoute;
   final AuthRepository? authRepository;
   final PendingStoryStore? pendingStoryStore;
+  final RunRepository? runRepository;
 
   @override
   State<RamificaApp> createState() => _RamificaAppState();
@@ -69,11 +73,18 @@ class _RamificaAppState extends State<RamificaApp> {
         routeInformationProvider: _provider,
       ),
     );
-    final shell = BlocProvider(
+    Widget shell = BlocProvider(
       create: (_) =>
           ShellBloc(initial: shellStateFor(parseLocation(_startPath))),
       child: app,
     );
+    final runs = widget.runRepository;
+    if (runs != null) {
+      shell = BlocProvider(
+        create: (_) => FeedBloc(repository: runs),
+        child: shell,
+      );
+    }
     final repository = widget.authRepository;
     if (repository == null) return shell;
     return BlocProvider(

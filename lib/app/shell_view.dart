@@ -11,6 +11,8 @@ import 'package:ramifica/features/access/access_event.dart';
 import 'package:ramifica/features/access/access_view.dart';
 import 'package:ramifica/features/create/create_view.dart';
 import 'package:ramifica/features/explore/explore_view.dart';
+import 'package:ramifica/features/feed/feed_bloc.dart';
+import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_view.dart';
 import 'package:ramifica/features/graph/graph_view.dart';
 import 'package:ramifica/features/profile/profile_view.dart';
@@ -48,14 +50,17 @@ class _ShellViewState extends State<ShellView> {
       case FeedLocation(:final storyId):
         final pending = _pendingStory();
         final openId = storyId == null || storyId.isEmpty ? pending : storyId;
+        var deferPlayback = false;
         if (openId != null && openId.isNotEmpty) {
           shell.add(StoryOpenRequested(openId));
           if (pathOf(location) == AppRoutes.feed && openId == pending) {
             _redirect = AppRoutes.storyPath(Uri.encodeComponent(openId));
+            deferPlayback = true;
           }
         } else {
           shell.add(const TabSelected(.feed));
         }
+        if (!deferPlayback) _openPlayback(openId);
         _consumePending();
       case ExploreLocation():
         shell.add(const TabSelected(.explore));
@@ -76,6 +81,18 @@ class _ShellViewState extends State<ShellView> {
     final pending = auth.state.pendingStoryId;
     if (pending == null || pending.isEmpty) return null;
     return pending;
+  }
+
+  void _openPlayback(String? storyId) {
+    final feed = _feedOf(context);
+    if (feed == null) return;
+    final trimmed = storyId?.trim();
+    final id = trimmed == null || trimmed.isEmpty ? null : trimmed;
+    final current = feed.state;
+    final sameStory = id == null || id == current.storyId;
+    final settled = current.phase == .playing || current.phase == .ending;
+    if (current.playback != null && sameStory && settled) return;
+    feed.add(StoryOpened(storyId: id));
   }
 
   void _consumePending() {
@@ -133,7 +150,9 @@ class _ShellViewState extends State<ShellView> {
           bottomNavigationBar: NavigationBarTheme(
             data: NavigationBarThemeData(
               backgroundColor: RamificaColors.glass,
-              indicatorColor: RamificaColors.hotspot.withValues(alpha: 0.2),
+              indicatorColor: state.tab == .create
+                  ? const Color(0x00000000)
+                  : RamificaColors.hotspot.withValues(alpha: 0.2),
               elevation: 0,
               labelTextStyle: WidgetStateProperty.resolveWith((states) {
                 final selected = states.contains(WidgetState.selected);
@@ -173,55 +192,64 @@ class _ShellViewState extends State<ShellView> {
 NavigationDestination _destination(ShellTab tab) {
   return switch (tab) {
     .feed => const NavigationDestination(
-      icon: Icon(Icons.home_outlined),
-      selectedIcon: Icon(Icons.home),
+      icon: Icon(Icons.play_circle_outlined),
+      selectedIcon: Icon(Icons.play_circle_outlined),
       label: 'Feed',
     ),
     .explore => const NavigationDestination(
-      icon: Icon(Icons.grid_view_outlined),
-      selectedIcon: Icon(Icons.grid_view),
+      icon: Icon(Icons.explore_outlined),
+      selectedIcon: Icon(Icons.explore_outlined),
       label: 'Explore',
     ),
     .create => const NavigationDestination(
-      icon: _CreateIcon(selected: false),
-      selectedIcon: _CreateIcon(selected: true),
+      icon: _CreateIcon(),
+      selectedIcon: _CreateIcon(),
       label: '',
     ),
     .graph => const NavigationDestination(
-      icon: Icon(Icons.account_tree_outlined),
-      selectedIcon: Icon(Icons.account_tree),
+      icon: Icon(Icons.hub_outlined),
+      selectedIcon: Icon(Icons.hub_outlined),
       label: 'Map',
     ),
     .profile => const NavigationDestination(
       icon: Icon(Icons.person_outline),
-      selectedIcon: Icon(Icons.person),
+      selectedIcon: Icon(Icons.person_outline),
       label: 'Profile',
     ),
   };
 }
 
+/// Stitch nav control `data-path="crear"`: 48 px circle, gradient to the
+/// top right from primary-container to node-active, 28 px add glyph in
+/// on-secondary, and a 16 px cyan glow. The extra padding keeps that glow
+/// inside the destination. The taller bottom inset is the design's 4 px lift.
 class _CreateIcon extends StatelessWidget {
-  const _CreateIcon({required this.selected});
-
-  final bool selected;
+  const _CreateIcon();
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       label: 'Create',
       button: true,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: selected ? RamificaColors.hotspot : RamificaColors.glass,
-          shape: .circle,
-        ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 14),
         child: SizedBox.square(
-          dimension: 36,
-          child: Icon(
-            Icons.add,
-            color: selected
-                ? const Color(0xFF00373A)
-                : RamificaColors.textPrimary,
+          dimension: 48,
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.bottomLeft,
+                end: Alignment.topRight,
+                colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+              ),
+              boxShadow: [BoxShadow(color: Color(0x8000F2FE), blurRadius: 16)],
+            ),
+            child: Icon(
+              Icons.add,
+              size: 28,
+              color: Theme.of(context).colorScheme.onSecondary,
+            ),
           ),
         ),
       ),
@@ -297,6 +325,14 @@ class _UnknownPage extends StatelessWidget {
     return const Scaffold(
       body: Center(child: Text('This page does not exist.')),
     );
+  }
+}
+
+FeedBloc? _feedOf(BuildContext context) {
+  try {
+    return BlocProvider.of<FeedBloc>(context);
+  } on FlutterError {
+    return null;
   }
 }
 

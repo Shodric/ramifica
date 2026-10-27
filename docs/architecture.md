@@ -215,7 +215,9 @@ Issue titles that still say Acceso, Explorar, Grafo, Crear, or Perfil mean the E
 
 Other blocs are created with `BlocProvider` on their tab.
 
-`ShellView` is one `IndexedStack` of the five tabs. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase. The player itself arrives with `FeedBloc`.
+`ShellView` is one `IndexedStack` of the five tabs. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase.
+
+On a signed-in feed route, the shell sends `StoryOpened` once. `FeedBloc` lives above the shell. It calls `startRun`, then `loadPlayback` for that run. `startRun` returns `runId`, `storyId`, and `status` (`active` or `ended`). The client does not send `restart` from this event. An `active` playback enters `playing`. An `ended` playback enters `ending`. An `AppFailure` enters `failed` with that phrase. `StoryOpened` is restartable. While the same story is already `playing` or `ending`, opening that feed route again does not send another `StoryOpened`. This slice's repository methods are `startRun` and `loadPlayback`. The video, chip, and mute button come later.
 
 Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar is a `NavigationBar` drawn over the body.
 
