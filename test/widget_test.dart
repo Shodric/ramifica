@@ -1,30 +1,74 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:ramifica/main.dart';
+import 'package:ramifica/app/app.dart';
+import 'package:ramifica/core/widgets/failure_text.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('opens Feed at /', (tester) async {
+    await tester.pumpWidget(const RamificaApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Feed'), findsOneWidget);
+    expect(find.text('Sign in'), findsNothing);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('opens Sign in at /access', (tester) async {
+    await tester.pumpWidget(const RamificaApp(initialRoute: '/access'));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
+  });
+
+  testWidgets('opens Feed at /story/{id}', (tester) async {
+    await tester.pumpWidget(
+      const RamificaApp(initialRoute: '/story/story_temple'),
+    );
+
+    expect(find.text('Feed'), findsOneWidget);
+  });
+
+  testWidgets('opens Map at /graph/{id}', (tester) async {
+    await tester.pumpWidget(
+      const RamificaApp(initialRoute: '/graph/story_temple'),
+    );
+
+    expect(find.text('Map'), findsOneWidget);
+  });
+
+  testWidgets('opens Explore at /explore', (tester) async {
+    await tester.pumpWidget(const RamificaApp(initialRoute: '/explore'));
+
+    expect(find.text('Explore'), findsOneWidget);
+  });
+
+  testWidgets('opens Create at /create', (tester) async {
+    await tester.pumpWidget(const RamificaApp(initialRoute: '/create'));
+
+    expect(find.text('Create'), findsOneWidget);
+  });
+
+  testWidgets('opens Profile at /profile', (tester) async {
+    await tester.pumpWidget(const RamificaApp(initialRoute: '/profile'));
+
+    expect(find.text('Profile'), findsOneWidget);
+  });
+
+  testWidgets('unknown path says the page does not exist', (tester) async {
+    await tester.pumpWidget(const RamificaApp(initialRoute: '/nope'));
+
+    expect(find.text('This page does not exist.'), findsOneWidget);
+  });
+
+  testWidgets('FailureText retry sends the tap', (tester) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FailureText(message: 'Offline', onRetry: () => taps++),
+        ),
+      ),
+    );
+
+    expect(find.text('Offline'), findsOneWidget);
+    await tester.tap(find.text('Retry'));
+    expect(taps, 1);
   });
 }
