@@ -6,6 +6,15 @@ class AppFailure implements Exception {
   final AppFailureCode code;
   final Object? cause;
 
+  String get phrase {
+    return switch (code) {
+      .offline => 'No connection',
+      .denied => 'Not allowed',
+      .invalid => 'That action is not valid',
+      .failed => 'Something failed',
+    };
+  }
+
   @override
   String toString() => 'AppFailure(${code.name})';
 }

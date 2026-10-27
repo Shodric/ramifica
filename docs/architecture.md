@@ -6,6 +6,27 @@ This file is the client spec. Code, docs, and UI copy are English. Screen folder
 
 Firebase region is `us-central1`. The client does not use `dart:io`. Browser-only behavior (Hosting, service worker, CORS, App Check) is specified here only where it constrains the client.
 
+## Style
+
+When the context type is already known, use a dot shorthand. Do not repeat the type.
+
+```dart
+switch (status) {
+  .idle => RamificaColors.textSecondary,
+  .running => RamificaColors.nodeActive,
+  .ready => RamificaColors.hotspot,
+  .failed => RamificaColors.error,
+}
+
+borderRadius: .circular(999)
+border: .all(color: RamificaColors.glassBorder)
+padding: const .symmetric(horizontal: 10, vertical: 4)
+this.padding = const .all(16)
+this.borderRadius = const .all(.circular(16))
+```
+
+A value with no context type keeps its type name. `expect` matchers are untyped, so `AppFailureCode.offline` stays written out there. An unnamed constructor such as `Color(0xFF00F2FE)` or `Offset(0, 2)` keeps its type name too.
+
 ## Build
 
 Ship with `flutter build web`. That compile is dart2js and the CanvasKit renderer. `flutter build web --wasm` uses Skwasm where the browser supports it and falls back to CanvasKit. Skwasm wants cross-origin isolation. Do not send `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy`. `require-corp` would block video and images from Storage.
@@ -197,7 +218,7 @@ There is no guest route.
 
 ## Theme
 
-Tokens live in `app/theme.dart`.
+Tokens live in `app/theme.dart`. The visual spec is [design.md](design.md).
 
 | Token | Value | Use |
 |---|---|---|

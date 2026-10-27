@@ -5,8 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('hosting serves the app without cross-origin isolation', () {
-    final config =
-        jsonDecode(File('firebase.json').readAsStringSync()) as Map;
+    final config = jsonDecode(File('firebase.json').readAsStringSync()) as Map;
     final hosting = config['hosting'] as Map;
     expect(hosting['public'], 'build/web');
     expect(hosting['cleanUrls'], isTrue);
@@ -36,8 +35,7 @@ void main() {
   });
 
   test('emulators and the default project are fixed', () {
-    final config =
-        jsonDecode(File('firebase.json').readAsStringSync()) as Map;
+    final config = jsonDecode(File('firebase.json').readAsStringSync()) as Map;
     final emulators = config['emulators'] as Map;
     expect(emulators['auth'], {'port': 9099});
     expect(emulators['functions'], {'port': 5001});

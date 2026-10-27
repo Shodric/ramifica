@@ -10,9 +10,13 @@ class FailureText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
-        Text(message, style: const TextStyle(color: RamificaColors.error)),
+        Text(
+          message,
+          style: RamificaText.body.copyWith(color: RamificaColors.error),
+          textAlign: .center,
+        ),
         if (onRetry != null)
           TextButton(onPressed: onRetry, child: const Text('Retry')),
       ],

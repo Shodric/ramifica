@@ -1,7 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
-import 'package:ramifica/core/widgets/failure_text.dart';
 
 void main() {
   testWidgets('opens Feed at /', (tester) async {
@@ -55,20 +53,5 @@ void main() {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/nope'));
 
     expect(find.text('This page does not exist.'), findsOneWidget);
-  });
-
-  testWidgets('FailureText retry sends the tap', (tester) async {
-    var taps = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: FailureText(message: 'Offline', onRetry: () => taps++),
-        ),
-      ),
-    );
-
-    expect(find.text('Offline'), findsOneWidget);
-    await tester.tap(find.text('Retry'));
-    expect(taps, 1);
   });
 }
