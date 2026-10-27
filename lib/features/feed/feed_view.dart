@@ -130,7 +130,9 @@ class _FeedViewState extends State<FeedView> {
                     if (showClip)
                       Positioned.fill(
                         child: HoldPortal(
-                          open: state.phase == .holding,
+                          open:
+                              state.phase == .holding ||
+                              state.phase == .committing,
                           serial: state.holdSerial,
                           center: hasHold
                               ? video.point(holdX, holdY)

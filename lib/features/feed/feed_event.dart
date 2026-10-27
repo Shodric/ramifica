@@ -36,7 +36,7 @@ final class HoldCancelled extends FeedEvent {
   const HoldCancelled();
 }
 
-/// The portal covered the screen. `commitChoice` is the next slice.
+/// The portal covered the screen. Commits the held choice.
 final class HoldCompleted extends FeedEvent {
   const HoldCompleted();
 }

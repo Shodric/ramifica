@@ -24,4 +24,28 @@ class RunRepository {
     final payload = await functions.call('loadPlayback', {'runId': id});
     return Playback.fromJson(payload);
   }
+
+  /// Commits one hold. The server answers the same result when the same
+  /// [requestId] is sent again.
+  Future<CommitResult> commitChoice({
+    required String runId,
+    required String fromNodeId,
+    required String choiceId,
+    required String requestId,
+  }) async {
+    final run = runId.trim();
+    final from = fromNodeId.trim();
+    final choice = choiceId.trim();
+    final request = requestId.trim();
+    if (run.isEmpty || from.isEmpty || choice.isEmpty || request.isEmpty) {
+      throw const AppFailure(.invalid);
+    }
+    final payload = await functions.call('commitChoice', {
+      'runId': run,
+      'fromNodeId': from,
+      'choiceId': choice,
+      'requestId': request,
+    });
+    return CommitResult.fromJson(payload);
+  }
 }

@@ -1,6 +1,6 @@
 import 'package:ramifica/data/models/playback.dart';
 
-/// `committing` waits for `commitChoice`, in the next slice.
+/// `committing` waits for `commitChoice` to answer the destination clip.
 enum FeedPhase {
   loading,
   playing,
@@ -23,6 +23,7 @@ class FeedState {
     this.autoMuted = true,
     this.holdChoiceId,
     this.holdSerial = 0,
+    this.pendingRequestId,
   });
 
   final FeedPhase phase;
@@ -43,6 +44,10 @@ class FeedState {
   /// Bumps each time a hold starts, so the portal animation restarts.
   final int holdSerial;
 
+  /// The `requestId` of the hold in flight. A retry sends this same id,
+  /// so the server answers the stored result instead of advancing twice.
+  final String? pendingRequestId;
+
   FeedState copy({
     FeedPhase? phase,
     bool? muted,
@@ -50,6 +55,7 @@ class FeedState {
     String? holdChoiceId,
     int? holdSerial,
     bool clearHold = false,
+    String? pendingRequestId,
   }) {
     return FeedState(
       phase: phase ?? this.phase,
@@ -61,6 +67,7 @@ class FeedState {
       autoMuted: autoMuted ?? this.autoMuted,
       holdChoiceId: clearHold ? null : holdChoiceId ?? this.holdChoiceId,
       holdSerial: clearHold ? 0 : holdSerial ?? this.holdSerial,
+      pendingRequestId: pendingRequestId ?? this.pendingRequestId,
     );
   }
 
@@ -75,7 +82,8 @@ class FeedState {
         other.muted == muted &&
         other.autoMuted == autoMuted &&
         other.holdChoiceId == holdChoiceId &&
-        other.holdSerial == holdSerial;
+        other.holdSerial == holdSerial &&
+        other.pendingRequestId == pendingRequestId;
   }
 
   @override
@@ -89,5 +97,6 @@ class FeedState {
     autoMuted,
     holdChoiceId,
     holdSerial,
+    pendingRequestId,
   );
 }

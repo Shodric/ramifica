@@ -34,6 +34,29 @@ class RunStart {
   int get hashCode => Object.hash(runId, storyId, status);
 }
 
+/// The `commitChoice` payload: the destination playback.
+///
+/// A later slice adds the ending, the saga unlock, and the reward code.
+class CommitResult {
+  const CommitResult({required this.playback});
+
+  factory CommitResult.fromJson(Map<String, dynamic> json) {
+    return CommitResult(
+      playback: Playback.fromJson(_objectMap(json['playback'])),
+    );
+  }
+
+  final Playback playback;
+
+  @override
+  bool operator ==(Object other) {
+    return other is CommitResult && other.playback == playback;
+  }
+
+  @override
+  int get hashCode => playback.hashCode;
+}
+
 /// The `loadPlayback` payload: story, current node, and choices.
 class Playback {
   const Playback({

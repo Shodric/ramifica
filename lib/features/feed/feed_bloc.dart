@@ -10,6 +10,7 @@ import 'package:ramifica/data/models/playback.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
+import 'package:uuid/uuid.dart';
 
 class FeedBloc extends Bloc<FeedEvent, FeedState> {
   FeedBloc({
@@ -17,9 +18,11 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     Prefetcher? prefetcher,
     Narrator? narrator,
     CueClock? clock,
+    String Function()? newRequestId,
   }) : prefetcher = prefetcher ?? Prefetcher(),
        narrator = narrator ?? openNarrator(),
        _clock = clock ?? TimerCueClock(),
+       _newRequestId = newRequestId ?? _uuidRequestId,
        super(const FeedState()) {
     on<StoryOpened>(_onOpened, transformer: restartable());
     on<PauseReached>(_onPause);
@@ -27,7 +30,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<VoiceFinished>(_onVoice);
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
-    on<HoldCompleted>(_onHeld);
+    on<HoldCompleted>(_onHeld, transformer: droppable());
     on<WindowElapsed>(_onWindow);
   }
 
@@ -35,6 +38,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   final Prefetcher prefetcher;
   final Narrator narrator;
   final CueClock _clock;
+  final String Function() _newRequestId;
   var _windowSpent = false;
   var _holdSealed = false;
 
@@ -110,9 +114,105 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     emit(state.copy(phase: .window, clearHold: true));
   }
 
-  void _onHeld(HoldCompleted event, Emitter<FeedState> emit) {
+  Future<void> _onHeld(HoldCompleted event, Emitter<FeedState> emit) async {
+    final playback = state.playback;
+    final runId = state.runId;
+    final holdChoiceId = state.holdChoiceId;
     if (state.phase != .holding) return;
+    if (playback == null || runId == null || holdChoiceId == null) return;
     _holdSealed = true;
+    final requestId = _newRequestId();
+    emit(state.copy(phase: .committing, pendingRequestId: requestId));
+    try {
+      final result = await _commit(
+        runId: runId,
+        fromNodeId: playback.node.nodeId,
+        choiceId: holdChoiceId,
+        requestId: requestId,
+      );
+      if (emit.isDone) return;
+      _arrive(result.playback, emit);
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      if (error.code == .invalid) {
+        await _recover(runId, emit);
+        return;
+      }
+      emit(
+        FeedState(
+          phase: .failed,
+          storyId: state.storyId,
+          runId: runId,
+          failure: error.phrase,
+        ),
+      );
+    }
+  }
+
+  /// Sends the hold once. A lost network sends it again with the same
+  /// `requestId`, and the server answers the stored result.
+  Future<CommitResult> _commit({
+    required String runId,
+    required String fromNodeId,
+    required String choiceId,
+    required String requestId,
+  }) async {
+    try {
+      return await repository.commitChoice(
+        runId: runId,
+        fromNodeId: fromNodeId,
+        choiceId: choiceId,
+        requestId: requestId,
+      );
+    } on AppFailure catch (error) {
+      if (error.code != .offline) rethrow;
+      return repository.commitChoice(
+        runId: runId,
+        fromNodeId: fromNodeId,
+        choiceId: choiceId,
+        requestId: requestId,
+      );
+    }
+  }
+
+  /// The server rejected the hold. Asks where the run really is and
+  /// continues from that node.
+  Future<void> _recover(String runId, Emitter<FeedState> emit) async {
+    try {
+      final playback = await repository.loadPlayback(runId);
+      if (emit.isDone) return;
+      _arrive(playback, emit);
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(
+        FeedState(
+          phase: .failed,
+          storyId: state.storyId,
+          runId: runId,
+          failure: error.phrase,
+        ),
+      );
+    }
+  }
+
+  void _arrive(Playback next, Emitter<FeedState> emit) {
+    _windowSpent = false;
+    _holdSealed = false;
+    prefetcher.warm(next);
+    final voice = next.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(narrator.prepare(voice));
+    }
+    emit(
+      FeedState(
+        phase: next.status == .ended ? .ending : .playing,
+        storyId: next.story.storyId,
+        runId: next.runId,
+        playback: next,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
   }
 
   void _onWindow(WindowElapsed event, Emitter<FeedState> emit) {
@@ -237,3 +337,5 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     return super.close();
   }
 }
+
+String _uuidRequestId() => const Uuid().v4();
