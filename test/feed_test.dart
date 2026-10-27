@@ -14,6 +14,8 @@ import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:ramifica/features/feed/feed_view.dart';
+import 'package:ramifica/features/feed/node_video.dart';
+import 'package:ramifica/features/feed/story_chip.dart';
 
 void main() {
   test('an active run loads then plays', () async {
@@ -145,6 +147,47 @@ void main() {
     expect(calls.where((call) => call.data?['runId'] == 'run_old'), isEmpty);
   });
 
+  test('PauseReached moves a playing clip to speaking', () async {
+    final bloc = FeedBloc(repository: _runs([], _active));
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.speaking);
+
+    expect(bloc.state.playback, isNotNull);
+    expect(bloc.state.muted, isTrue);
+    bloc.add(const PauseReached());
+    await Future<void>.delayed(Duration.zero);
+    expect(bloc.state.phase, FeedPhase.speaking);
+  });
+
+  test('PauseReached does nothing before the clip is playing', () async {
+    final bloc = FeedBloc(repository: _runs([], _active));
+    addTearDown(bloc.close);
+
+    bloc.add(const PauseReached());
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.phase, FeedPhase.loading);
+  });
+
+  test('MuteToggled flips sound and clears the browser mute', () async {
+    final bloc = FeedBloc(repository: _runs([], _active));
+    addTearDown(bloc.close);
+
+    bloc.add(const MuteToggled());
+    await bloc.stream.first;
+    expect(bloc.state.muted, isFalse);
+    expect(bloc.state.autoMuted, isFalse);
+
+    bloc.add(const MuteToggled());
+    await bloc.stream.first;
+    expect(bloc.state.muted, isTrue);
+    expect(bloc.state.autoMuted, isFalse);
+  });
+
   test('a secret choice cannot carry a target', () {
     final json = _playback();
     final choices = json['choices']! as List<Object?>;
@@ -225,6 +268,198 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(2));
+  });
+
+  testWidgets('playing shows the chip and the sound control', (tester) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    final bloc = await _pumpFeed(tester, player: player, respond: _active);
+
+    expect(find.text('The temple secret'), findsOneWidget);
+    expect(find.text('by Alex Vance'), findsOneWidget);
+    expect(find.text('Sound'), findsOneWidget);
+    expect(find.byTooltip('Turn sound on'), findsOneWidget);
+    expect(player.opens.single.play, isTrue);
+    expect(player.opens.single.muted, isTrue);
+    expect(_chipGate(tester).ignoring, isFalse);
+
+    await tester.tap(find.byTooltip('Turn sound on'));
+    await tester.pump();
+    expect(bloc.state.muted, isFalse);
+    expect(bloc.state.autoMuted, isFalse);
+    expect(find.text('Sound'), findsNothing);
+    expect(find.byTooltip('Mute'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Mute'));
+    await tester.pump();
+    expect(bloc.state.muted, isTrue);
+    expect(bloc.state.autoMuted, isFalse);
+    expect(find.byTooltip('Unmute'), findsOneWidget);
+    expect(player.opens, hasLength(1));
+  });
+
+  testWidgets('the ended clip fades the chip and keeps the frame', (
+    tester,
+  ) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    final bloc = await _pumpFeed(tester, player: player, respond: _active);
+    expect(_chipOpacity(tester).opacity, 1);
+
+    player.ended = true;
+    player.notify();
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.speaking);
+    await tester.pump();
+
+    expect(player.opens, hasLength(1));
+    expect(_chipGate(tester).ignoring, isTrue);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_chipOpacity(tester).opacity, 0);
+  });
+
+  testWidgets('an ended run stays parked on the last frame', (tester) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    final bloc = await _pumpFeed(tester, player: player, respond: _ended);
+
+    expect(bloc.state.phase, FeedPhase.ending);
+    expect(player.opens.single.play, isFalse);
+    expect(player.resumes, 0);
+    expect(_chipOpacity(tester).opacity, 0);
+
+    player.ended = true;
+    player.notify();
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.ending);
+  });
+
+  testWidgets('the first frame and the ended event fire once', (tester) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    var frames = 0;
+    var ends = 0;
+
+    Future<void> host({required String url, required bool play}) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: NodeVideo(
+            url: url,
+            muted: true,
+            play: play,
+            player: player,
+            onFirstFrame: () => frames++,
+            onEnded: () => ends++,
+          ),
+        ),
+      );
+    }
+
+    await host(url: 'https://example.com/a.mp4', play: true);
+    await tester.pump();
+    expect(frames, 1);
+    expect(player.resumes, 1);
+    player.notify();
+    expect(frames, 1);
+
+    player.ended = true;
+    player.notify();
+    expect(ends, 1);
+    player.notify();
+    expect(ends, 1);
+
+    await host(url: 'https://example.com/b.mp4', play: true);
+    await tester.pump();
+    expect(frames, 2);
+    expect(player.opens.map((open) => open.url.path), ['/a.mp4', '/b.mp4']);
+  });
+
+  testWidgets('a parked clip does not emit PauseReached', (tester) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    var ends = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NodeVideo(
+          url: 'https://example.com/video.mp4',
+          muted: true,
+          play: false,
+          player: player,
+          onFirstFrame: () {},
+          onEnded: () => ends++,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(player.opens.single.play, isFalse);
+    expect(player.resumes, 0);
+    player.ended = true;
+    player.notify();
+    expect(ends, 0);
+  });
+
+  testWidgets('leaving the feed pauses and coming back resumes', (
+    tester,
+  ) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+
+    Future<void> host(bool enabled) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: TickerMode(
+            enabled: enabled,
+            child: NodeVideo(
+              url: 'https://example.com/video.mp4',
+              muted: true,
+              play: true,
+              player: player,
+              onFirstFrame: () {},
+              onEnded: () {},
+            ),
+          ),
+        ),
+      );
+    }
+
+    await host(false);
+    await tester.pump();
+    expect(player.pauses, greaterThan(0));
+    expect(player.resumes, 0);
+
+    await host(true);
+    await tester.pump();
+    expect(player.resumes, 1);
+  });
+
+  testWidgets('speaking keeps the same run across tabs', (tester) async {
+    final auth = _Auth();
+    addTearDown(auth.sessions.close);
+    final calls = <_Call>[];
+    await tester.pumpWidget(
+      RamificaApp(
+        initialRoute: '/story/story_temple',
+        authRepository: AuthRepository(auth: auth, users: _Users()),
+        runRepository: _runs(calls, _active),
+      ),
+    );
+    auth.identity = const AuthIdentity(uid: 'uid_1', providers: ['google.com']);
+    auth.sessions.add(auth.identity);
+    await tester.pumpAndSettle();
+
+    final bloc = tester.element(find.byType(FeedView)).read<FeedBloc>();
+    bloc.add(const PauseReached());
+    await tester.pumpAndSettle();
+    expect(bloc.state.phase, FeedPhase.speaking);
+    expect(find.text('The temple secret'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Feed'));
+    await tester.pumpAndSettle();
+
+    expect(calls, hasLength(2));
+    expect(bloc.state.phase, FeedPhase.speaking);
   });
 }
 
@@ -386,4 +621,109 @@ class _Users implements UserDirectory {
 
   @override
   Future<bool> exists(String uid) async => true;
+}
+
+Future<FeedBloc> _pumpFeed(
+  WidgetTester tester, {
+  required _FakeClip player,
+  required Future<dynamic> Function(String name, Map<String, dynamic>? data)
+  respond,
+}) async {
+  final bloc = FeedBloc(repository: _runs([], respond));
+  addTearDown(bloc.close);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: BlocProvider.value(
+        value: bloc,
+        child: FeedView(clipPlayer: player),
+      ),
+    ),
+  );
+  bloc.add(const StoryOpened(storyId: 'story_temple'));
+  await tester.pumpAndSettle();
+  return bloc;
+}
+
+AnimatedOpacity _chipOpacity(WidgetTester tester) {
+  return tester.widget<AnimatedOpacity>(
+    find.ancestor(
+      of: find.byType(StoryChip),
+      matching: find.byType(AnimatedOpacity),
+    ),
+  );
+}
+
+IgnorePointer _chipGate(WidgetTester tester) {
+  final element = tester.element(find.byType(StoryChip));
+  IgnorePointer? gate;
+  element.visitAncestorElements((ancestor) {
+    if (ancestor.widget case final IgnorePointer pointer) {
+      gate = pointer;
+      return false;
+    }
+    return true;
+  });
+  return gate!;
+}
+
+class _Open {
+  const _Open({required this.url, required this.muted, required this.play});
+
+  final Uri url;
+  final bool muted;
+  final bool play;
+}
+
+class _FakeClip implements ClipPlayer {
+  final opens = <_Open>[];
+  var pauses = 0;
+  var resumes = 0;
+
+  @override
+  bool ready = false;
+
+  @override
+  bool ended = false;
+  var _disposed = false;
+  final _listeners = <VoidCallback>[];
+
+  void notify() {
+    for (final listener in List<VoidCallback>.of(_listeners)) {
+      listener();
+    }
+  }
+
+  @override
+  Future<void> open({
+    required Uri url,
+    required bool muted,
+    required bool play,
+  }) async {
+    opens.add(_Open(url: url, muted: muted, play: play));
+    ready = true;
+    ended = false;
+    await Future<void>.value();
+    if (!_disposed) notify();
+  }
+
+  @override
+  Future<void> setMuted(bool muted) async {}
+
+  @override
+  void pause() => pauses += 1;
+
+  @override
+  void resume() => resumes += 1;
+
+  @override
+  void addListener(VoidCallback listener) => _listeners.add(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _listeners.remove(listener);
+
+  @override
+  Widget buildView() => const SizedBox.expand();
+
+  @override
+  void dispose() => _disposed = true;
 }

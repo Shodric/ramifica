@@ -8,6 +8,8 @@ import 'package:ramifica/features/feed/feed_state.dart';
 class FeedBloc extends Bloc<FeedEvent, FeedState> {
   FeedBloc({required this.repository}) : super(const FeedState()) {
     on<StoryOpened>(_onOpened, transformer: restartable());
+    on<PauseReached>(_onPause);
+    on<MuteToggled>(_onMute);
   }
 
   final RunRepository repository;
@@ -33,5 +35,14 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       if (emit.isDone) return;
       emit(FeedState(phase: .failed, storyId: storyId, failure: error.phrase));
     }
+  }
+
+  void _onPause(PauseReached event, Emitter<FeedState> emit) {
+    if (state.phase != .playing) return;
+    emit(state.copy(phase: .speaking));
+  }
+
+  void _onMute(MuteToggled event, Emitter<FeedState> emit) {
+    emit(state.copy(muted: !state.muted, autoMuted: false));
   }
 }

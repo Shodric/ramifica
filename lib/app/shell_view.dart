@@ -90,7 +90,10 @@ class _ShellViewState extends State<ShellView> {
     final id = trimmed == null || trimmed.isEmpty ? null : trimmed;
     final current = feed.state;
     final sameStory = id == null || id == current.storyId;
-    final settled = current.phase == .playing || current.phase == .ending;
+    final settled =
+        current.phase == .playing ||
+        current.phase == .speaking ||
+        current.phase == .ending;
     if (current.playback != null && sameStory && settled) return;
     feed.add(StoryOpened(storyId: id));
   }

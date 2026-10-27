@@ -46,6 +46,7 @@ dependencies:
   cloud_firestore: ^7.1.0
   bloc: ^9.2.1
   bloc_concurrency: ^0.3.0
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:
