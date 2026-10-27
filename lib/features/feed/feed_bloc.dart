@@ -1,18 +1,22 @@
 import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
+import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 
 class FeedBloc extends Bloc<FeedEvent, FeedState> {
-  FeedBloc({required this.repository}) : super(const FeedState()) {
+  FeedBloc({required this.repository, Prefetcher? prefetcher})
+    : prefetcher = prefetcher ?? Prefetcher(),
+      super(const FeedState()) {
     on<StoryOpened>(_onOpened, transformer: restartable());
     on<PauseReached>(_onPause);
     on<MuteToggled>(_onMute);
   }
 
   final RunRepository repository;
+  final Prefetcher prefetcher;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
     final raw = event.storyId?.trim();
@@ -23,6 +27,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       if (emit.isDone) return;
       final playback = await repository.loadPlayback(started.runId);
       if (emit.isDone) return;
+      prefetcher.warm(playback);
       emit(
         FeedState(
           phase: playback.status == .ended ? .ending : .playing,
@@ -44,5 +49,11 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   void _onMute(MuteToggled event, Emitter<FeedState> emit) {
     emit(state.copy(muted: !state.muted, autoMuted: false));
+  }
+
+  @override
+  Future<void> close() {
+    prefetcher.dispose();
+    return super.close();
   }
 }

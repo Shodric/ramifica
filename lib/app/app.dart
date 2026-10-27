@@ -5,6 +5,7 @@ import 'package:ramifica/app/router.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/pending_story_store.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
@@ -19,12 +20,16 @@ class RamificaApp extends StatefulWidget {
     this.authRepository,
     this.pendingStoryStore,
     this.runRepository,
+    this.prefetcher,
   });
 
   final String initialRoute;
   final AuthRepository? authRepository;
   final PendingStoryStore? pendingStoryStore;
   final RunRepository? runRepository;
+
+  /// Test double. Production builds a browser [Prefetcher].
+  final Prefetcher? prefetcher;
 
   @override
   State<RamificaApp> createState() => _RamificaAppState();
@@ -81,7 +86,8 @@ class _RamificaAppState extends State<RamificaApp> {
     final runs = widget.runRepository;
     if (runs != null) {
       shell = BlocProvider(
-        create: (_) => FeedBloc(repository: runs),
+        create: (_) =>
+            FeedBloc(repository: runs, prefetcher: widget.prefetcher),
         child: shell,
       );
     }

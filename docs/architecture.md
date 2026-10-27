@@ -124,7 +124,7 @@ lib/
       status_pill.dart          // idle, running, ready, failed. Create.
       empty_state.dart          // One sentence and, when needed, a button.
       failure_text.dart         // The phrase the bloc already emitted, with retry.
-    prefetcher.dart             // Warms mp4 in the HTTP cache and decodes voice m4a. Not a bloc.
+    prefetcher.dart             // Warms mp4 in the HTTP cache. Not a bloc.
     web_audio.dart              // AudioContext, decodeAudioData, unlock on the first gesture.
     functions_client.dart       // Calls Cloud Functions.
   features/                     // One folder per screen. Bloc, events, state, view.
@@ -318,7 +318,7 @@ The portal, the zones, and the player live in Feed. The map canvas lives in Grap
 | — | Portal blur | Not downloaded. It is `videoFrameLastBlurData` of the current node, already in memory. |
 | 1 | mp4 of each destination that is not secret | After the current clip. One or two. `HoldStarted` moves that zone's clip to the front. |
 
-A `secret` destination is not prefetched before `commitChoice`. Do not prefetch grandchildren. Changing stories clears the queue and keeps only the new node. The service worker does not intercept mp4 or requests with a `Range` header.
+A `secret` destination is not prefetched before `commitChoice`. Do not prefetch grandchildren. Changing stories clears the queue and keeps only the new node. Signing out clears it too. The URLs are the ones `loadPlayback` already returned. The service worker does not intercept mp4 or requests with a `Range` header. `promote` moves one destination to the newest slot. The voice file is decoded with the narrator.
 
 Playback files are progressive MP4, H.264, 480x854, faststart. One resolution. No HLS.
 

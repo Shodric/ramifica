@@ -8,6 +8,7 @@ import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/features/access/access_bloc.dart';
 import 'package:ramifica/features/access/access_event.dart';
+import 'package:ramifica/features/access/access_state.dart';
 import 'package:ramifica/features/access/access_view.dart';
 import 'package:ramifica/features/create/create_view.dart';
 import 'package:ramifica/features/explore/explore_view.dart';
@@ -305,18 +306,26 @@ class _ShellGateState extends State<ShellGate> {
   @override
   Widget build(BuildContext context) {
     final location = widget.location;
+    final Widget page;
     if (location is UnknownLocation) {
-      return const _UnknownPage();
+      page = const _UnknownPage();
+    } else if (location is AccessLocation) {
+      page = const AccessView();
+    } else {
+      final bloc = _authOf(context, listen: true);
+      final signedIn = bloc != null && bloc.state.phase == .signedIn;
+      page = location is FeedLocation && !signedIn
+          ? const AccessView()
+          : ShellView(location: location);
     }
-    if (location is AccessLocation) {
-      return const AccessView();
-    }
-    final bloc = _authOf(context, listen: true);
-    final signedIn = bloc != null && bloc.state.phase == .signedIn;
-    if (location is FeedLocation && !signedIn) {
-      return const AccessView();
-    }
-    return ShellView(location: location);
+    if (_authOf(context) == null) return page;
+    return BlocListener<AuthBloc, AuthState>(
+      listenWhen: (previous, next) {
+        return previous.phase == .signedIn && next.phase == .signedOut;
+      },
+      listener: (context, state) => _feedOf(context)?.prefetcher.clear(),
+      child: page,
+    );
   }
 }
 

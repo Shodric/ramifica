@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
+import 'package:ramifica/core/prefetcher.dart';
+import 'package:ramifica/core/warm_slot.dart';
 import 'package:ramifica/core/functions_client.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/playback.dart';
@@ -171,6 +173,69 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(bloc.state.phase, FeedPhase.loading);
+  });
+
+  test('a playing run warms the open destination', () async {
+    final mounted = <String>[];
+    final bloc = FeedBloc(
+      repository: _runs([], _active),
+      prefetcher: _warm(mounted, []),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+
+    expect(bloc.prefetcher.urls, [
+      'https://example.com/video.mp4',
+      'https://example.com/next.mp4',
+    ]);
+    expect(mounted, bloc.prefetcher.urls);
+  });
+
+  test('a failed open warms nothing', () async {
+    final mounted = <String>[];
+    final bloc = FeedBloc(
+      repository: RunRepository(
+        functions: FunctionsClient(
+          call: (name, data) async => throw const AppFailure(.offline),
+        ),
+      ),
+      prefetcher: _warm(mounted, []),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
+
+    expect(mounted, isEmpty);
+  });
+
+  test('a second story replaces the warmed clips', () async {
+    final disposed = <String>[];
+    final bloc = FeedBloc(
+      repository: _runs([], _active),
+      prefetcher: _warm([], disposed),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    bloc.add(const StoryOpened(storyId: 'story_new'));
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing && state.storyId == 'story_new',
+    );
+
+    expect(bloc.prefetcher.storyId, 'story_new');
+    expect(disposed, [
+      'https://example.com/video.mp4',
+      'https://example.com/next.mp4',
+    ]);
+    expect(bloc.prefetcher.urls, [
+      'https://example.com/video.mp4',
+      'https://example.com/next.mp4',
+    ]);
   });
 
   test('MuteToggled flips sound and clears the browser mute', () async {
@@ -461,6 +526,31 @@ void main() {
     expect(calls, hasLength(2));
     expect(bloc.state.phase, FeedPhase.speaking);
   });
+
+  testWidgets('signing out drops the warmed clips', (tester) async {
+    final auth = _Auth();
+    addTearDown(auth.sessions.close);
+    final prefetcher = _warm([], []);
+    await tester.pumpWidget(
+      RamificaApp(
+        initialRoute: '/story/story_temple',
+        authRepository: AuthRepository(auth: auth, users: _Users()),
+        runRepository: _runs([], _active),
+        prefetcher: prefetcher,
+      ),
+    );
+    auth.identity = const AuthIdentity(uid: 'uid_1', providers: ['google.com']);
+    auth.sessions.add(auth.identity);
+    await tester.pumpAndSettle();
+    expect(prefetcher.urls, isNotEmpty);
+
+    auth.identity = null;
+    auth.sessions.add(null);
+    await tester.pumpAndSettle();
+
+    expect(prefetcher.urls, isEmpty);
+    expect(prefetcher.storyId, isNull);
+  });
 }
 
 class _Call {
@@ -672,6 +762,32 @@ class _Open {
   final Uri url;
   final bool muted;
   final bool play;
+}
+
+Prefetcher _warm(List<String> mounted, List<String> disposed) {
+  return Prefetcher(open: () => _WarmSlot(mounted, disposed));
+}
+
+class _WarmSlot implements WarmSlot {
+  _WarmSlot(this.mounted, this.disposed);
+
+  final List<String> mounted;
+  final List<String> disposed;
+  String? _url;
+
+  @override
+  void mount(String url) {
+    _url = url;
+    mounted.add(url);
+  }
+
+  @override
+  void dispose() {
+    final url = _url;
+    if (url == null) return;
+    disposed.add(url);
+    _url = null;
+  }
 }
 
 class _FakeClip implements ClipPlayer {
