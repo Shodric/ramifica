@@ -1,17 +1,28 @@
 # Firebase build and deployment files
 /firebase-debug.log
 /firebase-debug.*.log
-.firebaserc
 
-# Firebase Hosting
-/firebase.json
+# Firebase Hosting cache
 *.cache
 hosting/.cache
 
 # Firebase Functions
 /functions/node_modules/
-/functions/.env
-/functions/package-lock.json
+/functions/.runtimeconfig.json
+
+# Secrets. firebase.json, .firebaserc, rules, and cors.json stay in git.
+# The Firebase web apiKey is public. These files are not.
+**/*firebase-adminsdk*.json
+**/serviceAccount*.json
+**/*service-account*.json
+**/*appcheck-debug-token*
+**/*app-check-debug-token*
+
+# Environment files (local configs)
+.env
+.env.*
+**/.env
+**/.env.*
 
 # Firebase Emulators
 /firebase-*.zip
@@ -23,9 +34,6 @@ hosting/.cache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# Environment files (local configs)
-/.env.*
 
 # Flutter/Dart
 .fvm/

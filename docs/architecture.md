@@ -14,6 +14,26 @@ CanvasKit draws text on a canvas, so a hold does not select text by accident.
 
 There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch](#prefetch).
 
+## Firebase
+
+Project id: `meta-ramifica`. Config lives in `firebase.json` and `.firebaserc`.
+
+Emulators: Auth `9099`, Functions `5001`, Firestore `8080`, Hosting `5000`, Storage `9199`. One project mode. The UI is on.
+
+Hosting serves `build/web` with `cleanUrls`. Every path rewrites to `/index.html`. `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
+
+`/story/**` is not rewritten to a function until `storyPage` is deployed. A rewrite to a missing function would break that path.
+
+Bucket CORS is `cors.json`: `GET` and `HEAD` from `https://meta-ramifica.web.app`, `https://meta-ramifica.firebaseapp.com`, and `http://localhost:5000`. `gs://meta-ramifica.firebasestorage.app` (`US-CENTRAL1`) already has this config. Reapply it with:
+
+```bash
+gcloud storage buckets update gs://meta-ramifica.firebasestorage.app --cors-file=cors.json
+```
+
+Firestore and Storage rules are `firestore.rules` and `storage.rules`. Unmatched paths are denied. Players do not read `nodes` directly. Story media is not readable through the Storage SDK. A signed-in creator may upload one `mp4` or `mov` under `uploads/{uid}/`, under 100 MB.
+
+Functions default to `us-central1` (`setGlobalOptions` in `functions/src/index.ts`). Callables enforce App Check when they are added. `web/index.html` sets `FIREBASE_APPCHECK_DEBUG_TOKEN` only when the hostname is `localhost` or `127.0.0.1`.
+
 ## Layers
 
 Each screen is a `Bloc<Event, State>`. The view sends an event and draws the state that comes back. Do not use Cubit.
@@ -157,7 +177,7 @@ Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The ba
 
 ## Routes
 
-Path URLs, from `usePathUrlStrategy()` in `main.dart`. No hash. Hosting rewrites every path to `/index.html`, except `/story/**`, which `storyPage` serves for link previews.
+Path URLs, from `usePathUrlStrategy()` in `main.dart`. No hash. Hosting rewrites every path to `/index.html`. When `storyPage` exists, `/story/**` is rewritten to that function first, for link previews.
 
 | Path | Screen | Who provides it |
 |---|---|---|
