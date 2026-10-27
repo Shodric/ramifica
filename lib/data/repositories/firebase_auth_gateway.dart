@@ -117,6 +117,10 @@ class FirestoreUserDirectory implements UserDirectory {
   }
 }
 
+Future<void> configureFirebaseAuth() {
+  return FirebaseAuth.instance.setPersistence(.LOCAL);
+}
+
 AuthRepository createFirebaseAuthRepository() {
   return AuthRepository(
     auth: FirebaseAuthGateway(),

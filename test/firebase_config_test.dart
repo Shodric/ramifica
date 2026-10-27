@@ -67,6 +67,17 @@ void main() {
     expect(entry['maxAgeSeconds'], 3600);
   });
 
+  test('auth uses the hosting domain and local persistence', () {
+    final options = File('lib/firebase_options.dart').readAsStringSync();
+    final main = File('lib/main.dart').readAsStringSync();
+    final gateway = File('lib/data/repositories/firebase_auth_gateway.dart')
+        .readAsStringSync();
+
+    expect(options, contains("authDomain: 'meta-ramifica.web.app'"));
+    expect(main, contains('configureFirebaseAuth()'));
+    expect(gateway, contains('setPersistence(.LOCAL)'));
+  });
+
   test('App Check debug token is limited to localhost', () {
     final html = File('web/index.html').readAsStringSync();
     final guard = html.indexOf('location.hostname === "localhost"');

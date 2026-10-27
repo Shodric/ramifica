@@ -262,7 +262,7 @@ There is no guest route.
 
 `AuthRepository.ensureUser` reads `users/{uid}`. If the doc is missing, it creates `displayName`, `photoUrl`, `providers`, `locale` `es-AR`, and `createdAt`. It does not write `handle`. A wrong email or password, and an email that already has an account, both use "Email or password is wrong".
 
-`browserLocalPersistence`, the custom `authDomain`, and the Hosting reset handler come later. The redirect return is read with `getRedirectResult` when the bloc starts.
+`main` calls `configureFirebaseAuth` before it creates the repository. That sets `Persistence.LOCAL`, which is `browserLocalPersistence`, so the session survives closing the tab. `authDomain` is `meta-ramifica.web.app`. Hosting on that domain serves `/__/auth/`, and the password-reset email link is `https://meta-ramifica.web.app/__/auth/action`. The redirect return is read with `getRedirectResult` when the bloc starts.
 
 `AccessView` is the column on `surface` at `/access`. It has no tab bar. The order is the title "Sign in", Continue with Google, email, password, Forgot my password, Sign in, and Create account. `FailureText` shows `failure`. The reset `notice` is secondary text. While `signingIn`, the actions are disabled. When the phase becomes `signedIn`, the view opens `/` or `/story/{id}` from `pendingStoryId`. `ShellBloc` still consumes that id later.
 

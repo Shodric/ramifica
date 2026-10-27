@@ -7,7 +7,7 @@ abstract final class DefaultFirebaseOptions {
     appId: '1:209293545230:web:2172e8f390dee49869115f',
     messagingSenderId: '209293545230',
     projectId: 'meta-ramifica',
-    authDomain: 'meta-ramifica.firebaseapp.com',
+    authDomain: 'meta-ramifica.web.app',
     storageBucket: 'meta-ramifica.firebasestorage.app',
   );
 }

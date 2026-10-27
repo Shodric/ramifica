@@ -10,6 +10,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
+  await configureFirebaseAuth();
   runApp(
     RamificaApp(
       authRepository: createFirebaseAuthRepository(),
