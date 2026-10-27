@@ -239,6 +239,31 @@ An external link opens `/story/{storyId}`. With no session, the view stores the 
 
 There is no guest route.
 
+## Auth
+
+`AuthBloc` is `features/access/access_bloc.dart`. `RamificaApp` creates it when an `AuthRepository` is passed, above `MaterialApp`. `main` does not pass one yet: the client has no Firebase web config, so Auth is not initialized on startup.
+
+| Field | Values |
+|---|---|
+| `phase` | `signedOut`, `signingIn`, `signedIn` |
+| `pendingStoryId` | The story id from the link, or null |
+| `failure` | A short phrase, or null |
+| `notice` | The password-reset confirmation, or null. This is not a failure. |
+
+| Event | What it does |
+|---|---|
+| `SignInWithGoogleRequested` | Emits `signingIn`. Uses a popup. If the popup is blocked, or the page is an installed iOS PWA, it uses redirect. `droppable`. |
+| `SignInWithEmailRequested` | Same, with email and password. `droppable`. |
+| `SignUpWithEmailRequested` | Creates the account. The password needs 8 characters. `droppable`. |
+| `PasswordResetRequested` | Does not change `phase`. The notice is always "If that email has an account, we sent a link." A missing account gets that same notice. `droppable`. |
+| `PendingStorySaved` | Stores the id on the state and in `sessionStorage` (`pendingStoryId`). |
+| `PendingStoryConsumed` | Clears that id. The shell reads it first. |
+| `SignOutRequested` | Signs out. |
+
+`AuthRepository.ensureUser` reads `users/{uid}`. If the doc is missing, it creates `displayName`, `photoUrl`, `providers`, `locale` `es-AR`, and `createdAt`. It does not write `handle`. A wrong email or password, and an email that already has an account, both use "Email or password is wrong".
+
+`browserLocalPersistence`, the custom `authDomain`, and the Hosting reset handler come later. The redirect return is read with `getRedirectResult` when the bloc starts.
+
 ## Theme
 
 Tokens live in `app/theme.dart`. The visual spec is [design.md](design.md).
