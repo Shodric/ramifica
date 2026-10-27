@@ -16,6 +16,7 @@ void main() {
 
   test('parses the public paths', () {
     expect(parseLocation('/'), isA<FeedLocation>());
+    expect(parseLocation('/?source=pwa'), isA<FeedLocation>());
     expect(parseLocation(null), isA<FeedLocation>());
 
     final story = parseLocation('/story/story_temple');

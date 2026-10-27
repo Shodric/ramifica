@@ -18,7 +18,9 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Vertical interactive video. A narrator asks which decision the protagonist should take, and you choose by holding a point on the scene for one second.">
+  <meta name="theme-color" content="#131318">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -30,7 +32,27 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>Ramifica</title>
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="manifest.webmanifest">
+
+  <style>
+    html, body {
+      height: 100dvh;
+      margin: 0;
+      overscroll-behavior: none;
+      background: #131318;
+    }
+
+    body {
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    video {
+      pointer-events: none;
+    }
+  </style>
 </head>
 <body>
   <script>
@@ -38,6 +60,12 @@
     if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
       self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
     }
+  </script>
+  <script>
+    // A hold is a choice. The browser must not turn it into a callout.
+    document.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+    });
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

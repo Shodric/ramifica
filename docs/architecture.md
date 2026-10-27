@@ -35,6 +35,29 @@ CanvasKit draws text on a canvas, so a hold does not select text by accident.
 
 There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch](#prefetch).
 
+## Web shell
+
+`web/index.html` is the Flutter host. `viewport-fit=cover` lets the engine read the safe area. The body is not padded, so the video stays edge to edge and each screen insets its own chrome.
+
+`html` and `body` are `100dvh`, with `overscroll-behavior: none` and background `#131318`. `body` sets `touch-action: none` and `user-select: none` (including the WebKit prefixes) so a hold does not become a scroll or a selection. `video` sets `pointer-events: none`. `contextmenu` is cancelled. `FIREBASE_APPCHECK_DEBUG_TOKEN` stays limited to `localhost` and `127.0.0.1`, and that script stays before `flutter_bootstrap.js`.
+
+`web/manifest.webmanifest` is the only manifest. Name `Ramifica`, `start_url` `/?source=pwa`, scope `/`, `display` standalone, `orientation` portrait, colors `#131318`. Icons are the existing `icons/Icon-*.png` files. `/?source=pwa` parses as Feed because the parser uses the path.
+
+`web/flutter_bootstrap.js` is the build template. `flutter run` gets a null service-worker version and does not register a worker. A release build registers `sw.js?v=` plus that version. Flutter still emits `flutter_service_worker.js`. This app does not register it.
+
+`web/sw.js` uses Workbox 7.3.0 from the Workbox CDN. If that script fails to load, the worker installs with no fetch handlers.
+
+| Request | What the worker does |
+|---|---|
+| Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` stays a document until `storyPage` exists. |
+| JS, wasm, and fonts in the precache list | Precache. The revision is the `v` query on the worker script, so the next build fetches a new shell. |
+| `.webp` | Cache first. 300 entries, 30 days. Status 200 only. |
+| `.m4a` | Cache first. 100 entries, 30 days. Status 200 only. |
+| `.mp4`, or any request with a `Range` header | Not intercepted. The worker does not call `respondWith`. |
+| `cloudfunctions.net` and `cloudfunctions.googleapis.com` | Network only. |
+
+The precache list is the CanvasKit shell (full and Chromium, not Skwasm), `main.dart.js`, `flutter.js`, the icon PNGs, the four WOFF2 files, and the manifest. The document itself is not precached. Phase 0 does not play offline. The cache only speeds the next visit.
+
 ## Firebase
 
 Project id: `meta-ramifica`. Config lives in `firebase.json` and `.firebaserc`.
