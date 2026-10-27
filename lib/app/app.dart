@@ -51,7 +51,7 @@ Route<void> _onGenerateRoute(RouteSettings settings) {
     settings: settings,
     builder: (context) {
       return switch (location) {
-        FeedLocation(:final storyId) => FeedView(storyId: storyId),
+        FeedLocation(:final storyId) => _FeedGate(storyId: storyId),
         ExploreLocation() => const ExploreView(),
         GraphLocation(:final storyId) => GraphView(storyId: storyId),
         ProfileLocation() => const ProfileView(),
@@ -61,6 +61,43 @@ Route<void> _onGenerateRoute(RouteSettings settings) {
       };
     },
   );
+}
+
+class _FeedGate extends StatefulWidget {
+  const _FeedGate({this.storyId});
+
+  final String? storyId;
+
+  @override
+  State<_FeedGate> createState() => _FeedGateState();
+}
+
+class _FeedGateState extends State<_FeedGate> {
+  @override
+  void initState() {
+    super.initState();
+    final storyId = widget.storyId;
+    if (storyId == null || storyId.isEmpty) return;
+    final bloc = _authOf(context);
+    if (bloc == null || bloc.state.phase == .signedIn) return;
+    bloc.add(PendingStorySaved(storyId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bloc = _authOf(context, listen: true);
+    final signedIn = bloc != null && bloc.state.phase == .signedIn;
+    if (!signedIn) return const AccessView();
+    return FeedView(storyId: widget.storyId);
+  }
+}
+
+AuthBloc? _authOf(BuildContext context, {bool listen = false}) {
+  try {
+    return BlocProvider.of<AuthBloc>(context, listen: listen);
+  } on FlutterError {
+    return null;
+  }
 }
 
 class _UnknownPage extends StatelessWidget {

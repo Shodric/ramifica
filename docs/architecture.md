@@ -241,7 +241,7 @@ There is no guest route.
 
 ## Auth
 
-`AuthBloc` is `features/access/access_bloc.dart`. `RamificaApp` creates it when an `AuthRepository` is passed, above `MaterialApp`. `main` does not pass one yet: the client has no Firebase web config, so Auth is not initialized on startup.
+`AuthBloc` is `features/access/access_bloc.dart`. `RamificaApp` creates it when an `AuthRepository` is passed, above `MaterialApp`. `main` calls `Firebase.initializeApp` with the web config in `firebase_options.dart`, then passes `createFirebaseAuthRepository()` and `createPendingStoryStore()`.
 
 | Field | Values |
 |---|---|
@@ -263,6 +263,10 @@ There is no guest route.
 `AuthRepository.ensureUser` reads `users/{uid}`. If the doc is missing, it creates `displayName`, `photoUrl`, `providers`, `locale` `es-AR`, and `createdAt`. It does not write `handle`. A wrong email or password, and an email that already has an account, both use "Email or password is wrong".
 
 `browserLocalPersistence`, the custom `authDomain`, and the Hosting reset handler come later. The redirect return is read with `getRedirectResult` when the bloc starts.
+
+`AccessView` is the column on `surface` at `/access`. It has no tab bar. The order is the title "Sign in", Continue with Google, email, password, Forgot my password, Sign in, and Create account. `FailureText` shows `failure`. The reset `notice` is secondary text. While `signingIn`, the actions are disabled. When the phase becomes `signedIn`, the view opens `/` or `/story/{id}` from `pendingStoryId`. `ShellBloc` still consumes that id later.
+
+`/` and `/story/{id}` show that same column until the phase is `signedIn`. With no `AuthBloc`, they still show it, because there is no session. A story link sends `PendingStorySaved` before the form is used. `/explore`, `/graph/{id}`, `/profile`, and `/create` stay open.
 
 ## Theme
 

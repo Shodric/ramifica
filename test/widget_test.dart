@@ -1,26 +1,41 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
 
 void main() {
-  testWidgets('opens Feed at /', (tester) async {
+  testWidgets('opens Sign in at / when there is no session', (tester) async {
     await tester.pumpWidget(const RamificaApp());
 
-    expect(find.text('Feed'), findsOneWidget);
-    expect(find.text('Sign in'), findsNothing);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Feed'), findsNothing);
+    expect(find.byType(NavigationBar), findsNothing);
   });
 
   testWidgets('opens Sign in at /access', (tester) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/access'));
 
-    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Sign in'), findsWidgets);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Continue with Google'),
+          )
+          .onPressed,
+      isNotNull,
+    );
   });
 
-  testWidgets('opens Feed at /story/{id}', (tester) async {
+  testWidgets('opens Sign in at /story/{id} when there is no session', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const RamificaApp(initialRoute: '/story/story_temple'),
     );
 
-    expect(find.text('Feed'), findsOneWidget);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Feed'), findsNothing);
   });
 
   testWidgets('opens Map at /graph/{id}', (tester) async {

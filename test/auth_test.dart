@@ -310,7 +310,9 @@ void main() {
     );
     await tester.pump();
 
-    final bloc = tester.element(find.text('Feed')).read<AuthBloc>();
+    final bloc = tester
+        .element(find.text('Continue with Google'))
+        .read<AuthBloc>();
     if (bloc.state.pendingStoryId != 'story_temple') {
       await bloc.stream.firstWhere(
         (state) => state.pendingStoryId == 'story_temple',

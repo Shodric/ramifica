@@ -10,7 +10,7 @@ import 'package:ramifica/core/widgets/status_pill.dart';
 void main() {
   testWidgets('theme uses the bundled families', (tester) async {
     await tester.pumpWidget(const RamificaApp());
-    final theme = Theme.of(tester.element(find.text('Feed')));
+    final theme = Theme.of(tester.element(find.text('Continue with Google')));
 
     expect(theme.textTheme.bodyLarge?.fontFamily, RamificaText.sans);
     expect(theme.textTheme.headlineMedium?.fontFamily, RamificaText.display);
