@@ -7,6 +7,7 @@ import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:ramifica/features/feed/mute_button.dart';
 import 'package:ramifica/features/feed/node_video.dart';
 import 'package:ramifica/features/feed/story_chip.dart';
+import 'package:ramifica/features/feed/subtitle_line.dart';
 
 class FeedView extends StatelessWidget {
   const FeedView({super.key, this.storyId, this.clipPlayer});
@@ -33,9 +34,14 @@ class FeedView extends StatelessWidget {
         final playback = state.playback;
         final showClip =
             playback != null &&
-            (state.phase == .playing ||
-                state.phase == .speaking ||
-                state.phase == .ending);
+            state.phase != .loading &&
+            state.phase != .failed;
+        final line = playback?.node.ttsText?.trim();
+        final showLine =
+            state.phase == .speaking &&
+            state.muted &&
+            line != null &&
+            line.isNotEmpty;
         return Scaffold(
           body: Semantics(
             label: storyId == null ? 'Feed' : 'Feed $storyId',
@@ -82,9 +88,19 @@ class FeedView extends StatelessWidget {
                       child: MuteButton(
                         muted: state.muted,
                         autoMuted: state.autoMuted,
-                        onPressed: () => bloc.add(const MuteToggled()),
+                        onPressed: () {
+                          if (state.muted) bloc.narrator.unlock();
+                          bloc.add(const MuteToggled());
+                        },
                       ),
                     ),
+                  ),
+                if (showLine)
+                  Positioned(
+                    left: 24,
+                    right: 24,
+                    bottom: MediaQuery.paddingOf(context).bottom + 96,
+                    child: SubtitleLine(text: line),
                   ),
                 if (state.phase == .failed && state.failure != null)
                   Center(

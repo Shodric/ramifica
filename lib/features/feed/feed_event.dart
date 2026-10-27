@@ -18,3 +18,8 @@ final class PauseReached extends FeedEvent {
 final class MuteToggled extends FeedEvent {
   const MuteToggled();
 }
+
+/// The narrator finished, or the muted subtitle ran for `ttsDurationSeconds`.
+final class VoiceFinished extends FeedEvent {
+  const VoiceFinished();
+}

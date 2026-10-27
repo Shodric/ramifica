@@ -125,7 +125,7 @@ lib/
       empty_state.dart          // One sentence and, when needed, a button.
       failure_text.dart         // The phrase the bloc already emitted, with retry.
     prefetcher.dart             // Warms mp4 in the HTTP cache. Not a bloc.
-    web_audio.dart              // AudioContext, decodeAudioData, unlock on the first gesture.
+    web_audio.dart              // AudioContext and decodeAudioData for the narrator.
     functions_client.dart       // Calls Cloud Functions.
   features/                     // One folder per screen. Bloc, events, state, view.
     access/                     // Google or email, before the tabs.
@@ -217,9 +217,9 @@ Other blocs are created with `BlocProvider` on their tab.
 
 `ShellView` is one `IndexedStack` of the five tabs. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase.
 
-On a signed-in feed route, the shell sends `StoryOpened` once. `FeedBloc` lives above the shell. It calls `startRun`, then `loadPlayback` for that run. `startRun` returns `runId`, `storyId`, and `status` (`active` or `ended`). The client does not send `restart` from this event. An `active` playback enters `playing`. An `ended` playback enters `ending`. An `AppFailure` enters `failed` with that phrase. `StoryOpened` is restartable. While the same story is already `playing`, `speaking`, or `ending`, opening that feed route again does not send another `StoryOpened`. This slice's repository methods are `startRun` and `loadPlayback`.
+On a signed-in feed route, the shell sends `StoryOpened` once. `FeedBloc` lives above the shell. It calls `startRun`, then `loadPlayback` for that run. `startRun` returns `runId`, `storyId`, and `status` (`active` or `ended`). The client does not send `restart` from this event. An `active` playback enters `playing`. An `ended` playback enters `ending`. An `AppFailure` enters `failed` with that phrase. `StoryOpened` is restartable. While the same story is already `playing`, `speaking`, `window`, `holding`, `committing`, or `ending`, opening that feed route again does not send another `StoryOpened`. This slice's repository methods are `startRun` and `loadPlayback`.
 
-While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. Leaving the Feed tab pauses the clip. An `ended` run does not play; the video seeks to the last frame. Voice, zones, and the first-gesture unmute come later.
+While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. Turning sound on resumes the audio context from that tap. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. The voice file is decoded when the node opens. With sound, Web Audio plays it and hides the line. While muted, `ttsText` sits in the lower third for `ttsDurationSeconds`. `VoiceFinished` then enters `window`. Leaving the Feed tab pauses the clip. An `ended` run does not play the clip or the line. Zones and the first-gesture unmute come later.
 
 Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar is a `NavigationBar` drawn over the body.
 

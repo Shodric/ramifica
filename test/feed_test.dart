@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
+import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/core/warm_slot.dart';
 import 'package:ramifica/core/functions_client.dart';
@@ -719,7 +720,7 @@ Future<FeedBloc> _pumpFeed(
   required Future<dynamic> Function(String name, Map<String, dynamic>? data)
   respond,
 }) async {
-  final bloc = FeedBloc(repository: _runs([], respond));
+  final bloc = FeedBloc(repository: _runs([], respond), clock: _StillClock());
   addTearDown(bloc.close);
   await tester.pumpWidget(
     MaterialApp(
@@ -754,6 +755,14 @@ IgnorePointer _chipGate(WidgetTester tester) {
     return true;
   });
   return gate!;
+}
+
+class _StillClock implements CueClock {
+  @override
+  void schedule(Duration duration, void Function() fire) {}
+
+  @override
+  void cancel() {}
 }
 
 class _Open {

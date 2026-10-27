@@ -94,6 +94,9 @@ class _ShellViewState extends State<ShellView> {
     final settled =
         current.phase == .playing ||
         current.phase == .speaking ||
+        current.phase == .window ||
+        current.phase == .holding ||
+        current.phase == .committing ||
         current.phase == .ending;
     if (current.playback != null && sameStory && settled) return;
     feed.add(StoryOpened(storyId: id));

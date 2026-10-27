@@ -1,6 +1,16 @@
 import 'package:ramifica/data/models/playback.dart';
 
-enum FeedPhase { loading, playing, speaking, ending, failed }
+/// `holding` and `committing` are entered by the hold, in the next slice.
+enum FeedPhase {
+  loading,
+  playing,
+  speaking,
+  window,
+  holding,
+  committing,
+  ending,
+  failed,
+}
 
 class FeedState {
   const FeedState({
