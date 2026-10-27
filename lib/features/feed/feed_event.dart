@@ -45,3 +45,13 @@ final class HoldCompleted extends FeedEvent {
 final class WindowElapsed extends FeedEvent {
   const WindowElapsed();
 }
+
+/// From the ending card. Starts a new run at the root and keeps endings.
+final class OtherPathRequested extends FeedEvent {
+  const OtherPathRequested();
+}
+
+/// From the ending card. The view navigates to the map for this story.
+final class MapRequested extends FeedEvent {
+  const MapRequested();
+}

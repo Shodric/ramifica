@@ -32,6 +32,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<HoldCancelled>(_onCancel);
     on<HoldCompleted>(_onHeld, transformer: droppable());
     on<WindowElapsed>(_onWindow);
+    on<OtherPathRequested>(_onOtherPath, transformer: restartable());
+    on<MapRequested>(_onMap, transformer: droppable());
   }
 
   final RunRepository repository;
@@ -43,6 +45,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   var _holdSealed = false;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
+    final muted = state.muted;
+    final autoMuted = state.autoMuted;
     _windowSpent = false;
     _holdSealed = false;
     _silence();
@@ -61,10 +65,12 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       }
       emit(
         FeedState(
-          phase: playback.status == .ended ? .ending : .playing,
+          phase: playback.node.isEnding ? .ending : .playing,
           storyId: playback.story.storyId,
           runId: playback.runId,
           playback: playback,
+          muted: muted,
+          autoMuted: autoMuted,
         ),
       );
     } on AppFailure catch (error) {
@@ -75,16 +81,33 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   void _onPause(PauseReached event, Emitter<FeedState> emit) {
     if (state.phase != .playing) return;
+    final playback = state.playback;
+    if (playback != null && playback.node.isEnding) {
+      final speaking = _hasClosingLine;
+      emit(state.copy(phase: .ending, endingSpeaking: speaking));
+      if (speaking) _startCue();
+      return;
+    }
     emit(state.copy(phase: .speaking));
     _startCue();
   }
 
   void _onMute(MuteToggled event, Emitter<FeedState> emit) {
     emit(state.copy(muted: !state.muted, autoMuted: false));
-    if (state.phase == .speaking) _startCue();
+    if (state.phase == .speaking ||
+        (state.phase == .ending && state.endingSpeaking)) {
+      _startCue();
+    }
   }
 
   void _onVoice(VoiceFinished event, Emitter<FeedState> emit) {
+    if (state.phase == .ending) {
+      if (!state.endingSpeaking) return;
+      _clock.cancel();
+      narrator.stop();
+      emit(state.copy(endingSpeaking: false));
+      return;
+    }
     if (state.phase != .speaking) return;
     _clock.cancel();
     narrator.stop();
@@ -176,12 +199,13 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }
 
   /// The server rejected the hold. Asks where the run really is and
-  /// continues from that node.
+  /// continues from that node. A parked `ended` run shows the card without
+  /// replaying the clip.
   Future<void> _recover(String runId, Emitter<FeedState> emit) async {
     try {
       final playback = await repository.loadPlayback(runId);
       if (emit.isDone) return;
-      _arrive(playback, emit);
+      _park(playback, emit);
     } on AppFailure catch (error) {
       if (emit.isDone) return;
       emit(
@@ -195,6 +219,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     }
   }
 
+  /// A fresh destination. An ending still plays its clip once from the start;
+  /// only a reopened `ended` run parks on the last frame (see `_park`).
   void _arrive(Playback next, Emitter<FeedState> emit) {
     _windowSpent = false;
     _holdSealed = false;
@@ -205,7 +231,29 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     }
     emit(
       FeedState(
-        phase: next.status == .ended ? .ending : .playing,
+        phase: .playing,
+        storyId: next.story.storyId,
+        runId: next.runId,
+        playback: next,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
+  }
+
+  /// Parks on the current node without playing. Used for reopened `ended`
+  /// runs and for `invalid` recoveries that land on an ending.
+  void _park(Playback next, Emitter<FeedState> emit) {
+    _windowSpent = false;
+    _holdSealed = false;
+    prefetcher.warm(next);
+    final voice = next.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(narrator.prepare(voice));
+    }
+    emit(
+      FeedState(
+        phase: next.node.isEnding ? .ending : .playing,
         storyId: next.story.storyId,
         runId: next.runId,
         playback: next,
@@ -225,6 +273,54 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     final fallback = _defaultChoice;
     if (fallback == null) return;
     _startHold(fallback, emit);
+  }
+
+  Future<void> _onOtherPath(
+    OtherPathRequested event,
+    Emitter<FeedState> emit,
+  ) async {
+    if (state.phase != .ending) return;
+    final storyId = state.storyId;
+    final muted = state.muted;
+    final autoMuted = state.autoMuted;
+    _windowSpent = false;
+    _holdSealed = false;
+    _silence();
+    emit(FeedState(phase: .loading, storyId: storyId));
+    try {
+      final started = await repository.startRun(
+        storyId: storyId,
+        restart: true,
+      );
+      if (emit.isDone) return;
+      final playback = await repository.loadPlayback(started.runId);
+      if (emit.isDone) return;
+      prefetcher.warm(playback);
+      final voice = playback.node.ttsAudioUrl?.trim();
+      if (voice != null && voice.isNotEmpty) {
+        unawaited(narrator.prepare(voice));
+      }
+      emit(
+        FeedState(
+          phase: .playing,
+          storyId: playback.story.storyId,
+          runId: playback.runId,
+          playback: playback,
+          muted: muted,
+          autoMuted: autoMuted,
+        ),
+      );
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(
+        FeedState(phase: .failed, storyId: storyId, failure: error.phrase),
+      );
+    }
+  }
+
+  void _onMap(MapRequested event, Emitter<FeedState> emit) {
+    // Navigation belongs to the view: it reads the ShellBloc and opens the
+    // map tab for this story. Kept here so the event has a handler.
   }
 
   void _armWindow() {
@@ -293,7 +389,11 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   Future<void> _playVoice() async {
     final played = await narrator.play(onEnded: _finishCue);
-    if (isClosed || state.phase != .speaking) return;
+    if (isClosed) return;
+    final speaking =
+        state.phase == .speaking ||
+        (state.phase == .ending && state.endingSpeaking);
+    if (!speaking) return;
     if (played && !state.muted) return;
     if (played) narrator.stop();
     final line = _lineDuration();
@@ -313,6 +413,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     final url = state.playback?.node.ttsAudioUrl?.trim();
     return url != null && url.isNotEmpty;
   }
+
+  bool get _hasClosingLine => _hasVoice || _lineDuration() != null;
 
   Duration? _lineDuration() {
     final node = state.playback?.node;

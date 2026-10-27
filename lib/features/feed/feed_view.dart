@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:ramifica/app/shell_bloc.dart';
+import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/features/feed/choice_zone.dart';
+import 'package:ramifica/features/feed/ending_card.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
@@ -51,11 +54,16 @@ class _FeedViewState extends State<FeedView> {
             state.phase != .loading &&
             state.phase != .failed;
         final line = playback?.node.ttsText?.trim();
+        final speakingCue =
+            state.phase == .speaking ||
+            (state.phase == .ending && state.endingSpeaking);
         final showLine =
-            state.phase == .speaking &&
-            state.muted &&
-            line != null &&
-            line.isNotEmpty;
+            speakingCue && state.muted && line != null && line.isNotEmpty;
+        final showCard =
+            showClip &&
+            state.phase == .ending &&
+            !state.endingSpeaking &&
+            playback.node.isEnding;
         return Scaffold(
           body: Semantics(
             label: widget.storyId == null ? 'Feed' : 'Feed ${widget.storyId}',
@@ -186,6 +194,26 @@ class _FeedViewState extends State<FeedView> {
                           },
                         ),
                       ),
+                    if (showCard)
+                      Positioned(
+                        left: 24,
+                        right: 24,
+                        bottom:
+                            MediaQuery.paddingOf(context).bottom + 96,
+                        child: EndingCard(
+                          key: const ValueKey('ending-card'),
+                          name:
+                              playback.node.endingName ??
+                              playback.node.title,
+                          type: playback.node.endingType,
+                          onSeeMap: () {
+                            bloc.add(const MapRequested());
+                            _openMap(context, state.storyId);
+                          },
+                          onTryAnotherPath: () =>
+                              bloc.add(const OtherPathRequested()),
+                        ),
+                      ),
                   ],
                 );
               },
@@ -224,5 +252,14 @@ FeedBloc? _feedOf(BuildContext context, {bool listen = false}) {
     return BlocProvider.of<FeedBloc>(context, listen: listen);
   } on FlutterError {
     return null;
+  }
+}
+
+void _openMap(BuildContext context, String? storyId) {
+  try {
+    context.read<ShellBloc>().add(TabSelected(.graph, storyId: storyId));
+  } on FlutterError {
+    // Widget tests mount FeedView without the shell. The MapRequested event
+    // above keeps the contract; navigation needs the real app.
   }
 }

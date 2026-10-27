@@ -63,10 +63,9 @@ void main() {
     final clock = _Clock();
     final bloc = _bloc(clock: clock);
     addTearDown(bloc.close);
-    await _open(bloc);
+    await _holding(bloc, clock, 'choice_ridge');
     bloc.add(const MuteToggled());
     await bloc.stream.first;
-    await _holding(bloc, clock, 'choice_ridge');
 
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
@@ -224,7 +223,8 @@ void main() {
     expect(calls.where((call) => call.name == 'commitChoice'), isEmpty);
   });
 
-  test('a commit that ends the run parks on the ending', () async {
+  test('a commit to an ending plays the final clip, then parks with the card',
+      () async {
     final clock = _Clock();
     final bloc = _bloc(
       clock: clock,
@@ -234,11 +234,113 @@ void main() {
     await _holding(bloc, clock, 'choice_temple');
 
     bloc.add(const HoldCompleted());
-    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.node.isEnding,
+    );
 
-    expect(bloc.state.playback!.node.isEnding, isTrue);
     expect(bloc.state.playback!.node.endingName, 'The door');
     expect(bloc.state.holdChoiceId, isNull);
+    expect(bloc.state.pendingRequestId, isNull);
+
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
+
+    // `_ending()` carries no closing line, so the card is already visible.
+    expect(bloc.state.endingSpeaking, isFalse);
+  });
+
+  test('an ending with a closing line speaks over the last frame', () async {
+    final clock = _Clock();
+    final bloc = _bloc(
+      clock: clock,
+      onCommit: (name, data) async => _commitResult(_endingWithLine()),
+    );
+    addTearDown(bloc.close);
+    await _holding(bloc, clock, 'choice_temple');
+
+    bloc.add(const HoldCompleted());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.node.isEnding,
+    );
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.ending && state.endingSpeaking,
+    );
+
+    clock.fire();
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.ending && !state.endingSpeaking,
+    );
+  });
+
+  test('trying another path restarts at the root and keeps sound', () async {
+    final clock = _Clock();
+    final calls = <_Call>[];
+    final bloc = _bloc(
+      clock: clock,
+      calls: calls,
+      onCommit: (name, data) async => _commitResult(_ending()),
+    );
+    addTearDown(bloc.close);
+    await _holding(bloc, clock, 'choice_temple');
+    bloc.add(const MuteToggled());
+    await bloc.stream.first;
+
+    bloc.add(const HoldCompleted());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.node.isEnding,
+    );
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
+
+    bloc.add(const OtherPathRequested());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          !state.playback!.node.isEnding,
+    );
+
+    expect(bloc.state.playback!.node.nodeId, 'node_001');
+    expect(bloc.state.muted, isFalse);
+    expect(bloc.state.autoMuted, isFalse);
+    final restarts = [
+      for (final call in calls)
+        if (call.name == 'startRun' && call.data?['restart'] == true) call,
+    ];
+    expect(restarts, hasLength(1));
+  });
+
+  test('asking for the map from the card changes nothing', () async {
+    final clock = _Clock();
+    final bloc = _bloc(
+      clock: clock,
+      onCommit: (name, data) async => _commitResult(_ending()),
+    );
+    addTearDown(bloc.close);
+    await _holding(bloc, clock, 'choice_temple');
+
+    bloc.add(const HoldCompleted());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.node.isEnding,
+    );
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
+
+    bloc.add(const MapRequested());
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.phase, FeedPhase.ending);
+    expect(bloc.state.endingSpeaking, isFalse);
   });
 
   test('commitChoice trims its ids and rejects a blank one', () async {
@@ -459,6 +561,15 @@ Map<String, dynamic> _ending() {
     },
     'choices': const [],
   };
+}
+
+Map<String, dynamic> _endingWithLine() {
+  final ending = _ending();
+  final node = Map<String, dynamic>.from(ending['node'] as Map);
+  node['ttsText'] = 'What should Jeff do now?';
+  node['ttsAudioUrl'] = 'https://example.com/end-voice.m4a';
+  node['ttsDurationSeconds'] = 2.5;
+  return {...ending, 'node': node};
 }
 
 Map<String, dynamic> _playback({

@@ -8,11 +8,13 @@ class RunRepository {
   final FunctionsClient functions;
 
   /// Opens the current run, or lets the server pick a story when [storyId]
-  /// is null. Does not send `restart`.
-  Future<RunStart> startRun({String? storyId}) async {
+  /// is null. With [restart] true, starts a new run at the root and marks
+  /// it active. Endings and visited nodes are kept server-side.
+  Future<RunStart> startRun({String? storyId, bool restart = false}) async {
     final id = storyId?.trim();
     final data = <String, dynamic>{
       if (id != null && id.isNotEmpty) 'storyId': id,
+      if (restart) 'restart': true,
     };
     final payload = await functions.call('startRun', data);
     return RunStart.fromJson(payload);

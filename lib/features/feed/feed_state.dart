@@ -24,6 +24,7 @@ class FeedState {
     this.holdChoiceId,
     this.holdSerial = 0,
     this.pendingRequestId,
+    this.endingSpeaking = false,
   });
 
   final FeedPhase phase;
@@ -48,6 +49,10 @@ class FeedState {
   /// so the server answers the stored result instead of advancing twice.
   final String? pendingRequestId;
 
+  /// Inside `ending`: true while the closing line plays over the last frame.
+  /// False once the card is visible. Always false outside `ending`.
+  final bool endingSpeaking;
+
   FeedState copy({
     FeedPhase? phase,
     bool? muted,
@@ -56,6 +61,7 @@ class FeedState {
     int? holdSerial,
     bool clearHold = false,
     String? pendingRequestId,
+    bool? endingSpeaking,
   }) {
     return FeedState(
       phase: phase ?? this.phase,
@@ -68,6 +74,7 @@ class FeedState {
       holdChoiceId: clearHold ? null : holdChoiceId ?? this.holdChoiceId,
       holdSerial: clearHold ? 0 : holdSerial ?? this.holdSerial,
       pendingRequestId: pendingRequestId ?? this.pendingRequestId,
+      endingSpeaking: endingSpeaking ?? this.endingSpeaking,
     );
   }
 
@@ -83,7 +90,8 @@ class FeedState {
         other.autoMuted == autoMuted &&
         other.holdChoiceId == holdChoiceId &&
         other.holdSerial == holdSerial &&
-        other.pendingRequestId == pendingRequestId;
+        other.pendingRequestId == pendingRequestId &&
+        other.endingSpeaking == endingSpeaking;
   }
 
   @override
@@ -98,5 +106,6 @@ class FeedState {
     holdChoiceId,
     holdSerial,
     pendingRequestId,
+    endingSpeaking,
   );
 }
