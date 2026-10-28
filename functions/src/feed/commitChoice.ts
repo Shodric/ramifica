@@ -11,6 +11,7 @@ import {
   optString,
   parseSagaDoc,
   requireUid,
+  rewardCodeFor,
   rewardIdFor,
   SagaDoc,
   toRecord,
@@ -28,11 +29,13 @@ export interface CommitEnding {
 export interface CommitSagaUnlock {
   sagaId: string;
   storyId: string;
+  title: string | null;
 }
 
 /** Reward grant for the reached ending, or null when still active. */
 export interface CommitReward {
   rewardId: string;
+  code: string;
 }
 
 export interface CommitResult {
@@ -81,6 +84,7 @@ export const commitChoiceWith = async (
   const requestId = cleanId(fields.requestId, "requestId");
 
   const sagas = await readAuthorSagas(db, uid, runId);
+  const unlockTitles = await readUnlockTitles(db, sagas);
 
   const landed = await db.runTransaction(async (tx) => {
     const runRef = db.doc(`users/${uid}/runs/${runId}`);
@@ -101,7 +105,7 @@ export const commitChoiceWith = async (
       return {
         storyId,
         toNodeId: last.toNodeId,
-        ...restoreOutcome(last.outcome, storyId, last.toNodeId),
+        ...restoreOutcome(last.outcome, uid, storyId, last.toNodeId),
       };
     }
     if (run.currentNodeId !== fromNodeId) {
@@ -163,6 +167,7 @@ export const commitChoiceWith = async (
         sagaUnlocked = {
           sagaId: unlock.saga.sagaId,
           storyId: unlock.rule.toStoryId,
+          title: unlockTitles.get(unlock.rule.toStoryId) ?? null,
         };
       }
     }
@@ -173,16 +178,23 @@ export const commitChoiceWith = async (
       const rewardId = rewardIdFor(storyId, toNodeId);
       const rewardRef = db.doc(`users/${uid}/rewards/${rewardId}`);
       const rewardSnap = await tx.get(rewardRef);
+      // The code is fixed per earner and ending: the first grant stores
+      // it, later commits reuse it, and legacy docs without one get the
+      // same value backfilled. Never reissued.
+      const code = rewardCodeFor(uid, storyId, toNodeId);
       if (!rewardSnap.exists) {
         await tx.set(rewardRef, {
           storyId,
           endingNodeId: toNodeId,
           sagaId: unlock?.saga.sagaId ?? null,
+          code,
           grantedAt: now,
           requestId,
         });
+      } else if (optString(rewardSnap.data()?.code) === null) {
+        await tx.update(rewardRef, {code});
       }
-      reward = {rewardId};
+      reward = {rewardId, code};
     }
     await tx.update(runRef, {
       currentNodeId: toNodeId,
@@ -236,6 +248,11 @@ export const commitChoiceWith = async (
     );
     return {storyId, toNodeId, ending: endingView, sagaUnlocked, reward};
   });
+  const sagaUnlocked = await completeUnlockTitle(
+    db,
+    unlockTitles,
+    landed.sagaUnlocked
+  );
   const runSnap = await db.doc(`users/${uid}/runs/${runId}`).get();
   const run = docData(runSnap, "Run");
   const status = run.status === "ended" ? "ended" : "active";
@@ -251,7 +268,7 @@ export const commitChoiceWith = async (
   return {
     playback,
     ending: landed.ending,
-    sagaUnlocked: landed.sagaUnlocked,
+    sagaUnlocked,
     reward: landed.reward,
   };
 };
@@ -296,16 +313,68 @@ const readAuthorSagas = async (
 };
 
 /**
+ * Display titles for every story the author's sagas can open, read
+ * outside the commit transaction so the unlock payload can carry the
+ * opened story's title with no reads inside the tx.
+ * @param {Db} db Firestore.
+ * @param {SagaDoc[]} sagas Author sagas holding the run's story.
+ * @return {Promise<Map<string, string>>} Titles by opened story id.
+ */
+const readUnlockTitles = async (
+  db: Db,
+  sagas: SagaDoc[]
+): Promise<Map<string, string>> => {
+  const ids = new Set<string>();
+  for (const saga of sagas) {
+    for (const rule of saga.unlocks) ids.add(rule.toStoryId);
+  }
+  const titles = new Map<string, string>();
+  for (const storyId of ids) {
+    const snap = await db.doc(`stories/${storyId}`).get();
+    const title = snap.exists ? optString(snap.data()?.title) : null;
+    if (title !== null) titles.set(storyId, title);
+  }
+  return titles;
+};
+
+/**
+ * Fills a null unlock title from the pre-read map, or with one read for
+ * unlocks stored before titles existed. Read-only: the stored outcome is
+ * left untouched, so replays still write nothing.
+ * @param {Db} db Firestore.
+ * @param {Map<string, string>} titles Pre-read titles by story id.
+ * @param {CommitSagaUnlock | null} unlock The unlock to complete.
+ * @return {Promise<CommitSagaUnlock | null>} The unlock with its title.
+ */
+const completeUnlockTitle = async (
+  db: Db,
+  titles: Map<string, string>,
+  unlock: CommitSagaUnlock | null
+): Promise<CommitSagaUnlock | null> => {
+  if (unlock === null || unlock.title !== null) return unlock;
+  const known = titles.get(unlock.storyId) ?? null;
+  if (known !== null) return {...unlock, title: known};
+  const snap = await db.doc(`stories/${unlock.storyId}`).get();
+  const title = snap.exists ? optString(snap.data()?.title) : null;
+  return {...unlock, title};
+};
+
+/**
  * Stored commit outcome for a hold replay. Same `requestId` returns the
  * same ending, unlock, and reward without writing twice. Commits written
- * before the outcome existed replay as all null.
+ * before the outcome existed replay as all null. Outcomes stored before
+ * the code existed complete the same deterministic code, never a new one;
+ * unlocks stored before the title existed pass a null title, completed
+ * after the transaction by reading the unlocked story.
  * @param {unknown} raw Stored `lastCommit.outcome`.
+ * @param {string} uid Earner, for the deterministic code.
  * @param {string} storyId Finished story.
  * @param {string} toNodeId Destination node.
  * @return {Object} The ending, unlock, and reward to return.
  */
 const restoreOutcome = (
   raw: unknown,
+  uid: string,
   storyId: string,
   toNodeId: string
 ): {
@@ -320,7 +389,12 @@ const restoreOutcome = (
   const rawReward = asRecord(outcome.reward);
   const unlockSagaId = rawUnlock ? optString(rawUnlock.sagaId) : null;
   const unlockStoryId = rawUnlock ? optString(rawUnlock.storyId) : null;
+  const unlockTitle = rawUnlock ? optString(rawUnlock.title) : null;
   const rewardId = rawReward ? optString(rawReward.rewardId) : null;
+  const stored = rawReward ? optString(rawReward.code) : null;
+  const code =
+    stored ??
+    (rewardId !== null ? rewardCodeFor(uid, storyId, toNodeId) : null);
   return {
     ending: rawEnding ?
       {
@@ -332,8 +406,8 @@ const restoreOutcome = (
       null,
     sagaUnlocked:
       unlockSagaId !== null && unlockStoryId !== null ?
-        {sagaId: unlockSagaId, storyId: unlockStoryId} :
+        {sagaId: unlockSagaId, storyId: unlockStoryId, title: unlockTitle} :
         null,
-    reward: rewardId !== null ? {rewardId} : null,
+    reward: rewardId !== null && code !== null ? {rewardId, code} : null,
   };
 };

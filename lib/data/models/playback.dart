@@ -34,27 +34,132 @@ class RunStart {
   int get hashCode => Object.hash(runId, storyId, status);
 }
 
-/// The `commitChoice` payload: the destination playback.
-///
-/// A later slice adds the ending, the saga unlock, and the reward code.
+/// The `commitChoice` payload: the destination playback plus the ending
+/// outcome. `ending`, `sagaUnlocked`, and `reward` are null while the run
+/// is still active; absent keys parse the same as null so old payloads
+/// still parse.
 class CommitResult {
-  const CommitResult({required this.playback});
+  const CommitResult({required this.playback, this.ending, this.sagaUnlocked, this.reward});
 
   factory CommitResult.fromJson(Map<String, dynamic> json) {
     return CommitResult(
       playback: Playback.fromJson(_objectMap(json['playback'])),
+      ending: _maybeMap(json['ending'], EndingResult.fromJson),
+      sagaUnlocked: _maybeMap(json['sagaUnlocked'], SagaUnlocked.fromJson),
+      reward: _maybeMap(json['reward'], RewardGrant.fromJson),
     );
   }
 
   final Playback playback;
 
+  /// The reached ending. Null while the run is still active.
+  final EndingResult? ending;
+
+  /// The newly opened story, if this ending unlocked one. Null when the
+  /// run is active or when the saga was already unlocked (re-earn).
+  final SagaUnlocked? sagaUnlocked;
+
+  /// The idempotent grant for this ending. Null while the run is active.
+  /// Display only: granting decisions live server-side.
+  final RewardGrant? reward;
+
   @override
   bool operator ==(Object other) {
-    return other is CommitResult && other.playback == playback;
+    return other is CommitResult &&
+        other.playback == playback &&
+        other.ending == ending &&
+        other.sagaUnlocked == sagaUnlocked &&
+        other.reward == reward;
   }
 
   @override
-  int get hashCode => playback.hashCode;
+  int get hashCode => Object.hash(playback, ending, sagaUnlocked, reward);
+}
+
+/// The ending reached by `commitChoice`. All display fields are optional:
+/// a partial map still parses, and the card hides what is missing.
+class EndingResult {
+  const EndingResult({this.storyId, this.nodeId, this.name, this.type});
+
+  factory EndingResult.fromJson(Map<String, dynamic> json) {
+    return EndingResult(
+      storyId: _optionalString(json['storyId']),
+      nodeId: _optionalString(json['nodeId']),
+      name: _optionalString(json['endingName']),
+      type: _optionalString(json['endingType']),
+    );
+  }
+
+  final String? storyId;
+  final String? nodeId;
+  final String? name;
+  final String? type;
+
+  @override
+  bool operator ==(Object other) {
+    return other is EndingResult &&
+        other.storyId == storyId &&
+        other.nodeId == nodeId &&
+        other.name == name &&
+        other.type == type;
+  }
+
+  @override
+  int get hashCode => Object.hash(storyId, nodeId, name, type);
+}
+
+/// The story this ending newly opened, if any. `title` is the display
+/// name the card announces as `Unlocked {title}`.
+class SagaUnlocked {
+  const SagaUnlocked({this.sagaId, this.storyId, this.title});
+
+  factory SagaUnlocked.fromJson(Map<String, dynamic> json) {
+    return SagaUnlocked(
+      sagaId: _optionalString(json['sagaId']),
+      storyId: _optionalString(json['storyId']),
+      title: _optionalString(json['title']),
+    );
+  }
+
+  final String? sagaId;
+  final String? storyId;
+  final String? title;
+
+  @override
+  bool operator ==(Object other) {
+    return other is SagaUnlocked &&
+        other.sagaId == sagaId &&
+        other.storyId == storyId &&
+        other.title == title;
+  }
+
+  @override
+  int get hashCode => Object.hash(sagaId, storyId, title);
+}
+
+/// The reward grant for an ending. `rewardId` is the deterministic
+/// `{storyId}_{endingNodeId}` doc id; `code` is the displayable code the
+/// card shows. Display only: granting decisions live server-side.
+class RewardGrant {
+  const RewardGrant({this.rewardId, this.code});
+
+  factory RewardGrant.fromJson(Map<String, dynamic> json) {
+    return RewardGrant(
+      rewardId: _optionalString(json['rewardId']),
+      code: _optionalString(json['code']),
+    );
+  }
+
+  final String? rewardId;
+  final String? code;
+
+  @override
+  bool operator ==(Object other) {
+    return other is RewardGrant && other.rewardId == rewardId && other.code == code;
+  }
+
+  @override
+  int get hashCode => Object.hash(rewardId, code);
 }
 
 /// The `loadPlayback` payload: story, current node, and choices.
@@ -149,6 +254,7 @@ class PlaybackNode {
     this.ttsDurationSeconds,
     this.endingName,
     this.endingType,
+    this.rewardCode,
   });
 
   factory PlaybackNode.fromJson(Map<String, dynamic> json) {
@@ -166,6 +272,7 @@ class PlaybackNode {
       ttsDurationSeconds: _optionalDouble(json['ttsDurationSeconds']),
       endingName: _optionalString(json['endingName']),
       endingType: _optionalString(json['endingType']),
+      rewardCode: _optionalString(json['rewardCode']),
     );
   }
 
@@ -182,6 +289,7 @@ class PlaybackNode {
   final double? ttsDurationSeconds;
   final String? endingName;
   final String? endingType;
+  final String? rewardCode;
 
   @override
   bool operator ==(Object other) {
@@ -198,7 +306,8 @@ class PlaybackNode {
         other.ttsAudioUrl == ttsAudioUrl &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
         other.endingName == endingName &&
-        other.endingType == endingType;
+        other.endingType == endingType &&
+        other.rewardCode == rewardCode;
   }
 
   @override
@@ -216,6 +325,7 @@ class PlaybackNode {
     ttsDurationSeconds,
     endingName,
     endingType,
+    rewardCode,
   );
 }
 
@@ -318,6 +428,13 @@ class PlaybackTarget {
 Map<String, dynamic> _objectMap(Object? value) {
   if (value is! Map) throw const AppFailure(.invalid);
   return value.map((key, item) => MapEntry(key.toString(), item));
+}
+
+/// Null (or a missing key) parses as null; a present map parses with
+/// [parse]. Anything else is invalid.
+T? _maybeMap<T>(Object? value, T Function(Map<String, dynamic>) parse) {
+  if (value == null) return null;
+  return parse(_objectMap(value));
 }
 
 String _requiredString(Object? value) {

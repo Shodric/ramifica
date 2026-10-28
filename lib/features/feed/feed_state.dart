@@ -18,6 +18,7 @@ class FeedState {
     this.storyId,
     this.runId,
     this.playback,
+    this.sagaUnlocked,
     this.failure,
     this.muted = true,
     this.autoMuted = true,
@@ -27,11 +28,16 @@ class FeedState {
     this.endingSpeaking = false,
     this.hiddenPaused = false,
   });
-
   final FeedPhase phase;
   final String? storyId;
   final String? runId;
   final Playback? playback;
+
+  /// The saga story this ending newly unlocked, if any. Set only on the
+  /// fresh commit that unlocked it; reopens and re-earns pass null, so the
+  /// card announces `Unlocked {title}` exactly once.
+  final SagaUnlocked? sagaUnlocked;
+
   final String? failure;
 
   /// Clip and narrator. Starts muted so the browser can autoplay.
@@ -74,6 +80,7 @@ class FeedState {
       storyId: storyId,
       runId: runId,
       playback: playback,
+      sagaUnlocked: sagaUnlocked,
       failure: failure,
       muted: muted ?? this.muted,
       autoMuted: autoMuted ?? this.autoMuted,
@@ -92,6 +99,7 @@ class FeedState {
         other.storyId == storyId &&
         other.runId == runId &&
         other.playback == playback &&
+        other.sagaUnlocked == sagaUnlocked &&
         other.failure == failure &&
         other.muted == muted &&
         other.autoMuted == autoMuted &&
@@ -108,6 +116,7 @@ class FeedState {
     storyId,
     runId,
     playback,
+    sagaUnlocked,
     failure,
     muted,
     autoMuted,

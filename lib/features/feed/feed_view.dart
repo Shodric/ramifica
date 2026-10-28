@@ -302,6 +302,8 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                               playback.node.endingName ??
                               playback.node.title,
                           type: playback.node.endingType,
+                          rewardCode: playback.node.rewardCode,
+                          unlockedTitle: state.sagaUnlocked?.title,
                           onSeeMap: () {
                             bloc.add(const MapRequested());
                             _openMap(context, state.storyId);

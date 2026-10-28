@@ -5,7 +5,8 @@ import {cleanId, Db, docData, requireUid, toRecord} from "./shared";
 
 /**
  * Reads the caller's run, the current node, and its destinations. Secret
- * destinations travel as id and label only.
+ * destinations travel as id and label only. On an ended run the earner's
+ * reward code travels with the playback, read from their reward doc.
  */
 export const loadPlayback = onCall(
   {enforceAppCheck: true, maxInstances: 20},

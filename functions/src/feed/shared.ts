@@ -1,3 +1,4 @@
+import {createHash} from "crypto";
 import {HttpsError} from "firebase-functions/v2/https";
 
 /**
@@ -226,6 +227,27 @@ export function findSagaUnlock(
  */
 export function rewardIdFor(storyId: string, endingNodeId: string): string {
   return `${storyId}_${endingNodeId}`;
+}
+
+/**
+ * Human-readable reward code for one earner and ending. Deterministic in
+ * the earner, so replays, restarts, and legacy docs without a stored code
+ * all complete the same value without reissuing.
+ * @param {string} uid Earner.
+ * @param {string} storyId Finished story.
+ * @param {string} endingNodeId Reached ending node.
+ * @return {string} The code, as `XXXX-XXXX`.
+ */
+export function rewardCodeFor(
+  uid: string,
+  storyId: string,
+  endingNodeId: string
+): string {
+  const hash = createHash("sha256")
+    .update(`${uid}\n${storyId}\n${endingNodeId}`)
+    .digest("hex")
+    .toUpperCase();
+  return `${hash.slice(0, 4)}-${hash.slice(4, 8)}`;
 }
 
 /**

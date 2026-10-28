@@ -1,5 +1,12 @@
 import {HttpsError} from "firebase-functions/v2/https";
-import {asRecord, Db, docData, readPlayableStory} from "./shared";
+import {
+  asRecord,
+  Db,
+  docData,
+  readPlayableStory,
+  rewardCodeFor,
+  rewardIdFor,
+} from "./shared";
 
 export interface PlaybackChoiceView {
   choiceId: string;
@@ -11,6 +18,11 @@ export interface PlaybackChoiceView {
   radius: number;
   targetSecret: boolean;
   target: {nodeId: string; videoUrl: string} | null;
+}
+
+export interface PlaybackReward {
+  rewardId: string;
+  code: string;
 }
 
 export interface PlaybackView {
@@ -31,15 +43,19 @@ export interface PlaybackView {
     videoFrameLastBlurData: string;
     endingName: string | null;
     endingType: string | null;
+    rewardCode: string | null;
   };
   choices: PlaybackChoiceView[];
+  reward: PlaybackReward | null;
 }
 
 /**
  * Builds the `loadPlayback` contract from live docs: the story, the
  * current node, and one entry per exit. Secret destinations travel as id
  * and label only; their body arrives with the `commitChoice` that reaches
- * them. Pure reads, no writes.
+ * them. On an ended run the earner's reward doc is read for the code, so
+ * reopening the run completes the same code without reissuing. Pure reads,
+ * no writes.
  * @param {Db} db Firestore.
  * @param {string} uid Caller.
  * @param {object} run Run locator.
@@ -61,6 +77,10 @@ export async function fetchPlayback(
   const choices = await Promise.all(
     rawChoices.map((raw) => buildChoice(db, run.storyId, raw))
   );
+  const reward =
+    run.status === "ended" ?
+      await readEndingReward(db, uid, run.storyId, run.currentNodeId) :
+      null;
   return {
     runId: run.runId,
     status: run.status,
@@ -88,10 +108,38 @@ export async function fetchPlayback(
       ),
       endingName: optString(node.endingName),
       endingType: optString(node.endingType),
+      rewardCode: reward ? reward.code : null,
     },
     choices,
+    reward,
   };
 }
+
+/**
+ * The earner's reward for one ending, read only. Missing docs stay null;
+ * legacy docs without a stored code complete the same deterministic value
+ * the grant path stores, so reopening never writes or reissues.
+ * @param {Db} db Firestore.
+ * @param {string} uid Earner.
+ * @param {string} storyId Finished story.
+ * @param {string} endingNodeId Reached ending node.
+ * @return {Promise<PlaybackReward | null>} The reward, or null.
+ */
+const readEndingReward = async (
+  db: Db,
+  uid: string,
+  storyId: string,
+  endingNodeId: string
+): Promise<PlaybackReward | null> => {
+  const rewardId = rewardIdFor(storyId, endingNodeId);
+  const snap = await db.doc(`users/${uid}/rewards/${rewardId}`).get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  const code =
+    optString(data?.code) ?? rewardCodeFor(uid, storyId, endingNodeId);
+  return {rewardId, code};
+};
+
 const buildChoice = async (
   db: Db,
   storyId: string,

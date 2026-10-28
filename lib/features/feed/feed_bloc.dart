@@ -229,7 +229,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         requestId: requestId,
       );
       if (emit.isDone) return;
-      _arrive(result.playback, emit);
+      _arrive(result, emit);
     } on AppFailure catch (error) {
       if (emit.isDone) return;
       if (error.code == .invalid) {
@@ -296,7 +296,10 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   /// A fresh destination. An ending still plays its clip once from the start;
   /// only a reopened `ended` run parks on the last frame (see `_park`).
-  void _arrive(Playback next, Emitter<FeedState> emit) {
+  /// The saga unlock rides along so the card announces it exactly once:
+  /// reopens come through `_park`, which leaves it null.
+  void _arrive(CommitResult result, Emitter<FeedState> emit) {
+    final next = result.playback;
     _windowSpent = false;
     _holdSealed = false;
     prefetcher.warm(next);
@@ -310,6 +313,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         storyId: next.story.storyId,
         runId: next.runId,
         playback: next,
+        sagaUnlocked: result.sagaUnlocked,
         muted: state.muted,
         autoMuted: state.autoMuted,
       ),

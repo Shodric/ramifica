@@ -2,7 +2,7 @@ import {strict as assert} from "assert";
 import {test} from "node:test";
 import {commitChoiceWith} from "./commitChoice";
 import {loadPlaybackWith} from "./loadPlayback";
-import {Db, DbCol, DbDoc, DbRef, DbTx} from "./shared";
+import {Db, DbCol, DbDoc, DbRef, DbTx, rewardCodeFor} from "./shared";
 import {startRunWith} from "./startRun";
 
 type Fields = {[field: string]: unknown};
@@ -461,8 +461,12 @@ test("commitChoice advances, counts, visits, and ends", async () => {
   assert.deepEqual(result.sagaUnlocked, {
     sagaId: "saga_ab",
     storyId: "story_b",
+    title: "Story B",
   });
-  assert.deepEqual(result.reward, {rewardId: "story_a_node_002"});
+  assert.deepEqual(result.reward, {
+    rewardId: "story_a_node_002",
+    code: rewardCodeFor("u1", "story_a", "node_002"),
+  });
   const run = db.store.get(`users/u1/runs/${started.runId}`);
   assert.equal(run?.status, "ended");
   assert.equal(run?.endingNodeId, "node_002");
@@ -603,7 +607,10 @@ test("commitChoice re-earn after restart unlocks nothing twice", async () => {
   assert.equal(reEarned.playback.status, "ended");
   assert.equal(reEarned.ending?.nodeId, "node_002");
   assert.equal(reEarned.sagaUnlocked, null);
-  assert.deepEqual(reEarned.reward, {rewardId: "story_a_node_002"});
+  assert.deepEqual(reEarned.reward, {
+    rewardId: "story_a_node_002",
+    code: rewardCodeFor("u1", "story_a", "node_002"),
+  });
   assert.deepEqual(
     db.store.get("users/u1/storyState/story_a")?.endings,
     ["node_002"]
@@ -643,7 +650,10 @@ test("commitChoice wrong ending opens no saga story", async () => {
     endingType: "secreto",
   });
   assert.equal(result.sagaUnlocked, null);
-  assert.deepEqual(result.reward, {rewardId: "story_a_node_004"});
+  assert.deepEqual(result.reward, {
+    rewardId: "story_a_node_004",
+    code: rewardCodeFor("u1", "story_a", "node_004"),
+  });
   assert.deepEqual(
     db.store.get("users/u1/storyState/story_a")?.endings,
     ["node_004"]
@@ -673,5 +683,83 @@ test("commitChoice off the ending path writes no saga or reward", async () => {
     [...db.store.keys()].filter((key) => key.startsWith("users/u1/rewards/"))
       .length,
     0
+  );
+});
+
+test("commitChoice mints the code once", async () => {
+  const db = new MemDb();
+  await seed(db);
+  const started = await startRunWith(db, "u1", {});
+  const earned = await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_1",
+  });
+  const code = rewardCodeFor("u1", "story_a", "node_002");
+  assert.deepEqual(earned.reward, {rewardId: "story_a_node_002", code});
+  assert.deepEqual(earned.sagaUnlocked, {
+    sagaId: "saga_ab",
+    storyId: "story_b",
+    title: "Story B",
+  });
+  assert.equal(earned.playback.node.rewardCode, code);
+  assert.equal(earned.playback.reward?.code, code);
+  assert.equal(db.store.get("users/u1/rewards/story_a_node_002")?.code, code);
+
+  // Reopening the ended run reads the same code and writes nothing new.
+  const before = db.store.size;
+  const reopened = await loadPlaybackWith(db, "u1", {runId: started.runId});
+  assert.equal(reopened.status, "ended");
+  assert.equal(reopened.node.rewardCode, code);
+  assert.deepEqual(reopened.reward, {rewardId: "story_a_node_002", code});
+  assert.equal(db.store.size, before);
+
+  // Same-request replay and a fresh-request re-earn never reissue.
+  const replayed = await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_1",
+  });
+  assert.equal(replayed.reward?.code, code);
+  assert.equal(replayed.playback.node.rewardCode, code);
+  // Stored outcomes from before the code and title existed complete both.
+  const legacyRun = db.store.get(`users/u1/runs/${started.runId}`);
+  const legacyLast = legacyRun?.lastCommit as Record<string, unknown>;
+  const legacyOutcome = legacyLast?.outcome as Record<string, unknown>;
+  legacyLast.outcome = {
+    ...legacyOutcome,
+    reward: {rewardId: "story_a_node_002"},
+    sagaUnlocked: {sagaId: "saga_ab", storyId: "story_b"},
+  };
+  const legacyReplay = await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_1",
+  });
+  assert.equal(legacyReplay.reward?.code, code);
+  assert.deepEqual(legacyReplay.sagaUnlocked, {
+    sagaId: "saga_ab",
+    storyId: "story_b",
+    title: "Story B",
+  });
+  const restarted = await startRunWith(db, "u1", {restart: true});
+  const reEarned = await commitChoiceWith(db, "u1", {
+    runId: restarted.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_2",
+  });
+  assert.equal(reEarned.reward?.code, code);
+  assert.equal(
+    db.store.get("users/u1/rewards/story_a_node_002")?.code,
+    code
+  );
+  assert.equal(
+    [...db.store.keys()].filter((key) => key.startsWith("users/u1/rewards/"))
+      .length,
+    1
   );
 });

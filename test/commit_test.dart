@@ -251,6 +251,32 @@ void main() {
     expect(bloc.state.endingSpeaking, isFalse);
   });
 
+  test('a fresh unlock threads the saga title into state', () async {
+    final clock = _Clock();
+    final bloc = _bloc(
+      clock: clock,
+      onCommit: (name, data) async => {
+        ..._commitResult(_ending()),
+        'sagaUnlocked': {
+          'sagaId': 'saga_ab',
+          'storyId': 'story_river',
+          'title': 'The river saga',
+        },
+      },
+    );
+    addTearDown(bloc.close);
+    await _holding(bloc, clock, 'choice_temple');
+
+    bloc.add(const HoldCompleted());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.node.isEnding,
+    );
+
+    expect(bloc.state.sagaUnlocked?.title, 'The river saga');
+  });
+
   test('an ending with a closing line speaks over the last frame', () async {
     final clock = _Clock();
     final bloc = _bloc(
@@ -408,6 +434,67 @@ void main() {
     });
 
     expect(result.playback.node.nodeId, 'node_001');
+  });
+
+  test('a commit parses the ending outcome and reward code', () {
+    final result = CommitResult.fromJson({
+      'playback': _ending(),
+      'ending': {
+        'storyId': 'story_temple',
+        'nodeId': 'node_end',
+        'endingName': 'The door',
+        'endingType': 'tragic',
+      },
+      'sagaUnlocked': {'sagaId': 'saga_ab', 'storyId': 'story_river'},
+      'reward': {'rewardId': 'story_temple_node_end', 'code': 'DOOR-7Q2X'},
+    });
+
+    expect(result.ending?.name, 'The door');
+    expect(result.ending?.nodeId, 'node_end');
+    expect(result.sagaUnlocked?.storyId, 'story_river');
+    expect(result.reward?.rewardId, 'story_temple_node_end');
+    expect(result.reward?.code, 'DOOR-7Q2X');
+  });
+
+  test('a commit without the ending outcome parses with nulls', () {
+    final result = CommitResult.fromJson({'playback': _playback()});
+
+    expect(result.ending, isNull);
+    expect(result.sagaUnlocked, isNull);
+    expect(result.reward, isNull);
+    expect(result.playback.node.rewardCode, isNull);
+  });
+
+  test('a replay parses the same reward code every time', () {
+    final payload = {
+      'playback': _ending(),
+      'ending': {
+        'storyId': 'story_temple',
+        'nodeId': 'node_end',
+        'endingName': 'The door',
+        'endingType': 'tragic',
+      },
+      'sagaUnlocked': null,
+      'reward': {'rewardId': 'story_temple_node_end', 'code': 'DOOR-7Q2X'},
+    };
+
+    final first = CommitResult.fromJson(payload);
+    final second = CommitResult.fromJson(payload);
+
+    expect(second, first);
+    expect(second.reward?.code, 'DOOR-7Q2X');
+  });
+
+  test('an ended node parses its reward code', () {
+    final ending = _ending();
+    final node = Map<String, dynamic>.from(ending['node'] as Map);
+    node['rewardCode'] = 'DOOR-7Q2X';
+    final result = CommitResult.fromJson({
+      ..._commitResult({...ending, 'node': node}),
+      'reward': {'rewardId': 'story_temple_node_end', 'code': 'DOOR-7Q2X'},
+    });
+
+    expect(result.playback.node.rewardCode, 'DOOR-7Q2X');
   });
 
   testWidgets('the portal stays full while committing', (tester) async {
