@@ -1,4 +1,5 @@
-import 'dart:js_interop';
+import 'auth_redirect_stub.dart'
+    if (dart.library.js_interop) 'auth_redirect_web.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -161,28 +162,7 @@ AuthRepository createFirebaseAuthRepository() {
   return AuthRepository(
     auth: FirebaseAuthGateway(),
     users: FirestoreUserDirectory(),
-    preferGoogleRedirect: _currentPagePrefersGoogleRedirect(),
+    preferGoogleRedirect: currentPagePrefersGoogleRedirect(),
   );
 }
 
-@JS('navigator.userAgent')
-external String get _navigatorUserAgent;
-
-@JS('navigator.standalone')
-external JSBoolean? get _navigatorStandalone;
-
-@JS('window.matchMedia')
-external _MediaQueryList _matchMedia(String query);
-
-extension type _MediaQueryList._(JSObject _) implements JSObject {
-  external bool get matches;
-}
-
-bool _currentPagePrefersGoogleRedirect() {
-  final displayMode = _matchMedia('(display-mode: standalone)').matches;
-  final iosStandalone = _navigatorStandalone?.toDart ?? false;
-  return googleRedirectOnIosPwa(
-    userAgent: _navigatorUserAgent,
-    standalone: displayMode || iosStandalone,
-  );
-}

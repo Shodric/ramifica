@@ -11,6 +11,10 @@ void main() {
     expect(hosting['cleanUrls'], isTrue);
 
     expect(hosting['rewrites'], [
+      {
+        'source': '/story/**',
+        'function': {'functionId': 'storyPage', 'region': 'us-central1'},
+      },
       {'source': '**', 'destination': '/index.html'},
     ]);
 
@@ -31,7 +35,7 @@ void main() {
     final raw = File('firebase.json').readAsStringSync();
     expect(raw.contains('Cross-Origin-Embedder-Policy'), isFalse);
     expect(raw.contains('Cross-Origin-Opener-Policy'), isFalse);
-    expect(raw.contains('storyPage'), isFalse);
+    expect(raw.contains('storyPage'), isTrue);
   });
 
   test('emulators and the default project are fixed', () {

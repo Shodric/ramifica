@@ -114,13 +114,16 @@ void main() {
     bloc.add(const HoldStarted('choice_ridge'));
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
     bloc.add(const HoldCompleted());
-    await Future<void>.delayed(Duration.zero);
-
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    final runId = bloc.state.runId;
     bloc.add(const HoldCancelled());
     await Future<void>.delayed(Duration.zero);
 
-    expect(bloc.state.phase, FeedPhase.holding);
-    expect(bloc.state.holdChoiceId, 'choice_ridge');
+    // The release arrived after the commit went through: ignored, no
+    // revert to the window, same run, hold cleared.
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.runId, runId);
+    expect(bloc.state.holdChoiceId, isNull);
   });
 
   testWidgets('the window shows each label under its ring', (tester) async {

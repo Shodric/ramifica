@@ -101,10 +101,17 @@ void main() {
       final repository = FollowRepository(
         fetchAuthorIds: (_) async => {'u_a', 'u_b'},
         fetchStoryDocs: (authorIds) async {
-          if (authorIds.contains('u_a')) {
-            return [_doc('old', 1, author: 'u_a'), _doc('new', 3)];
-          }
-          return [_doc('mid', 2), _doc('undated', null), _badDoc('broken')];
+          return [
+            if (authorIds.contains('u_a')) ...[
+              _doc('old', 1, author: 'u_a'),
+              _doc('new', 3),
+            ],
+            if (authorIds.contains('u_b')) ...[
+              _doc('mid', 2),
+              _doc('undated', null),
+              _badDoc('broken'),
+            ],
+          ];
         },
       );
 
