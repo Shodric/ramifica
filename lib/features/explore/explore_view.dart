@@ -16,9 +16,10 @@ import 'package:ramifica/features/explore/explore_event.dart';
 import 'package:ramifica/features/explore/explore_state.dart';
 
 /// Explore tab: scrolling column of cards drawn from [ExploreBloc] state.
-/// Creates its own bloc; tests inject [bloc]. Story taps send
-/// [StoryStartRequested] and leave through [onStoryOpen]; the view never
-/// calls a repository or the router directly.
+/// Creates its own bloc; tests inject [bloc]. Story taps record
+/// [StoryStartRequested] and leave through [onStoryOpen] (or the story
+/// route when no callback is set); the view never calls a repository or
+/// startRun — playback starts in Feed.
 class ExploreView extends StatefulWidget {
   const ExploreView({
     super.key,
@@ -137,8 +138,15 @@ class _ExploreViewState extends State<ExploreView> {
   Widget _forYou(BuildContext context, ExploreState state) {
     final featured = state.featuredStory;
     final campaigns = state.campaigns;
-    final stories = state.tabStories;
+    final stories = state.filteredStories;
     if (featured == null && campaigns.isEmpty && stories.isEmpty) {
+      if (state.isSearching) {
+        return const Center(
+          child: EmptyState(
+            message: 'No stories match your search. Try another search.',
+          ),
+        );
+      }
       return const Center(
         child: EmptyState(message: 'No stories yet. Check back soon.'),
       );
@@ -195,12 +203,15 @@ class _ExploreViewState extends State<ExploreView> {
     );
   }
 
-  /// Following tab: one row per author behind the tab-filtered stories.
+  /// Following tab: one row per author behind the query-filtered stories.
   /// Follow state is read-only display from [ExploreState.followingIds].
+  /// Empty while not searching and nobody followed offers a button back
+  /// to the For you tab (author browse); empty from a search shows the
+  /// no-results state instead.
   Widget _following(BuildContext context, ExploreState state) {
     final seen = <String>{};
     final rows = <AuthorRow>[];
-    for (final story in state.tabStories) {
+    for (final story in state.filteredStories) {
       final authorId = story.authorId?.trim() ?? '';
       if (authorId.isEmpty || !seen.add(authorId)) continue;
       rows.add(
@@ -215,9 +226,20 @@ class _ExploreViewState extends State<ExploreView> {
       );
     }
     if (rows.isEmpty) {
+      if (!state.isSearching && !state.hasFollowedStories) {
+        return Center(
+          child: EmptyState(
+            message: 'Stories from people you follow show up here.',
+            actionLabel: 'Browse stories',
+            onAction: () => context.read<ExploreBloc>().add(
+              const CatalogTabSelected(ExploreTab.forYou),
+            ),
+          ),
+        );
+      }
       return const Center(
         child: EmptyState(
-          message: 'Stories from people you follow show up here.',
+          message: 'No stories match your search. Try another search.',
         ),
       );
     }

@@ -42,6 +42,10 @@ class ExploreBloc extends Bloc<ExploreEvent, ExploreState> {
         following = await follows.followingIds(uid);
         if (emit.isDone) return;
       }
+      // In-memory picks only: the hero reuses the loaded grid (the
+      // dedicated featured query stays a fallback for setups without a
+      // grid), and the Following tab filters these same stories by
+      // followed author, so no followingStories fetch is needed here.
       StorySummary? featured;
       for (final story in stories) {
         if (story.featured) {

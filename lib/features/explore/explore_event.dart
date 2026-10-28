@@ -17,8 +17,9 @@ final class CatalogTabSelected extends ExploreEvent {
   final ExploreTab tab;
 }
 
-/// Holds the search text. Search behavior is a later slice; the bloc
-/// only stores the query.
+/// Holds the search text. The bloc only stores the query and never
+/// refetches; [ExploreState.filteredStories] re-slices the loaded
+/// catalog in memory (case-insensitive title/synopsis/tags match).
 final class QueryChanged extends ExploreEvent {
   const QueryChanged(this.query);
 

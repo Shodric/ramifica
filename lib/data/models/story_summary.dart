@@ -16,6 +16,7 @@ class StorySummary {
     this.coverUrl,
     this.campaignLabel,
     this.featured = false,
+    this.tags = const [],
   });
 
   /// Parses one `stories` doc. Throws [AppFailure] (`.invalid`) when the
@@ -33,6 +34,7 @@ class StorySummary {
           _optionalText(data['coverUrl']) ?? _optionalText(data['ogImageUrl']),
       campaignLabel: _optionalText(data['campaignLabel']),
       featured: data['featured'] == true,
+      tags: _stringList(data['tags']),
     );
   }
 
@@ -45,6 +47,11 @@ class StorySummary {
   final String? campaignLabel;
   final bool featured;
 
+  /// Search keywords from the story doc (`tags`, else empty). Old docs
+  /// without `tags` parse to empty; Explore matches the query against
+  /// these in memory.
+  final List<String> tags;
+
   @override
   bool operator ==(Object other) {
     return other is StorySummary &&
@@ -55,7 +62,8 @@ class StorySummary {
         other.synopsis == synopsis &&
         other.coverUrl == coverUrl &&
         other.campaignLabel == campaignLabel &&
-        other.featured == featured;
+        other.featured == featured &&
+        _sameTags(other.tags, tags);
   }
 
   @override
@@ -68,7 +76,30 @@ class StorySummary {
     coverUrl,
     campaignLabel,
     featured,
+    Object.hashAll(tags),
   );
+}
+
+/// Trims a raw `tags` list to its non-empty strings. Anything else
+/// (missing, wrong type) parses to empty; one bad entry never kills
+/// the doc.
+List<String> _stringList(Object? value) {
+  if (value is! List) return const [];
+  final tags = <String>[];
+  for (final item in value) {
+    if (item is! String) continue;
+    final tag = item.trim();
+    if (tag.isNotEmpty) tags.add(tag);
+  }
+  return tags;
+}
+
+bool _sameTags(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 String _requiredTitle(Object? value) {

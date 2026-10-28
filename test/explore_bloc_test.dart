@@ -127,6 +127,223 @@ void main() {
       expect(bloc.state.pendingStoryId, 'story_temple');
     });
 
+    test('filter matches title case-insensitively without refetching',
+        () async {
+      var storyCalls = 0;
+      var campaignCalls = 0;
+      var followCalls = 0;
+      final bloc = ExploreBloc(
+        catalog: CatalogRepository(
+          fetchPublishedIds: () async => const [
+            'story_temple',
+            'story_ridge',
+          ],
+          fetchPublishedStories: () async {
+            storyCalls++;
+            return _stories();
+          },
+          fetchActiveCampaigns: () async {
+            campaignCalls++;
+            return const [];
+          },
+        ),
+        follows: FollowRepository(
+          fetchAuthorIds: (_) async {
+            followCalls++;
+            return {'u_author'};
+          },
+        ),
+        uid: 'u_me',
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const CatalogRequested());
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const QueryChanged('TEMPLE'));
+      await bloc.stream.firstWhere((state) => state.query == 'TEMPLE');
+
+      expect(bloc.state.isSearching, isTrue);
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_temple'],
+      );
+      expect(bloc.state.stories, hasLength(2));
+      expect(storyCalls, 1);
+      expect(campaignCalls, 1);
+      expect(followCalls, 1);
+    });
+
+    test('filter matches synopsis and tags', () async {
+      final bloc = ExploreBloc(
+        catalog: _catalog(),
+        follows: _follows({}),
+        uid: 'u_me',
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const CatalogRequested());
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+
+      bloc.add(const QueryChanged('jungle'));
+      await bloc.stream.firstWhere((state) => state.query == 'jungle');
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_temple'],
+      );
+
+      bloc.add(const QueryChanged('myst'));
+      await bloc.stream.firstWhere((state) => state.query == 'myst');
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_temple'],
+      );
+
+      bloc.add(const QueryChanged('climbing'));
+      await bloc.stream.firstWhere((state) => state.query == 'climbing');
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_ridge'],
+      );
+    });
+
+    test('empty query returns the tab list unfiltered', () async {
+      final bloc = ExploreBloc(
+        catalog: _catalog(),
+        follows: _follows({}),
+        uid: 'u_me',
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const CatalogRequested());
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      expect(bloc.state.isSearching, isFalse);
+      expect(bloc.state.filteredStories, hasLength(2));
+
+      bloc.add(const QueryChanged('   '));
+      await bloc.stream.firstWhere((state) => state.query == '   ');
+      expect(bloc.state.isSearching, isFalse);
+      expect(bloc.state.filteredStories, hasLength(2));
+
+      bloc.add(const QueryChanged('temple'));
+      await bloc.stream.firstWhere((state) => state.query == 'temple');
+      expect(bloc.state.filteredStories, hasLength(1));
+
+      bloc.add(const QueryChanged(''));
+      await bloc.stream.firstWhere(
+        (state) => state.query.isEmpty && state.filteredStories.length == 2,
+      );
+      expect(bloc.state.filteredStories, hasLength(2));
+    });
+
+    test('tab and query combine', () async {
+      final bloc = ExploreBloc(
+        catalog: _catalog(),
+        follows: _follows({'u_author'}),
+        uid: 'u_me',
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const CatalogRequested());
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const CatalogTabSelected(.following));
+      await bloc.stream.firstWhere(
+        (state) => state.tab == ExploreTab.following,
+      );
+
+      bloc.add(const QueryChanged('temple'));
+      await bloc.stream.firstWhere((state) => state.query == 'temple');
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_temple'],
+      );
+
+      bloc.add(const QueryChanged('ridge'));
+      await bloc.stream.firstWhere((state) => state.query == 'ridge');
+      expect(bloc.state.tabStories, hasLength(1));
+      expect(bloc.state.filteredStories, isEmpty);
+
+      bloc.add(const CatalogTabSelected(.forYou));
+      await bloc.stream.firstWhere((state) => state.tab == ExploreTab.forYou);
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_ridge'],
+      );
+    });
+
+    test('a story tap makes no repository call', () async {
+      var catalogCalls = 0;
+      var followCalls = 0;
+      final bloc = ExploreBloc(
+        catalog: CatalogRepository(
+          fetchPublishedIds: () async {
+            catalogCalls++;
+            return const ['story_temple'];
+          },
+          fetchPublishedStories: () async {
+            catalogCalls++;
+            return _stories();
+          },
+          fetchActiveCampaigns: () async {
+            catalogCalls++;
+            return const [];
+          },
+        ),
+        follows: FollowRepository(
+          fetchAuthorIds: (_) async {
+            followCalls++;
+            return {'u_author'};
+          },
+        ),
+        uid: 'u_me',
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const StoryStartRequested('story_temple'));
+      await bloc.stream.firstWhere(
+        (state) => state.pendingStoryId == 'story_temple',
+      );
+
+      expect(bloc.state.pendingStoryId, 'story_temple');
+      expect(catalogCalls, isZero);
+      expect(followCalls, isZero);
+    });
+
+    test('per-tab empty conditions', () async {
+      final bloc = ExploreBloc(catalog: _catalog(), follows: _follows({}));
+      addTearDown(bloc.close);
+
+      bloc.add(const CatalogRequested());
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      expect(bloc.state.filteredStories, hasLength(2));
+
+      bloc.add(const CatalogTabSelected(.following));
+      await bloc.stream.firstWhere(
+        (state) => state.tab == ExploreTab.following,
+      );
+      expect(bloc.state.followingStories, isEmpty);
+      expect(bloc.state.hasFollowedStories, isFalse);
+      expect(bloc.state.tabStories, isEmpty);
+      expect(bloc.state.filteredStories, isEmpty);
+      expect(bloc.state.isSearching, isFalse);
+
+      bloc.add(const QueryChanged('temple'));
+      await bloc.stream.firstWhere((state) => state.query == 'temple');
+      expect(bloc.state.filteredStories, isEmpty);
+      expect(bloc.state.isSearching, isTrue);
+
+      bloc.add(const CatalogTabSelected(.forYou));
+      await bloc.stream.firstWhere((state) => state.tab == ExploreTab.forYou);
+      expect(
+        bloc.state.filteredStories.map((story) => story.storyId),
+        ['story_temple'],
+      );
+
+      bloc.add(const QueryChanged('zzz-no-match'));
+      await bloc.stream.firstWhere((state) => state.query == 'zzz-no-match');
+      expect(bloc.state.tabStories, hasLength(2));
+      expect(bloc.state.filteredStories, isEmpty);
+    });
+
     test('a second load restarts the first', () async {
       final gate = Completer<List<StorySummary>>();
       var calls = 0;
@@ -152,6 +369,25 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(bloc.state.stories, hasLength(2));
+    });
+  });
+
+  group('StorySummary tags', () {
+    test('parses tags and trims entries', () {
+      final story = StorySummary.fromDoc('s', {
+        'title': 'T',
+        'tags': [' mystery ', '', 42, 'ruins'],
+      });
+
+      expect(story.tags, ['mystery', 'ruins']);
+    });
+
+    test('missing or mistyped tags parse to empty', () {
+      expect(StorySummary.fromDoc('s', {'title': 'T'}).tags, isEmpty);
+      expect(
+        StorySummary.fromDoc('s', {'title': 'T', 'tags': 'mystery'}).tags,
+        isEmpty,
+      );
     });
   });
 
@@ -299,13 +535,17 @@ List<StorySummary> _stories() {
       title: 'The temple door',
       authorId: 'u_author',
       authorName: 'Alex Vance',
+      synopsis: 'A sealed gate in the jungle',
       featured: true,
+      tags: ['mystery'],
     ),
     StorySummary(
       storyId: 'story_ridge',
       title: 'Climb the ridge',
       authorId: 'u_other',
       authorName: 'Sam Ruiz',
+      synopsis: 'A high mountain path',
+      tags: ['climbing'],
     ),
   ];
 }
