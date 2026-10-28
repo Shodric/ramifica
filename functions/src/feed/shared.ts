@@ -114,6 +114,121 @@ export interface Db {
 }
 
 /**
+ * One saga step: finishing `fromStoryId` at `endingNodeId` opens
+ * `toStoryId`. The first story of `storyIds` is open to everyone.
+ */
+export interface SagaUnlockRule {
+  fromStoryId: string;
+  endingNodeId: string;
+  toStoryId: string;
+}
+
+/**
+ * A saga doc from `sagas/{sagaId}`: one author's ordered stories plus
+ * the rules that open each next story.
+ */
+export interface SagaDoc {
+  sagaId: string;
+  authorId: string;
+  storyIds: string[];
+  unlocks: SagaUnlockRule[];
+}
+
+/**
+ * Optional text field: trims, null when missing or blank.
+ * @param {unknown} value Raw field value.
+ * @return {string | null} The trimmed text, or null.
+ */
+export function optString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ?
+    value.trim() :
+    null;
+}
+
+/**
+ * String list field. Non-strings and blanks are dropped.
+ * @param {unknown} value Raw field value.
+ * @return {string[]} The clean strings.
+ */
+export function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.trim() !== "") {
+      out.push(entry.trim());
+    }
+  }
+  return out;
+}
+
+/**
+ * Parses one `sagas/{sagaId}` doc. Missing author, title, or ordered
+ * stories means a console-written half doc: skipped, not fatal.
+ * @param {string} id Saga doc id.
+ * @param {unknown} data Raw doc fields.
+ * @return {SagaDoc | null} The saga, or null when unusable.
+ */
+export function parseSagaDoc(
+  id: string,
+  data: {[field: string]: unknown} | null
+): SagaDoc | null {
+  if (data === null) return null;
+  const authorId = optString(data.authorId);
+  const title = optString(data.title);
+  const storyIds = stringList(data.storyIds);
+  if (authorId === null || title === null || storyIds.length === 0) {
+    return null;
+  }
+  const unlocks: SagaUnlockRule[] = [];
+  if (Array.isArray(data.unlocks)) {
+    for (const raw of data.unlocks) {
+      const rule = asRecord(raw);
+      const from = rule ? optString(rule.fromStoryId) : null;
+      const ending = rule ? optString(rule.endingNodeId) : null;
+      const to = rule ? optString(rule.toStoryId) : null;
+      if (from === null || ending === null || to === null) continue;
+      if (!storyIds.includes(from) || !storyIds.includes(to)) continue;
+      unlocks.push({fromStoryId: from, endingNodeId: ending, toStoryId: to});
+    }
+  }
+  return {sagaId: id, authorId, storyIds, unlocks};
+}
+
+/**
+ * First saga rule (by saga id) that opens a next story for this finish.
+ * Finishing another ending opens nothing.
+ * @param {SagaDoc[]} sagas Author sagas holding this story, by saga id.
+ * @param {string} storyId Finished story.
+ * @param {string} endingNodeId Reached ending node.
+ * @return {Object | null} The saga and rule, or null when locked.
+ */
+export function findSagaUnlock(
+  sagas: SagaDoc[],
+  storyId: string,
+  endingNodeId: string
+): {saga: SagaDoc; rule: SagaUnlockRule} | null {
+  for (const saga of sagas) {
+    const rule = saga.unlocks.find(
+      (entry) =>
+        entry.fromStoryId === storyId && entry.endingNodeId === endingNodeId
+    );
+    if (rule) return {saga, rule};
+  }
+  return null;
+}
+
+/**
+ * Deterministic reward doc id: one grant per story ending, so replays
+ * and restarts overwrite the same doc instead of duplicating.
+ * @param {string} storyId Finished story.
+ * @param {string} endingNodeId Reached ending node.
+ * @return {string} The reward doc id.
+ */
+export function rewardIdFor(storyId: string, endingNodeId: string): string {
+  return `${storyId}_${endingNodeId}`;
+}
+
+/**
  * Reads a doc that must exist. Missing is corruption, not a bad request.
  * @param {DbDoc} snap Fetched doc.
  * @param {string} what What it is, for the error.

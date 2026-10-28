@@ -221,7 +221,19 @@ const seed = async (db: MemDb): Promise<void> => {
     authorId: "u1",
     title: "Story B",
     status: "published",
-    rootNodeId: "node_001",
+    rootNodeId: "node_b01",
+  });
+  await db.doc("sagas/saga_ab").set({
+    authorId: "u1",
+    title: "Saga AB",
+    storyIds: ["story_a", "story_b"],
+    unlocks: [
+      {
+        fromStoryId: "story_a",
+        endingNodeId: "node_002",
+        toStoryId: "story_b",
+      },
+    ],
   });
   await db.doc("stories/story_a/nodes/node_001").set(
     nodeFields({
@@ -272,7 +284,52 @@ const seed = async (db: MemDb): Promise<void> => {
           y: 0.5,
           radius: 0.2,
         },
+        {
+          choiceId: "choice_far",
+          label: "Go far",
+          targetNodeId: "node_004",
+          isDefault: false,
+          x: 0.7,
+          y: 0.4,
+          radius: 0.15,
+        },
       ],
+    })
+  );
+  await db.doc("stories/story_a/nodes/node_004").set(
+    nodeFields({
+      title: "The overlook",
+      isEnding: true,
+      endingName: "The overlook",
+      endingType: "secreto",
+      videoUrl: "https://example.com/end_far.mp4",
+      choices: [],
+    })
+  );
+  await db.doc("stories/story_b/nodes/node_b01").set(
+    nodeFields({
+      title: "Story B root",
+      choices: [
+        {
+          choiceId: "choice_rest",
+          label: "Rest",
+          targetNodeId: "node_b02",
+          isDefault: true,
+          x: 0.5,
+          y: 0.5,
+          radius: 0.2,
+        },
+      ],
+    })
+  );
+  await db.doc("stories/story_b/nodes/node_b02").set(
+    nodeFields({
+      title: "Story B end",
+      isEnding: true,
+      endingName: "Rest",
+      endingType: "abierto",
+      videoUrl: "https://example.com/end_b.mp4",
+      choices: [],
     })
   );
 };
@@ -395,7 +452,17 @@ test("commitChoice advances, counts, visits, and ends", async () => {
   });
   assert.equal(result.playback.node.nodeId, "node_002");
   assert.equal(result.playback.status, "ended");
-  assert.equal(result.ending, null);
+  assert.deepEqual(result.ending, {
+    storyId: "story_a",
+    nodeId: "node_002",
+    endingName: "The door",
+    endingType: "abierto",
+  });
+  assert.deepEqual(result.sagaUnlocked, {
+    sagaId: "saga_ab",
+    storyId: "story_b",
+  });
+  assert.deepEqual(result.reward, {rewardId: "story_a_node_002"});
   const run = db.store.get(`users/u1/runs/${started.runId}`);
   assert.equal(run?.status, "ended");
   assert.equal(run?.endingNodeId, "node_002");
@@ -416,6 +483,19 @@ test("commitChoice advances, counts, visits, and ends", async () => {
   const state = db.store.get("users/u1/storyState/story_a");
   assert.deepEqual(state?.visitedNodeIds, ["node_001", "node_002"]);
   assert.equal(state?.activeRunStatus, "ended");
+  assert.deepEqual(state?.endings, ["node_002"]);
+  assert.equal(
+    db.store.get("users/u1/storyState/story_b")?.sagaUnlocked,
+    true
+  );
+  assert.equal(
+    db.store.get("users/u1/rewards/story_a_node_002")?.storyId,
+    "story_a"
+  );
+  assert.equal(
+    db.store.get("users/u1/rewards/story_a_node_002")?.endingNodeId,
+    "node_002"
+  );
 });
 
 test("commitChoice replays the same requestId", async () => {
@@ -430,12 +510,21 @@ test("commitChoice replays the same requestId", async () => {
   };
   const first = await commitChoiceWith(db, "u1", payload);
   const second = await commitChoiceWith(db, "u1", payload);
-  assert.deepEqual(second.playback, first.playback);
+  assert.deepEqual(second, first);
   const replayed = db.store.get(`users/u1/runs/${started.runId}`)?.choices;
   assert.equal((replayed as unknown[]).length, 1);
   assert.deepEqual(
     db.store.get("stories/story_a/nodes/node_001")?.choiceCounts,
     {choice_temple: 1}
+  );
+  assert.deepEqual(
+    db.store.get("users/u1/storyState/story_a")?.endings,
+    ["node_002"]
+  );
+  assert.equal(
+    [...db.store.keys()].filter((key) => key.startsWith("users/u1/rewards/"))
+      .length,
+    1
   );
 });
 
@@ -492,4 +581,97 @@ test("commitChoice keeps a non-ending run active", async () => {
   assert.equal(result.playback.node.nodeId, "node_003");
   assert.equal(result.playback.status, "active");
   assert.equal(result.playback.choices[0].targetSecret, false);
+});
+
+test("commitChoice re-earn after restart unlocks nothing twice", async () => {
+  const db = new MemDb();
+  await seed(db);
+  const first = await startRunWith(db, "u1", {});
+  await commitChoiceWith(db, "u1", {
+    runId: first.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_1",
+  });
+  const second = await startRunWith(db, "u1", {restart: true});
+  const reEarned = await commitChoiceWith(db, "u1", {
+    runId: second.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_2",
+  });
+  assert.equal(reEarned.playback.status, "ended");
+  assert.equal(reEarned.ending?.nodeId, "node_002");
+  assert.equal(reEarned.sagaUnlocked, null);
+  assert.deepEqual(reEarned.reward, {rewardId: "story_a_node_002"});
+  assert.deepEqual(
+    db.store.get("users/u1/storyState/story_a")?.endings,
+    ["node_002"]
+  );
+  assert.equal(
+    [...db.store.keys()].filter((key) => key.startsWith("users/u1/rewards/"))
+      .length,
+    1
+  );
+  assert.equal(
+    db.store.get("users/u1/rewards/story_a_node_002")?.requestId,
+    "req_1"
+  );
+});
+
+test("commitChoice wrong ending opens no saga story", async () => {
+  const db = new MemDb();
+  await seed(db);
+  const started = await startRunWith(db, "u1", {});
+  await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_ridge",
+    requestId: "req_1",
+  });
+  const result = await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_003",
+    choiceId: "choice_far",
+    requestId: "req_2",
+  });
+  assert.equal(result.playback.status, "ended");
+  assert.deepEqual(result.ending, {
+    storyId: "story_a",
+    nodeId: "node_004",
+    endingName: "The overlook",
+    endingType: "secreto",
+  });
+  assert.equal(result.sagaUnlocked, null);
+  assert.deepEqual(result.reward, {rewardId: "story_a_node_004"});
+  assert.deepEqual(
+    db.store.get("users/u1/storyState/story_a")?.endings,
+    ["node_004"]
+  );
+  assert.equal(db.store.get("users/u1/storyState/story_b"), undefined);
+});
+
+test("commitChoice off the ending path writes no saga or reward", async () => {
+  const db = new MemDb();
+  await seed(db);
+  const started = await startRunWith(db, "u1", {restart: true});
+  const result = await commitChoiceWith(db, "u1", {
+    runId: started.runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_ridge",
+    requestId: "req_1",
+  });
+  assert.equal(result.playback.status, "active");
+  assert.equal(result.ending, null);
+  assert.equal(result.sagaUnlocked, null);
+  assert.equal(result.reward, null);
+  assert.equal(
+    db.store.get("users/u1/storyState/story_a")?.endings,
+    undefined
+  );
+  assert.equal(
+    [...db.store.keys()].filter((key) => key.startsWith("users/u1/rewards/"))
+      .length,
+    0
+  );
 });

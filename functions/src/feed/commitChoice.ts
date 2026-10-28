@@ -6,23 +6,50 @@ import {
   cleanId,
   Db,
   docData,
+  findSagaUnlock,
   isoNow,
+  optString,
+  parseSagaDoc,
   requireUid,
+  rewardIdFor,
+  SagaDoc,
   toRecord,
 } from "./shared";
 
+/** Reached ending, or null when the run is still active. */
+export interface CommitEnding {
+  storyId: string;
+  nodeId: string;
+  endingName: string | null;
+  endingType: string | null;
+}
+
+/** Story this commit newly opened, or null when nothing opened. */
+export interface CommitSagaUnlock {
+  sagaId: string;
+  storyId: string;
+}
+
+/** Reward grant for the reached ending, or null when still active. */
+export interface CommitReward {
+  rewardId: string;
+}
+
 export interface CommitResult {
   playback: PlaybackView;
-  ending: null;
-  sagaUnlocked: null;
-  reward: null;
+  ending: CommitEnding | null;
+  sagaUnlocked: CommitSagaUnlock | null;
+  reward: CommitReward | null;
 }
 
 /**
  * Confirms one hold. Minimum slice: advances the run, appends to the
  * history, counts the choice, marks `ended` on finals, and returns the
- * destination playback. Same `requestId` returns the stored result without
- * writing twice. Finals, sagas, and codes land in a later slice.
+ * destination playback. Same `requestId` returns the stored outcome
+ * without writing twice. On finals the same transaction also unions the
+ * profile-level `endings`, opens the saga follow-up
+ * (`fromStoryId` + `endingNodeId` only), and grants the reward: all
+ * idempotent, so replays, restarts, and re-commits never duplicate.
  */
 export const commitChoice = onCall(
   {enforceAppCheck: true, maxInstances: 20},
@@ -53,6 +80,8 @@ export const commitChoiceWith = async (
   const choiceId = cleanId(fields.choiceId, "choiceId");
   const requestId = cleanId(fields.requestId, "requestId");
 
+  const sagas = await readAuthorSagas(db, uid, runId);
+
   const landed = await db.runTransaction(async (tx) => {
     const runRef = db.doc(`users/${uid}/runs/${runId}`);
     const runSnap = await tx.get(runRef);
@@ -69,7 +98,11 @@ export const commitChoiceWith = async (
       last?.requestId === requestId &&
       typeof last.toNodeId === "string"
     ) {
-      return {storyId, toNodeId: last.toNodeId};
+      return {
+        storyId,
+        toNodeId: last.toNodeId,
+        ...restoreOutcome(last.outcome, storyId, last.toNodeId),
+      };
     }
     if (run.currentNodeId !== fromNodeId) {
       throw new HttpsError("invalid-argument", "Run moved on.");
@@ -93,13 +126,64 @@ export const commitChoiceWith = async (
     if (!toSnap.exists) {
       throw new HttpsError("invalid-argument", "Choice points nowhere.");
     }
-    const ending = docData(toSnap, "Target node").isEnding === true;
+    const toData = docData(toSnap, "Target node");
+    const ending = toData.isEnding === true;
     const stateRef = db.doc(`users/${uid}/storyState/${storyId}`);
     const stateSnap = await tx.get(stateRef);
-    const visited: unknown =
-      stateSnap.exists ? stateSnap.data()?.visitedNodeIds : null;
+    const stateData = stateSnap.exists ? stateSnap.data() : undefined;
+    const visited: unknown = stateData?.visitedNodeIds;
+    const priorEndings: unknown = stateData?.endings;
     const now = isoNow();
     const history: unknown[] = Array.isArray(run.choices) ? run.choices : [];
+    const endingView: CommitEnding | null = ending ?
+      {
+        storyId,
+        nodeId: toNodeId,
+        endingName: optString(toData.endingName),
+        endingType: optString(toData.endingType),
+      } :
+      null;
+    // The rule that opens a next story for this exact finish, if any.
+    const unlock = ending ? findSagaUnlock(sagas, storyId, toNodeId) : null;
+    let sagaUnlocked: CommitSagaUnlock | null = null;
+    if (unlock) {
+      const targetRef = db.doc(
+        `users/${uid}/storyState/${unlock.rule.toStoryId}`
+      );
+      const targetSnap = await tx.get(targetRef);
+      const already =
+        asRecord(targetSnap.exists ? targetSnap.data() : null)
+          ?.sagaUnlocked === true;
+      if (!already) {
+        await tx.set(
+          targetRef,
+          {sagaUnlocked: true, updatedAt: now},
+          {merge: true}
+        );
+        sagaUnlocked = {
+          sagaId: unlock.saga.sagaId,
+          storyId: unlock.rule.toStoryId,
+        };
+      }
+    }
+    // One grant per story ending: the deterministic id makes replays and
+    // restarts overwrite the same doc instead of duplicating.
+    let reward: CommitReward | null = null;
+    if (ending) {
+      const rewardId = rewardIdFor(storyId, toNodeId);
+      const rewardRef = db.doc(`users/${uid}/rewards/${rewardId}`);
+      const rewardSnap = await tx.get(rewardRef);
+      if (!rewardSnap.exists) {
+        await tx.set(rewardRef, {
+          storyId,
+          endingNodeId: toNodeId,
+          sagaId: unlock?.saga.sagaId ?? null,
+          grantedAt: now,
+          requestId,
+        });
+      }
+      reward = {rewardId};
+    }
     await tx.update(runRef, {
       currentNodeId: toNodeId,
       status: ending ? "ended" : run.status,
@@ -114,7 +198,13 @@ export const commitChoiceWith = async (
           at: now,
         },
       ],
-      lastCommit: {requestId, fromNodeId, choiceId, toNodeId},
+      lastCommit: {
+        requestId,
+        fromNodeId,
+        choiceId,
+        toNodeId,
+        outcome: {ending: endingView, sagaUnlocked, reward},
+      },
       updatedAt: now,
     });
     const priorCounts = asRecord(node.choiceCounts) ?? {};
@@ -130,13 +220,22 @@ export const commitChoiceWith = async (
         visitedNodeIds: [
           ...new Set([...(Array.isArray(visited) ? visited : []), toNodeId]),
         ],
+        ...(ending ?
+          {
+            endings: [
+              ...new Set([
+                ...(Array.isArray(priorEndings) ? priorEndings : []),
+                toNodeId,
+              ]),
+            ],
+          } :
+          {}),
         updatedAt: now,
       },
       {merge: true}
     );
-    return {storyId, toNodeId};
+    return {storyId, toNodeId, ending: endingView, sagaUnlocked, reward};
   });
-
   const runSnap = await db.doc(`users/${uid}/runs/${runId}`).get();
   const run = docData(runSnap, "Run");
   const status = run.status === "ended" ? "ended" : "active";
@@ -149,5 +248,92 @@ export const commitChoiceWith = async (
     status,
     currentNodeId: run.currentNodeId,
   });
-  return {playback, ending: null, sagaUnlocked: null, reward: null};
+  return {
+    playback,
+    ending: landed.ending,
+    sagaUnlocked: landed.sagaUnlocked,
+    reward: landed.reward,
+  };
+};
+
+/**
+ * Author sagas holding the run's story, by saga id. Reads stay outside
+ * the commit transaction; the writes inside stay atomic. Empty when the
+ * run or story is gone, or the story has no author: the commit still
+ * lands, saga writes are skipped.
+ * @param {Db} db Firestore.
+ * @param {string} uid Caller.
+ * @param {string} runId Run id.
+ * @return {Promise<SagaDoc[]>} The usable author sagas.
+ */
+const readAuthorSagas = async (
+  db: Db,
+  uid: string,
+  runId: string
+): Promise<SagaDoc[]> => {
+  const runSnap = await db.doc(`users/${uid}/runs/${runId}`).get();
+  if (!runSnap.exists) {
+    throw new HttpsError("not-found", "Run not found.");
+  }
+  const storyId = runSnap.data()?.storyId;
+  if (typeof storyId !== "string" || storyId === "") return [];
+  const storySnap = await db.doc(`stories/${storyId}`).get();
+  const authorId = storySnap.exists ?
+    optString(storySnap.data()?.authorId) :
+    null;
+  if (authorId === null) return [];
+  const snap = await db
+    .collection("sagas")
+    .where("authorId", "==", authorId)
+    .get();
+  const sagas: SagaDoc[] = [];
+  for (const doc of snap.docs) {
+    const saga = parseSagaDoc(doc.id, doc.data() ?? null);
+    if (saga && saga.storyIds.includes(storyId)) sagas.push(saga);
+  }
+  sagas.sort((left, right) => (left.sagaId < right.sagaId ? -1 : 1));
+  return sagas;
+};
+
+/**
+ * Stored commit outcome for a hold replay. Same `requestId` returns the
+ * same ending, unlock, and reward without writing twice. Commits written
+ * before the outcome existed replay as all null.
+ * @param {unknown} raw Stored `lastCommit.outcome`.
+ * @param {string} storyId Finished story.
+ * @param {string} toNodeId Destination node.
+ * @return {Object} The ending, unlock, and reward to return.
+ */
+const restoreOutcome = (
+  raw: unknown,
+  storyId: string,
+  toNodeId: string
+): {
+  ending: CommitEnding | null;
+  sagaUnlocked: CommitSagaUnlock | null;
+  reward: CommitReward | null;
+} => {
+  const outcome = asRecord(raw);
+  if (!outcome) return {ending: null, sagaUnlocked: null, reward: null};
+  const rawEnding = asRecord(outcome.ending);
+  const rawUnlock = asRecord(outcome.sagaUnlocked);
+  const rawReward = asRecord(outcome.reward);
+  const unlockSagaId = rawUnlock ? optString(rawUnlock.sagaId) : null;
+  const unlockStoryId = rawUnlock ? optString(rawUnlock.storyId) : null;
+  const rewardId = rawReward ? optString(rawReward.rewardId) : null;
+  return {
+    ending: rawEnding ?
+      {
+        storyId,
+        nodeId: optString(rawEnding.nodeId) ?? toNodeId,
+        endingName: optString(rawEnding.endingName),
+        endingType: optString(rawEnding.endingType),
+      } :
+      null,
+    sagaUnlocked:
+      unlockSagaId !== null && unlockStoryId !== null ?
+        {sagaId: unlockSagaId, storyId: unlockStoryId} :
+        null,
+    reward: rewardId !== null ? {rewardId} : null,
+  };
 };

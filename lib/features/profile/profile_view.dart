@@ -15,6 +15,7 @@ import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
 import 'package:ramifica/features/profile/profile_state.dart';
+import 'package:ramifica/features/profile/saga_list.dart';
 
 /// Profile tab: screen title, install banner, then the header or editor
 /// drawn from [ProfileBloc]. Creates its own bloc like Explore; tests
@@ -32,6 +33,8 @@ class ProfileView extends StatefulWidget {
     this.showInstallGuide,
     this.unlockedEndings = const [],
     this.onEndingOpen,
+    this.sagaStories = const [],
+    this.onSagaOpen,
   });
 
   final ProfileBloc? bloc;
@@ -49,6 +52,16 @@ class ProfileView extends StatefulWidget {
 
   /// Test seam for ending taps. Null navigates to the graph route.
   final void Function(String storyId)? onEndingOpen;
+
+  /// Ordered saga stories to list. Profile state carries no saga progress
+  /// today, so the owner passes them in until a readable source exists
+  /// (see [SagaStory]: `unlocked` is true for the entry story or when
+  /// that story's `sagaUnlocked` flag is set; locked entries stay
+  /// title-free).
+  final List<SagaStory> sagaStories;
+
+  /// Test seam for saga story taps. Null navigates to the story route.
+  final void Function(String storyId)? onSagaOpen;
 
   @override
   State<ProfileView> createState() => _ProfileViewState();
@@ -215,8 +228,13 @@ class _ProfileViewState extends State<ProfileView> {
           endings: widget.unlockedEndings,
           onOpen: (storyId) => _openEnding(context, storyId),
         ),
+        const SizedBox(height: 24),
+        SagaList(
+          stories: widget.sagaStories,
+          onOpen: (storyId) => _openSaga(context, storyId),
+        ),
 
-        // Endings section (sibling-owned) renders above; future
+        // Endings and sagas sections render above; future
         // placeholders always sit at the bottom of the profile.
         const SizedBox(height: 16),
         const LaterBlock(),
@@ -233,6 +251,21 @@ class _ProfileViewState extends State<ProfileView> {
     try {
       AppNavigation.read(context).go(
         AppRoutes.graphPath(Uri.encodeComponent(storyId)),
+      );
+    } on FlutterError {
+      // Widget tests mount ProfileView without the router.
+    }
+  }
+
+  void _openSaga(BuildContext context, String storyId) {
+    final open = widget.onSagaOpen;
+    if (open != null) {
+      open(storyId);
+      return;
+    }
+    try {
+      AppNavigation.read(context).go(
+        AppRoutes.storyPath(Uri.encodeComponent(storyId)),
       );
     } on FlutterError {
       // Widget tests mount ProfileView without the router.

@@ -6,6 +6,7 @@
     "build": "tsc",
     "lint": "eslint --ext .js,.ts src/",
     "seed": "npm run build && node lib/seed.js",
+    "seed:saga": "npm run build && node lib/seedSaga.js",
     "verify": "npm run build && node lib/verify.js"
   },
   "engines": {
