@@ -6,6 +6,7 @@ import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/ramifica_isotipo.dart';
 import 'package:ramifica/features/access/access_bloc.dart';
 import 'package:ramifica/features/access/access_event.dart';
 import 'package:ramifica/features/access/access_state.dart';
@@ -226,8 +227,8 @@ NavigationDestination _destination(ShellTab tab) {
   };
 }
 
-/// Stitch nav control `data-path="crear"`: 48 px circle, gradient to the
-/// top right from primary-container to node-active, 28 px add glyph in
+/// Stitch nav control `data-path="crear"`: 48 px circle, 3-stop brand ramp to
+/// the top right (hotspot, signal blue, brand violet), 28 px add glyph in
 /// on-secondary, and a 16 px cyan glow. The extra padding keeps that glow
 /// inside the destination. The taller bottom inset is the design's 4 px lift.
 class _CreateIcon extends StatelessWidget {
@@ -248,7 +249,7 @@ class _CreateIcon extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.bottomLeft,
                 end: Alignment.topRight,
-                colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+                colors: ramificaBrandRampColors,
               ),
               boxShadow: [BoxShadow(color: Color(0x8000F2FE), blurRadius: 16)],
             ),
