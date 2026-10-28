@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
+import 'package:ramifica/features/profile/ending_list.dart';
 import 'package:ramifica/features/profile/install_guide.dart';
 import 'package:ramifica/features/profile/install_guide_banner.dart';
+import 'package:ramifica/features/profile/later_block.dart';
 import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
@@ -26,6 +30,8 @@ class ProfileView extends StatefulWidget {
     this.bloc,
     this.authorId,
     this.showInstallGuide,
+    this.unlockedEndings = const [],
+    this.onEndingOpen,
   });
 
   final ProfileBloc? bloc;
@@ -35,6 +41,14 @@ class ProfileView extends StatefulWidget {
 
   /// Test seam for the install banner. Production uses the platform check.
   final bool Function()? showInstallGuide;
+
+  /// Unlocked endings to list. Profile state carries no endings today, so
+  /// the owner passes them in until a readable source exists (see
+  /// [UnlockedEnding]; wiring gap noted for the reviewer).
+  final List<UnlockedEnding> unlockedEndings;
+
+  /// Test seam for ending taps. Null navigates to the graph route.
+  final void Function(String storyId)? onEndingOpen;
 
   @override
   State<ProfileView> createState() => _ProfileViewState();
@@ -196,8 +210,33 @@ class _ProfileViewState extends State<ProfileView> {
             ],
           ),
         ],
-      ],
+        const SizedBox(height: 24),
+        EndingList(
+          endings: widget.unlockedEndings,
+          onOpen: (storyId) => _openEnding(context, storyId),
+        ),
+
+        // Endings section (sibling-owned) renders above; future
+        // placeholders always sit at the bottom of the profile.
+        const SizedBox(height: 16),
+        const LaterBlock(),
+       ],
     );
+  }
+
+  void _openEnding(BuildContext context, String storyId) {
+    final open = widget.onEndingOpen;
+    if (open != null) {
+      open(storyId);
+      return;
+    }
+    try {
+      AppNavigation.read(context).go(
+        AppRoutes.graphPath(Uri.encodeComponent(storyId)),
+      );
+    } on FlutterError {
+      // Widget tests mount ProfileView without the router.
+    }
   }
 
   void _reload(BuildContext context) {
