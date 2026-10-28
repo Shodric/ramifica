@@ -29,6 +29,10 @@
     "cleanUrls": true,
     "rewrites": [
       {
+        "source": "/story/**",
+        "function": {"functionId": "storyPage", "region": "us-central1"}
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

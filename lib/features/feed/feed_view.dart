@@ -4,6 +4,7 @@ import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
+import 'package:ramifica/core/browser_gesture.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/features/feed/choice_zone.dart';
 import 'package:ramifica/features/feed/ending_card.dart';
@@ -29,12 +30,45 @@ class FeedView extends StatefulWidget {
   State<FeedView> createState() => _FeedViewState();
 }
 
-class _FeedViewState extends State<FeedView> {
+class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// Pointer id of the finger holding a zone. Written on down and read on
   /// release, both synchronously, so a quick tap is never missed between
   /// frames. Cleared on release. If a future slice leaves `holding` without
   /// a release (a swipe mid-hold), it must clear this too.
   int? _pointer;
+
+  /// Accumulated vertical drag, reset on each new drag. A slow long drag
+  /// past 64 px counts as a swipe, like a fast fling does.
+  double _dragDy = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // A login or link tap happened before this view existed. It counts as
+    // the first gesture, so the first clip can start with sound.
+    final bloc = _feedOf(context, listen: false);
+    if (bloc != null && hadPriorGesture) {
+      bloc.narrator.unlock();
+      bloc.add(const UserGestured());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Hidden never resumes on its own: the next tap sends UserGestured,
+    // which clears the park. TickerMode (switching tabs) is untouched.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _feedOf(context)?.add(const AppHidden());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,7 +120,15 @@ class _FeedViewState extends State<FeedView> {
             state.phase == .ending &&
             !state.endingSpeaking &&
             playback.node.isEnding;
-        return Scaffold(
+        return Listener(
+          // The first pointerdown anywhere clears the browser auto-mute and
+          // resumes the audio context. The bloc ignores repeats and never
+          // overrides a manual mute. Also resumes a hidden-parked clip.
+          onPointerDown: (_) {
+            bloc.narrator.unlock();
+            bloc.add(const UserGestured());
+          },
+          child: Scaffold(
           body: Semantics(
             label: widget.storyId == null ? 'Feed' : 'Feed ${widget.storyId}',
             child: LayoutBuilder(
@@ -108,12 +150,18 @@ class _FeedViewState extends State<FeedView> {
                 }
                 return GestureDetector(
                   // A hold never moves, so a vertical drag is never a hold.
-                  // The bloc still gates: speaking, window, holding, and
-                  // committing ignore the swipe. Threshold tuning belongs
-                  // to #23 (custom swipe); this only routes the gesture.
+                  // The bloc still gates: speaking, window, holding,
+                  // committing, and the closing line ignore the swipe.
+                  onVerticalDragStart: (_) => _dragDy = 0,
+                  onVerticalDragUpdate: (details) =>
+                      _dragDy += details.primaryDelta ?? 0,
                   onVerticalDragEnd: (details) {
                     _pointer = null;
-                    if ((details.primaryVelocity ?? 0).abs() < 200) return;
+                    final fling =
+                        (details.primaryVelocity ?? 0).abs() >= 200;
+                    final drag = _dragDy.abs() >= 64;
+                    _dragDy = 0;
+                    if (!fling && !drag) return;
                     bloc.add(const StorySwiped());
                   },
                   child: Stack(
@@ -124,7 +172,9 @@ class _FeedViewState extends State<FeedView> {
                         key: ValueKey(playback.node.videoUrl),
                         url: playback.node.videoUrl,
                         muted: state.muted,
-                        play: state.phase == .playing,
+                        play:
+                            state.phase == .playing &&
+                            !state.hiddenPaused,
                         player: widget.clipPlayer,
                         onFirstFrame: () {},
                         onEnded: () => bloc.add(const PauseReached()),
@@ -251,6 +301,7 @@ class _FeedViewState extends State<FeedView> {
                 );
               },
             ),
+          ),
           ),
         );
       },

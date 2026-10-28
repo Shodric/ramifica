@@ -25,6 +25,7 @@ class FeedState {
     this.holdSerial = 0,
     this.pendingRequestId,
     this.endingSpeaking = false,
+    this.hiddenPaused = false,
   });
 
   final FeedPhase phase;
@@ -53,6 +54,10 @@ class FeedState {
   /// False once the card is visible. Always false outside `ending`.
   final bool endingSpeaking;
 
+  /// The browser tab was hidden mid-clip. The video stays parked until the
+  /// next tap; becoming visible again never resumes on its own.
+  final bool hiddenPaused;
+
   FeedState copy({
     FeedPhase? phase,
     bool? muted,
@@ -62,6 +67,7 @@ class FeedState {
     bool clearHold = false,
     String? pendingRequestId,
     bool? endingSpeaking,
+    bool? hiddenPaused,
   }) {
     return FeedState(
       phase: phase ?? this.phase,
@@ -75,6 +81,7 @@ class FeedState {
       holdSerial: clearHold ? 0 : holdSerial ?? this.holdSerial,
       pendingRequestId: pendingRequestId ?? this.pendingRequestId,
       endingSpeaking: endingSpeaking ?? this.endingSpeaking,
+      hiddenPaused: hiddenPaused ?? this.hiddenPaused,
     );
   }
 
@@ -91,7 +98,8 @@ class FeedState {
         other.holdChoiceId == holdChoiceId &&
         other.holdSerial == holdSerial &&
         other.pendingRequestId == pendingRequestId &&
-        other.endingSpeaking == endingSpeaking;
+        other.endingSpeaking == endingSpeaking &&
+        other.hiddenPaused == hiddenPaused;
   }
 
   @override
@@ -107,5 +115,6 @@ class FeedState {
     holdSerial,
     pendingRequestId,
     endingSpeaking,
+    hiddenPaused,
   );
 }

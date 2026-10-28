@@ -32,6 +32,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<StoryOpened>(_onOpened, transformer: restartable());
     on<StorySwiped>(_onSwiped, transformer: restartable());
     on<PauseReached>(_onPause);
+    on<UserGestured>(_onUserGestured);
+    on<AppHidden>(_onAppHidden);
     on<MuteToggled>(_onMute);
     on<VoiceFinished>(_onVoice);
     on<HoldStarted>(_onHold);
@@ -139,7 +141,32 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     emit(state.copy(phase: .speaking));
     _startCue();
   }
+  void _onUserGestured(UserGestured event, Emitter<FeedState> emit) {
+    final hadAuto = state.autoMuted;
+    final wasHidden = state.hiddenPaused;
+    if (!hadAuto && !wasHidden) return;
+    narrator.unlock();
+    emit(
+      state.copy(
+        muted: hadAuto ? false : state.muted,
+        autoMuted: false,
+        hiddenPaused: false,
+      ),
+    );
+    if (state.phase == .speaking ||
+        (state.phase == .ending && state.endingSpeaking)) {
+      _startCue();
+    }
+  }
 
+  void _onAppHidden(AppHidden event, Emitter<FeedState> emit) {
+    final speakingCue =
+        state.phase == .speaking ||
+        (state.phase == .ending && state.endingSpeaking);
+    if (state.phase != .playing && !speakingCue) return;
+    _silence();
+    emit(state.copy(hiddenPaused: true));
+  }
   void _onMute(MuteToggled event, Emitter<FeedState> emit) {
     emit(state.copy(muted: !state.muted, autoMuted: false));
     if (state.phase == .speaking ||

@@ -39,7 +39,7 @@ There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch]
 
 `web/index.html` is the Flutter host. `viewport-fit=cover` lets the engine read the safe area. The body is not padded, so the video stays edge to edge and each screen insets its own chrome.
 
-`html` and `body` are `100dvh`, with `overscroll-behavior: none` and background `#131318`. `body` sets `touch-action: none` and `user-select: none` (including the WebKit prefixes) so a hold does not become a scroll or a selection. `video` sets `pointer-events: none`. `contextmenu` is cancelled. `FIREBASE_APPCHECK_DEBUG_TOKEN` stays limited to `localhost` and `127.0.0.1`, and that script stays before `flutter_bootstrap.js`.
+`html` and `body` are `100dvh`, with `overscroll-behavior: none` and background `#131318`. `body` sets `touch-action: none` and `user-select: none` (including the WebKit prefixes) so a hold does not become a scroll or a selection. `video` sets `pointer-events: none`. `contextmenu` is cancelled. `FIREBASE_APPCHECK_DEBUG_TOKEN` stays limited to `localhost` and `127.0.0.1`, and that script stays before `flutter_bootstrap.js`. A capture-phase `pointerdown` listener records `window.__ramificaGestured`, so a login or link tap before Feed exists still counts as the first gesture.
 
 `web/manifest.webmanifest` is the only manifest. Name `Ramifica`, `start_url` `/?source=pwa`, scope `/`, `display` standalone, `orientation` portrait, colors `#131318`. Icons are the existing `icons/Icon-*.png` files. `/?source=pwa` parses as Feed because the parser uses the path.
 
@@ -49,7 +49,7 @@ There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch]
 
 | Request | What the worker does |
 |---|---|
-| Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` stays a document until `storyPage` exists. |
+| Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` is served by `storyPage`: the same app shell plus OG tags, cached per its `Cache-Control`. |
 | JS, wasm, and fonts in the precache list | Precache. The revision is the `v` query on the worker script, so the next build fetches a new shell. |
 | `.webp` | Cache first. 300 entries, 30 days. Status 200 only. |
 | `.m4a` | Cache first. 100 entries, 30 days. Status 200 only. |
@@ -64,9 +64,9 @@ Project id: `meta-ramifica`. Config lives in `firebase.json` and `.firebaserc`.
 
 Emulators: Auth `9099`, Functions `5001`, Firestore `8080`, Hosting `5000`, Storage `9199`. One project mode. The UI is on.
 
-Hosting serves `build/web` with `cleanUrls`. Every path rewrites to `/index.html`. `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
+Hosting serves `build/web` with `cleanUrls`. Every path rewrites to `/index.html`, except `/story/**`, which rewrites to the `storyPage` function first for link previews (absolute asset paths; same app shell plus OG tags). `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
 
-`/story/**` is not rewritten to a function until `storyPage` is deployed. A rewrite to a missing function would break that path.
+The first `pointerdown` anywhere sends `UserGestured`: it clears `autoMuted`, resumes the audio context, and resumes a clip parked by hiding. It never overrides a manual mute. `FeedView` also reads `window.__ramificaGestured` on start, so a login tap counts. Hiding the browser tab sends `AppHidden`, which parks the video until the next tap; becoming visible again never resumes on its own. Switching tabs uses `TickerMode` instead and does resume.
 
 Bucket CORS is `cors.json`: `GET` and `HEAD` from `https://meta-ramifica.web.app`, `https://meta-ramifica.firebaseapp.com`, and `http://localhost:5000`. `gs://meta-ramifica.firebasestorage.app` (`US-CENTRAL1`) already has this config. Reapply it with:
 
@@ -135,8 +135,8 @@ lib/
       access_view.dart          // Google button, email fields, password reset. No tab bar.
     feed/
       feed_bloc.dart            // Run phase. Lives above the tabs.
-      feed_event.dart           // StoryOpened, StorySwiped, UserGestured, PauseReached, VoiceFinished, HoldStarted, HoldCancelled, HoldCompleted, WindowElapsed, OtherPathRequested, MapRequested.
-      feed_state.dart           // Phase, playback, mute, autoMuted, endingSpeaking, reward, saga, hold zone. No 0-to-1 progress.
+      feed_event.dart           // StoryOpened, StorySwiped, UserGestured, AppHidden, PauseReached, MuteToggled, VoiceFinished, HoldStarted, HoldCancelled, HoldCompleted, WindowElapsed, OtherPathRequested, MapRequested.
+      feed_state.dart           // Phase, playback, mute, autoMuted, endingSpeaking, hiddenPaused, hold zone. No 0-to-1 progress.
       feed_view.dart            // Stack: video, chip, zones, portal, subtitle, ending card.
       node_video.dart           // Paints the mp4. Reports the first frame and PauseReached (ended).
       story_chip.dart           // Title and author during the clip. Hidden while the narrator speaks.

@@ -62,6 +62,13 @@
     }
   </script>
   <script>
+    // First user gesture, visible to the app: a login tap counts, so the
+    // first clip after login can start with sound.
+    addEventListener("pointerdown", function () {
+      window.__ramificaGestured = true;
+    }, {capture: true, passive: true});
+  </script>
+  <script>
     // A hold is a choice. The browser must not turn it into a callout.
     document.addEventListener("contextmenu", function (event) {
       event.preventDefault();

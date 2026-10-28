@@ -14,6 +14,20 @@ final class PauseReached extends FeedEvent {
   const PauseReached();
 }
 
+/// The first pointerdown anywhere in the page, or a tap after the browser
+/// tab was hidden. Clears the browser auto-mute and resumes the audio
+/// context; also resumes a clip parked by [AppHidden]. Never overrides a
+/// manual mute.
+final class UserGestured extends FeedEvent {
+  const UserGestured();
+}
+
+/// The browser tab was hidden mid-clip. Parks the video until the next
+/// tap; becoming visible again never resumes on its own.
+final class AppHidden extends FeedEvent {
+  const AppHidden();
+}
+
 /// Flips mute for the clip and the narrator. Clears the browser auto-mute.
 final class MuteToggled extends FeedEvent {
   const MuteToggled();
