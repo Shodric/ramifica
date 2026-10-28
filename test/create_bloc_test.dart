@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
@@ -279,6 +281,316 @@ void main() {
 
       expect(bloc.state.failure, 'No connection');
       expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+  });
+
+  group('CreateMedia', () {
+    test('generateNodeImage sends which and validates it', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await repository.generateNodeImage(
+        storyId: 'story_1',
+        nodeId: 'node_1',
+        which: 'end',
+      );
+
+      expect(calls.single.name, 'generateNodeImage');
+      expect(calls.single.data, {
+        'storyId': 'story_1',
+        'nodeId': 'node_1',
+        'which': 'end',
+      });
+
+      await expectLater(
+        repository.generateNodeImage(
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          which: 'middle',
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, hasLength(1));
+    });
+
+    test('approveNodeImage sends the approved flag', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await repository.approveNodeImage(
+        storyId: 'story_1',
+        nodeId: 'node_1',
+        which: 'end',
+        approved: false,
+      );
+
+      expect(calls.single.name, 'approveNodeImage');
+      expect(calls.single.data, {
+        'storyId': 'story_1',
+        'nodeId': 'node_1',
+        'which': 'end',
+        'approved': false,
+      });
+    });
+
+    test('generateNodeVideo sends ids and the prompt', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await repository.generateNodeVideo(
+        storyId: 'story_1',
+        nodeId: 'node_2',
+        prompt: '  drift  ',
+      );
+
+      expect(calls.single.name, 'generateNodeVideo');
+      expect(calls.single.data, {
+        'storyId': 'story_1',
+        'nodeId': 'node_2',
+        'prompt': 'drift',
+      });
+    });
+
+    test('image generation dispatches and reloads the nodes', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const ImageGenerateRequested(nodeId: 'node_1', which: 'end'),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && calls.isNotEmpty,
+      );
+
+      final generate = calls.singleWhere(
+        (call) => call.name == 'generateNodeImage',
+      );
+      expect(generate.data['which'], 'end');
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('imaging shows running while the call is in flight', () async {
+      final gate = Completer<Map<String, dynamic>>();
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async {
+          if (name == 'generateNodeImage') return gate.future;
+          return <String, dynamic>{};
+        },
+      );
+      final bloc = CreateBloc(repository: repository);
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const ImageGenerateRequested(nodeId: 'node_1', which: 'end'),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.imaging,
+      );
+      expect(bloc.state.statusOf('node_1'), StatusPillState.running);
+
+      gate.complete(<String, dynamic>{});
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none,
+      );
+    });
+
+    test('image approval sends the flag and clears the job', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const ImageApprovalChanged(
+          nodeId: 'node_1',
+          which: 'end',
+          approved: false,
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && calls.isNotEmpty,
+      );
+
+      final approve = calls.singleWhere(
+        (call) => call.name == 'approveNodeImage',
+      );
+      expect(approve.data['approved'], isFalse);
+    });
+
+    test('a gated video failure shows its phrase on the node', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              throw const AppFailure(.failed),
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async =>
+              throw const AppFailure(.offline),
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VideoGenerateRequested('node_1'));
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+
+    test('media events on unknown nodes touch nothing', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc
+        ..add(
+          const ImageGenerateRequested(nodeId: 'missing', which: 'end'),
+        )
+        ..add(
+          const ImageApprovalChanged(
+            nodeId: 'missing',
+            which: 'end',
+            approved: true,
+          ),
+        )
+        ..add(const VideoGenerateRequested('missing'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(calls, isEmpty);
+      expect(bloc.state.job, CreateJob.none);
+    });
+
+    test('fromMap parses the media fields', () {
+      final node = DraftNode.fromMap('node_1', {
+        ..._nodeDoc(),
+        'videoSource': 'generated',
+        'videoFromHash': 'h-s',
+        'videoToHash': 'h-e',
+        'startImageSourceUrl': 'https://example.com/s.webp',
+        'startImageStatus': 'ready',
+        'startHash': 'h-s',
+        'startImageApproved': true,
+        'startFromNodeId': 'node_0',
+        'startParentEndHash': 'h-0',
+        'endImageSourceUrl': 'https://example.com/e.webp',
+        'endImageStatus': 'ready',
+        'endHash': 'h-e',
+        'endImageSource': 'muse',
+        'endImageApproved': true,
+      });
+
+      expect(node.videoSource, 'generated');
+      expect(node.videoFromHash, 'h-s');
+      expect(node.startImageSourceUrl, 'https://example.com/s.webp');
+      expect(node.startImageApproved, isTrue);
+      expect(node.startFromNodeId, 'node_0');
+      expect(node.endImageSourceUrl, 'https://example.com/e.webp');
+      expect(node.endHash, 'h-e');
+      expect(node.endImageApproved, isTrue);
+      expect(node.toJson()['endHash'], 'h-e');
+      expect(node.toJson()['startImageApproved'], isTrue);
+    });
+
+    test('video gate needs the approved parent end', () {
+      const story = DraftStory(
+        storyId: 'story_1',
+        authorId: 'uid_1',
+        title: 'Temple',
+        rootNodeId: 'node_1',
+      );
+      const child = DraftNode(
+        nodeId: 'node_2',
+        startFromNodeId: 'node_1',
+        startParentEndHash: 'hash-e1',
+      );
+
+      const open = CreateState(
+        story: story,
+        nodes: [
+          DraftNode(
+            nodeId: 'node_1',
+            endImageSourceUrl: 'https://example.com/e.webp',
+            endImageApproved: true,
+            endHash: 'hash-e1',
+          ),
+          child,
+        ],
+        openNodeId: 'node_2',
+      );
+      expect(open.isRoot('node_1'), isTrue);
+      expect(open.isRoot('node_2'), isFalse);
+      expect(open.parentOf(child)?.nodeId, 'node_1');
+      expect(open.videoGateMessage(child), isNull);
+
+      const gated = CreateState(
+        story: story,
+        nodes: [
+          DraftNode(nodeId: 'node_1', endImageApproved: false),
+          child,
+        ],
+        openNodeId: 'node_2',
+      );
+      expect(
+        gated.videoGateMessage(child),
+        'The parent end frame must be approved first.',
+      );
+
+      const rootless = DraftNode(nodeId: 'node_1');
+      expect(
+        open.videoGateMessage(rootless),
+        'Approve the start frame to generate video.',
+      );
+    });
+
+    test('desync flags only stale child video', () {
+      const story = DraftStory(
+        storyId: 'story_1',
+        authorId: 'uid_1',
+        title: 'Temple',
+        rootNodeId: 'node_1',
+      );
+      const parent = DraftNode(nodeId: 'node_1', endHash: 'hash-new');
+      const stale = DraftNode(
+        nodeId: 'node_2',
+        startFromNodeId: 'node_1',
+        startParentEndHash: 'hash-old',
+        videoStatus: 'idle',
+      );
+      const synced = DraftNode(
+        nodeId: 'node_3',
+        startFromNodeId: 'node_1',
+        startParentEndHash: 'hash-new',
+        videoStatus: 'idle',
+      );
+      const state = CreateState(
+        story: story,
+        nodes: [parent, stale, synced],
+        openNodeId: 'node_2',
+      );
+
+      expect(stale.isVideoDesyncedFrom(parent), isTrue);
+      expect(synced.isVideoDesyncedFrom(parent), isFalse);
+      expect(parent.isVideoDesyncedFrom(null), isFalse);
+      expect(state.videoDesynced(stale), isTrue);
+      expect(state.videoDesynced(synced), isFalse);
+      expect(state.videoDesynced(parent), isFalse);
     });
   });
 

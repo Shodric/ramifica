@@ -29,8 +29,8 @@ enum StatusPillState {
   idle('Idle'),
   running('Running'),
   ready('Ready'),
+  approved('Approved'),
   failed('Failed');
-
   final String label;
 
   const StatusPillState(this.label);
@@ -40,6 +40,7 @@ enum StatusPillState {
       .idle => RamificaColors.textSecondary,
       .running => RamificaColors.nodeActive,
       .ready => RamificaColors.hotspot,
+      .approved => RamificaColors.hotspot,
       .failed => RamificaColors.error,
     };
   }

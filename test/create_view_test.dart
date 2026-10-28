@@ -139,6 +139,129 @@ void main() {
       // No author id and no signed-in identity: fails before any network.
       expect(find.text('That action is not valid'), findsOneWidget);
     });
+
+    testWidgets('root shows S controls, child hides them', (tester) async {
+      final bloc = await _pumpMediaDraft(tester);
+
+      // S-vs-E comparison labels render for the open root.
+      expect(find.text('Start'), findsOneWidget);
+      expect(find.text('End'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('approve-start-node_1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('approve-end-node_1')),
+        findsOneWidget,
+      );
+
+      // Tapping the leaf selects it in the inspector.
+      final layout = layoutDraft(
+        bloc.state.nodes,
+        rootNodeId: 'node_1',
+      );
+      final origin = tester.getTopLeft(find.byType(DraftCanvas));
+      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNodeId, 'node_2');
+
+      // The child inherits S: no S controls, but its own E controls.
+      expect(
+        find.byKey(const ValueKey('approve-start-node_2')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('approve-end-node_2')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('approve dispatches the end-frame approval', (tester) async {
+      final calls = <_Call>[];
+      await _pumpMediaDraft(tester, calls);
+
+      final approve = find.byKey(const ValueKey('approve-end-node_1'));
+      await tester.ensureVisible(approve);
+      await tester.pumpAndSettle();
+      await tester.tap(approve);
+      await tester.pumpAndSettle();
+
+      final sent = calls.singleWhere(
+        (call) => call.name == 'approveNodeImage',
+      );
+      expect(sent.data['nodeId'], 'node_1');
+      expect(sent.data['which'], 'end');
+      expect(sent.data['approved'], isTrue);
+    });
+
+    testWidgets('reject flips an approved end frame off', (tester) async {
+      final calls = <_Call>[];
+      await _pumpMediaDraft(tester, calls, _mediaDocs(approved: true));
+
+      // The approved pill marks the approved E frame.
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is StatusPill &&
+              widget.status == StatusPillState.approved,
+        ),
+        findsWidgets,
+      );
+
+      final reject = find.byKey(const ValueKey('reject-end-node_1'));
+      await tester.ensureVisible(reject);
+      await tester.pumpAndSettle();
+      await tester.tap(reject);
+      await tester.pumpAndSettle();
+
+      final sent = calls.singleWhere(
+        (call) => call.name == 'approveNodeImage',
+      );
+      expect(sent.data['which'], 'end');
+      expect(sent.data['approved'], isFalse);
+    });
+
+    testWidgets('gated video shows the message and disables generation', (
+      tester,
+    ) async {
+      final bloc = await _pumpMediaDraft(tester);
+
+      final layout = layoutDraft(
+        bloc.state.nodes,
+        rootNodeId: 'node_1',
+      );
+      final origin = tester.getTopLeft(find.byType(DraftCanvas));
+      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNodeId, 'node_2');
+
+      // The parent E is unapproved: the gate message shows and the video
+      // button is disabled.
+      expect(
+        find.text('The parent end frame must be approved first.'),
+        findsOneWidget,
+      );
+      final generate = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('gen-video-node_2')),
+      );
+      expect(generate.onPressed, isNull);
+    });
+
+    testWidgets('a stale child video shows the desync badge', (tester) async {
+      final bloc = await _pumpMediaDraft(tester);
+
+      final layout = layoutDraft(
+        bloc.state.nodes,
+        rootNodeId: 'node_1',
+      );
+      final origin = tester.getTopLeft(find.byType(DraftCanvas));
+      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNodeId, 'node_2');
+
+      // The parent regenerated E after this child inherited S.
+      expect(find.textContaining('Out of sync'), findsOneWidget);
+    });
   });
 }
 
@@ -159,7 +282,79 @@ Future<CreateBloc> _pumpDraft(WidgetTester tester, [List<_Call>? calls]) async {
   return bloc;
 }
 
-CreateRepository _repo(List<_Call>? calls) {
+Future<CreateBloc> _pumpMediaDraft(
+  WidgetTester tester, [
+  List<_Call>? calls,
+  List<MapEntry<String, Map<String, dynamic>>>? docs,
+]) async {
+  final bloc = CreateBloc(
+    repository: _repo(calls, docs: docs ?? _mediaDocs()),
+  );
+  addTearDown(bloc.close);
+  bloc.add(const DraftOpened('story_1'));
+  await bloc.stream.firstWhere((state) => state.hasDraft);
+  await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+  await tester.pumpAndSettle();
+  return bloc;
+}
+
+/// Root with generated-but-unapproved S/E plus a stale child: the child
+/// inherited `hash-old` while the parent E is now `hash-e1`, and its
+/// video sits at `idle` waiting to re-inherit.
+List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
+  bool approved = false,
+}) {
+  return [
+    MapEntry('node_1', {
+      'title': 'Root',
+      'visibility': 'visible',
+      'isEnding': false,
+      'videoStatus': 'idle',
+      'windowSeconds': 6,
+      'ttsText': '',
+      'lineApproved': false,
+      'ttsStatus': 'idle',
+      'startImageSourceUrl': 'https://frames.invalid/s.webp',
+      'startImageStatus': 'ready',
+      'startHash': 'hash-s',
+      'startImageApproved': approved,
+      'endImageSourceUrl': 'https://frames.invalid/e1.webp',
+      'endImageStatus': 'ready',
+      'endHash': 'hash-e1',
+      'endImageApproved': approved,
+      'choices': [
+        {
+          'choiceId': 'c1',
+          'label': '',
+          'targetNodeId': 'node_2',
+          'isDefault': true,
+          'x': 0.25,
+          'y': 0.65,
+          'radius': 0.15,
+        },
+      ],
+    }),
+    const MapEntry('node_2', {
+      'title': 'Leaf',
+      'visibility': 'visible',
+      'isEnding': true,
+      'endingName': 'Escape',
+      'endingType': 'abierto',
+      'videoStatus': 'idle',
+      'startFromNodeId': 'node_1',
+      'startParentEndHash': 'hash-old',
+      'endImageSourceUrl': 'https://frames.invalid/e2.webp',
+      'endImageStatus': 'ready',
+      'endHash': 'hash-e2',
+      'endImageApproved': false,
+    }),
+  ];
+}
+
+CreateRepository _repo(
+  List<_Call>? calls, {
+  List<MapEntry<String, Map<String, dynamic>>>? docs,
+}) {
   return CreateRepository(
     createDraftDoc: ({required authorId, required title}) async => 'story_1',
     fetchStoryDoc: (_) async => {
@@ -169,8 +364,10 @@ CreateRepository _repo(List<_Call>? calls) {
       'status': 'draft',
       'rootNodeId': 'node_1',
     },
-    fetchNodeDocs: (_) async => [
-      MapEntry('node_1', {
+    fetchNodeDocs: (_) async =>
+        docs ??
+        [
+          MapEntry('node_1', {
         'title': 'Root',
         'visibility': 'visible',
         'isEnding': false,

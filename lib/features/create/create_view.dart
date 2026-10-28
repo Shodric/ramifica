@@ -127,7 +127,13 @@ class _CreateViewState extends State<CreateView> {
                     status: state.statusOf(state.openNodeId!),
                     missing: state.missingFor(state.openNode!),
                     busy: state.job == CreateJob.saving ||
-                        state.job == CreateJob.generating,
+                        state.job == CreateJob.generating ||
+                        state.job == CreateJob.imaging,
+                    isRoot: state.isRoot(state.openNodeId!),
+                    parent: state.parentOf(state.openNode!),
+                    videoGateMessage:
+                        state.videoGateMessage(state.openNode!),
+                    videoDesynced: state.videoDesynced(state.openNode!),
                     onTitleChanged: (value) => bloc.add(
                       NodeFieldChanged(
                         nodeId: state.openNodeId!,
@@ -157,6 +163,22 @@ class _CreateViewState extends State<CreateView> {
                         bloc.add(const TextGenerateRequested()),
                     onRegenerate: () => bloc.add(
                       const TextGenerateRequested(regenerate: true),
+                    ),
+                    onImageApprovalChanged: (which, approved) => bloc.add(
+                      ImageApprovalChanged(
+                        nodeId: state.openNodeId!,
+                        which: which,
+                        approved: approved,
+                      ),
+                    ),
+                    onImageGenerate: (which) => bloc.add(
+                      ImageGenerateRequested(
+                        nodeId: state.openNodeId!,
+                        which: which,
+                      ),
+                    ),
+                    onVideoGenerate: () => bloc.add(
+                      VideoGenerateRequested(state.openNodeId!),
                     ),
                   ),
                 ),

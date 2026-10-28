@@ -219,6 +219,70 @@ class CreateRepository {
     if (proposal.isEmpty) throw const AppFailure(.invalid);
     return proposal;
   }
+
+  /// Asks for a node frame via the `generateNodeImage` callable. [which]
+  /// is `start` (root only) or `end` (any node); anything else throws
+  /// [AppFailure.invalid] without touching the network. Generation is
+  /// server-side: this records intent, then the caller reloads the nodes
+  /// to read the resulting `pending`/`ready` status and approval reset.
+  Future<void> generateNodeImage({
+    required String storyId,
+    required String nodeId,
+    required String which,
+    String? prompt,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    if (which != 'start' && which != 'end') {
+      throw const AppFailure(.invalid);
+    }
+    final data = {'storyId': story, 'nodeId': node, 'which': which};
+    final hint = prompt?.trim();
+    if (hint != null && hint.isNotEmpty) data['prompt'] = hint;
+    await callFunction('generateNodeImage', data);
+  }
+
+  /// Approves or rejects one node frame via the `approveNodeImage`
+  /// callable. The backend records the approval (an E approval lets
+  /// children inherit it as their S); the caller reloads the nodes after.
+  Future<void> approveNodeImage({
+    required String storyId,
+    required String nodeId,
+    required String which,
+    required bool approved,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    if (which != 'start' && which != 'end') {
+      throw const AppFailure(.invalid);
+    }
+    await callFunction('approveNodeImage', {
+      'storyId': story,
+      'nodeId': node,
+      'which': which,
+      'approved': approved,
+    });
+  }
+
+  /// Asks for the node video via the `generateNodeVideo` callable. GATED
+  /// server-side on the approved parent E (own S on the root); the call
+  /// inherits that E as this node's S. Records intent; the caller reloads
+  /// the nodes to read the resulting `pending`/`ready` status.
+  Future<void> generateNodeVideo({
+    required String storyId,
+    required String nodeId,
+    String? prompt,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    final data = {'storyId': story, 'nodeId': node};
+    final hint = prompt?.trim();
+    if (hint != null && hint.isNotEmpty) data['prompt'] = hint;
+    await callFunction('generateNodeVideo', data);
+  }
 }
 
 /// Production source:

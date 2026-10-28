@@ -81,3 +81,42 @@ final class TextGenerateRequested extends CreateEvent {
   final String? prompt;
   final bool regenerate;
 }
+
+/// Asks for a node frame via `generateNodeImage`. [which] is `start`
+/// (root only — the backend rejects it elsewhere) or `end` (any node).
+/// `restartable`: a second tap cancels the first.
+final class ImageGenerateRequested extends CreateEvent {
+  const ImageGenerateRequested({required this.nodeId, required this.which});
+
+  final String nodeId;
+
+  /// `start` or `end`.
+  final String which;
+}
+
+/// Approves (`approved: true`) or rejects (`approved: false`) one node
+/// frame via `approveNodeImage`. The backend records the approval; the
+/// bloc then reloads the nodes so inheritance side effects show up.
+final class ImageApprovalChanged extends CreateEvent {
+  const ImageApprovalChanged({
+    required this.nodeId,
+    required this.which,
+    required this.approved,
+  });
+
+  final String nodeId;
+
+  /// `start` or `end`.
+  final String which;
+
+  final bool approved;
+}
+
+/// Asks for the node video via `generateNodeVideo`. GATED server-side:
+/// the root needs its own S approved, any other node needs its parent E
+/// approved; the call inherits the parent E as S. `restartable`.
+final class VideoGenerateRequested extends CreateEvent {
+  const VideoGenerateRequested(this.nodeId);
+
+  final String nodeId;
+}

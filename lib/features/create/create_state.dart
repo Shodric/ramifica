@@ -4,7 +4,7 @@ import 'package:ramifica/data/models/draft_story.dart';
 
 /// Which async job is in flight, if any. One at a time: a new job
 /// replaces the previous description.
-enum CreateJob { none, loading, saving, generating }
+enum CreateJob { none, loading, saving, generating, imaging }
 
 /// Create tab state: the draft story, its nodes, the open node, the job
 /// in flight, and what is missing per node.
@@ -84,7 +84,9 @@ class CreateState {
   /// while it targets [nodeId], the failure right after it fails, ready
   /// when nothing is missing, idle otherwise.
   StatusPillState statusOf(String nodeId) {
-    if ((job == CreateJob.saving || job == CreateJob.generating) &&
+    if ((job == CreateJob.saving ||
+            job == CreateJob.generating ||
+            job == CreateJob.imaging) &&
         jobNodeId == nodeId) {
       return .running;
     }
@@ -102,6 +104,42 @@ class CreateState {
     }
     return null;
   }
+
+  /// True when [nodeId] is the draft root. Only the root generates its
+  /// own S frame and shows S approval controls; children inherit S.
+  bool isRoot(String nodeId) => story?.rootNodeId == nodeId;
+
+  /// The node [node] inherited its S from, or null for the root and for
+  /// nodes whose parent link is missing.
+  DraftNode? parentOf(DraftNode node) {
+    final parentId = node.startFromNodeId;
+    if (parentId == null || parentId.isEmpty) return null;
+    return _byId(parentId);
+  }
+
+  /// Why [node] cannot generate video yet, or null when the gate is open.
+  /// The root needs its own S approved and present; any other node needs
+  /// its parent E approved and present (the call inherits it as S).
+  String? videoGateMessage(DraftNode node) {
+    if (isRoot(node.nodeId)) {
+      if (!node.startImageApproved || node.startImageSourceUrl == null) {
+        return 'Approve the start frame to generate video.';
+      }
+      return null;
+    }
+    final parent = parentOf(node);
+    if (parent == null ||
+        !parent.endImageApproved ||
+        parent.endImageSourceUrl == null) {
+      return 'The parent end frame must be approved first.';
+    }
+    return null;
+  }
+
+  /// True when [node] carries a stale video: its inherited S no longer
+  /// matches the parent E (the parent regenerated E and the backend
+  /// forced this video back to `idle` until it re-inherits).
+  bool videoDesynced(DraftNode node) => node.isVideoDesyncedFrom(parentOf(node));
 
   CreateState copy({
     DraftStory? Function()? story,

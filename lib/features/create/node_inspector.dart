@@ -3,7 +3,7 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/glass_panel.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
-
+import 'package:ramifica/features/create/frame_compare.dart';
 /// Inspector for the open draft node: manual editing fields, the
 /// per-node [StatusPill], and what is missing for publish.
 ///
@@ -19,6 +19,10 @@ class NodeInspector extends StatefulWidget {
     required this.status,
     required this.missing,
     this.busy = false,
+    this.isRoot = false,
+    this.parent,
+    this.videoGateMessage,
+    this.videoDesynced = false,
     this.onTitleChanged,
     this.onLineChanged,
     this.onChoiceLabelChanged,
@@ -26,6 +30,9 @@ class NodeInspector extends StatefulWidget {
     this.onSave,
     this.onGenerate,
     this.onRegenerate,
+    this.onImageApprovalChanged,
+    this.onImageGenerate,
+    this.onVideoGenerate,
   });
 
   final DraftNode node;
@@ -35,6 +42,20 @@ class NodeInspector extends StatefulWidget {
   /// A save or generation is in flight: fields and buttons disable.
   final bool busy;
 
+  /// True for the draft root. Only the root shows S frame controls;
+  /// other nodes inherit S from their parent E.
+  final bool isRoot;
+
+  /// The node this one inherits its S from, if any. Supplies the S
+  /// preview on non-root nodes.
+  final DraftNode? parent;
+
+  /// Why video generation is gated, or null when the gate is open.
+  final String? videoGateMessage;
+
+  /// True when this node's video is stale (parent E regenerated).
+  final bool videoDesynced;
+
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onLineChanged;
   final void Function(String choiceId, String label)? onChoiceLabelChanged;
@@ -42,6 +63,14 @@ class NodeInspector extends StatefulWidget {
   final VoidCallback? onSave;
   final VoidCallback? onGenerate;
   final VoidCallback? onRegenerate;
+
+  /// Frame approval flip: `which` is `start` or `end`.
+  final void Function(String which, bool approved)? onImageApprovalChanged;
+
+  /// Frame generation request: `which` is `start` or `end`.
+  final ValueChanged<String>? onImageGenerate;
+
+  final VoidCallback? onVideoGenerate;
 
   @override
   State<NodeInspector> createState() => _NodeInspectorState();
@@ -169,6 +198,62 @@ class _NodeInspectorState extends State<NodeInspector> {
                 child: Text(item, style: RamificaText.meta),
               ),
           ],
+          const SizedBox(height: 16),
+          const Text('Frames', style: RamificaText.label),
+          const SizedBox(height: 8),
+          FrameCompare(
+            startImageUrl: widget.isRoot
+                ? node.startImageSourceUrl
+                : widget.parent?.endImageSourceUrl,
+            endImageUrl: node.endImageSourceUrl,
+          ),
+          const SizedBox(height: 8),
+          if (widget.isRoot)
+            _frameControls(
+              which: 'start',
+              approved: node.startImageApproved,
+              status: node.startImageStatus,
+              hasImage: node.startImageSourceUrl != null,
+            ),
+          _frameControls(
+            which: 'end',
+            approved: node.endImageApproved,
+            status: node.endImageStatus,
+            hasImage: node.endImageSourceUrl != null,
+          ),
+          const SizedBox(height: 16),
+          const Text('Video', style: RamificaText.label),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _videoStatusPill(node),
+              if (widget.videoDesynced) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Out of sync — regenerate to re-inherit.',
+                    style: RamificaText.meta.copyWith(
+                      color: RamificaColors.error,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (widget.videoGateMessage != null) ...[
+            const SizedBox(height: 4),
+            Text(widget.videoGateMessage!, style: RamificaText.meta),
+          ],
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: ValueKey('gen-video-${node.nodeId}'),
+            onPressed: widget.busy || widget.videoGateMessage != null
+                ? null
+                : widget.onVideoGenerate,
+            child: Text(
+              node.videoUrl == null ? 'Generate video' : 'Regenerate video',
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -194,6 +279,83 @@ class _NodeInspectorState extends State<NodeInspector> {
         ],
       ),
     );
+  }
+
+  /// One frame row: label, approval [StatusPill], and approve / reject /
+  /// generate buttons. Approve needs a generated frame; reject flips an
+  /// approval back off; generate (re-)requests the frame server-side.
+  Widget _frameControls({
+    required String which,
+    required bool approved,
+    required String? status,
+    required bool hasImage,
+  }) {
+    final nodeId = widget.node.nodeId;
+    final pill = approved
+        ? StatusPillState.approved
+        : switch (status) {
+            'pending' => StatusPillState.running,
+            'ready' => StatusPillState.ready,
+            'failed' => StatusPillState.failed,
+            _ => StatusPillState.idle,
+          };
+    return Padding(
+      padding: const .symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  which == 'start' ? 'Start' : 'End',
+                  style: RamificaText.meta,
+                ),
+              ),
+              StatusPill(status: pill),
+            ],
+          ),
+          Row(
+            children: [
+              TextButton(
+                key: ValueKey('approve-$which-$nodeId'),
+                onPressed: widget.busy || !hasImage || approved
+                    ? null
+                    : () => widget.onImageApprovalChanged?.call(which, true),
+                child: const Text('Approve'),
+              ),
+              TextButton(
+                key: ValueKey('reject-$which-$nodeId'),
+                onPressed: widget.busy || !approved
+                    ? null
+                    : () => widget.onImageApprovalChanged?.call(which, false),
+                child: const Text('Reject'),
+              ),
+              TextButton(
+                key: ValueKey('gen-image-$which-$nodeId'),
+                onPressed: widget.busy
+                    ? null
+                    : () => widget.onImageGenerate?.call(which),
+                child: const Text('Generate'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Video job pill from the server [videoStatus]: ready / pending /
+  /// failed, idle otherwise (including gated and desynced idles).
+  StatusPill _videoStatusPill(DraftNode node) {
+    final status = switch (node.videoStatus) {
+      'ready' => StatusPillState.ready,
+      'pending' => StatusPillState.running,
+      'failed' => StatusPillState.failed,
+      _ => StatusPillState.idle,
+    };
+    return StatusPill(status: status);
   }
 
   /// Choice label controllers follow the choice list: new choices get a

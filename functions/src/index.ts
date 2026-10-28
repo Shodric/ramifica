@@ -1,6 +1,11 @@
 import {setGlobalOptions} from "firebase-functions/v2";
 
 import {commitChoice} from "./feed/commitChoice";
+import {
+  approveNodeImage,
+  generateNodeImage,
+  generateNodeVideo,
+} from "./create/generateNodeMedia";
 import {generateNodeText} from "./create/generateNodeText";
 import {createNode, saveNode} from "./create/nodes";
 import {loadPlayback} from "./feed/loadPlayback";
@@ -12,9 +17,12 @@ import {storyPage} from "./storyPage";
 
 setGlobalOptions({region: "us-central1"});
 export {
+  approveNodeImage,
   commitChoice,
   createNode,
+  generateNodeImage,
   generateNodeText,
+  generateNodeVideo,
   loadPlayback,
   saveNode,
   startRun,

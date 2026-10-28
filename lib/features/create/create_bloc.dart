@@ -23,6 +23,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<NodeFieldChanged>(_onFieldChanged);
     on<NodeSaved>(_onNodeSaved, transformer: droppable());
     on<TextGenerateRequested>(_onGenerate, transformer: restartable());
+    on<ImageGenerateRequested>(_onImageGenerate, transformer: restartable());
+    on<ImageApprovalChanged>(_onImageApproval, transformer: droppable());
+    on<VideoGenerateRequested>(_onVideoGenerate, transformer: restartable());
   }
 
   final CreateRepository repository;
@@ -244,6 +247,100 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         state.copy(
           job: CreateJob.none,
           jobNodeId: () => node.nodeId,
+          failure: () => error.phrase,
+        ),
+      );
+    }
+  }
+
+  /// Asks for one node frame, then reloads the nodes so the resulting
+  /// status (and any approval reset) shows up. Display + dispatch only:
+  /// generation runs server-side.
+  Future<void> _onImageGenerate(
+    ImageGenerateRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    await _runImaging(
+      emit,
+      event.nodeId,
+      () => repository.generateNodeImage(
+        storyId: state.story!.storyId,
+        nodeId: event.nodeId,
+        which: event.which,
+      ),
+    );
+  }
+
+  /// Records a frame approval or rejection, then reloads the nodes so
+  /// inheritance side effects (an E approval opening the child video
+  /// gate) show up.
+  Future<void> _onImageApproval(
+    ImageApprovalChanged event,
+    Emitter<CreateState> emit,
+  ) async {
+    await _runImaging(
+      emit,
+      event.nodeId,
+      () => repository.approveNodeImage(
+        storyId: state.story!.storyId,
+        nodeId: event.nodeId,
+        which: event.which,
+        approved: event.approved,
+      ),
+    );
+  }
+
+  /// Asks for the node video (inheriting the approved parent E as S),
+  /// then reloads the nodes so the job status shows up. The backend
+  /// enforces the approval gate; a rejection lands as [failure].
+  Future<void> _onVideoGenerate(
+    VideoGenerateRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    await _runImaging(
+      emit,
+      event.nodeId,
+      () => repository.generateNodeVideo(
+        storyId: state.story!.storyId,
+        nodeId: event.nodeId,
+      ),
+    );
+  }
+
+  /// Shared imaging runner: unknown nodes and missing drafts are ignored,
+  /// the job pill runs while the call is in flight, and the nodes reload
+  /// after so server-side status is the source of truth.
+  Future<void> _runImaging(
+    Emitter<CreateState> emit,
+    String nodeId,
+    Future<void> Function() call,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    if (!state.nodes.any((node) => node.nodeId == nodeId)) return;
+    emit(
+      state.copy(
+        job: CreateJob.imaging,
+        jobNodeId: () => nodeId,
+        failure: () => null,
+      ),
+    );
+    try {
+      await call();
+      final nodes = await repository.fetchNodes(story.storyId);
+      emit(
+        state.copy(
+          nodes: nodes,
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => nodeId,
           failure: () => error.phrase,
         ),
       );
