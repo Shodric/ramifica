@@ -169,8 +169,59 @@ void main() {
           StorySummary(storyId: 'story_plain', title: 'Plain'),
         ],
       );
-
       expect(await repository.featuredStory(), isNull);
+    });
+
+    test('featuredStory prefers the injected single fetch', () async {
+      var gridCalls = 0;
+      final repository = CatalogRepository(
+        fetchPublishedIds: () async => const ['story_grid'],
+        fetchPublishedStories: () async {
+          gridCalls++;
+          return const [
+            StorySummary(
+              storyId: 'story_grid',
+              title: 'Grid pick',
+              featured: true,
+            ),
+          ];
+        },
+        fetchFeaturedStory: () async => const StorySummary(
+          storyId: 'story_server',
+          title: 'Server pick',
+          featured: true,
+        ),
+      );
+
+      expect((await repository.featuredStory())?.storyId, 'story_server');
+      expect(gridCalls, isZero);
+    });
+
+    test('publishedStories keeps the server order', () async {
+      final repository = CatalogRepository(
+        fetchPublishedIds: () async => const ['story_old', 'story_new'],
+        fetchPublishedStories: () async => const [
+          StorySummary(storyId: 'story_old', title: 'Older'),
+          StorySummary(storyId: 'story_new', title: 'Newer'),
+        ],
+      );
+
+      final stories = await repository.publishedStories();
+
+      expect(
+        [for (final story in stories) story.storyId],
+        ['story_old', 'story_new'],
+      );
+    });
+
+    test('empty states never throw', () async {
+      final repository = CatalogRepository(
+        fetchPublishedIds: () async => const <String>[],
+      );
+
+      expect(await repository.publishedStories(), isEmpty);
+      expect(await repository.featuredStory(), isNull);
+      expect(await repository.activeCampaigns(), isEmpty);
     });
 
     test('publishedStories falls back to ids without an injected fetch', () async {

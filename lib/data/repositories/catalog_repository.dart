@@ -10,6 +10,7 @@ class CatalogRepository {
   CatalogRepository({
     required this.fetchPublishedIds,
     this.fetchPublishedStories,
+    this.fetchFeaturedStory,
     this.fetchActiveCampaigns,
   });
 
@@ -18,6 +19,14 @@ class CatalogRepository {
   /// Overrides the Firestore grid reads below. Tests pass lambdas that
   /// return typed models; production uses [createFirebaseCatalogRepository].
   final Future<List<StorySummary>> Function()? fetchPublishedStories;
+
+  /// Override for the featured query below. Tests pass a lambda returning
+  /// the single featured model (or null); production uses
+  /// [createFirebaseCatalogRepository].
+  final Future<StorySummary?> Function()? fetchFeaturedStory;
+
+  /// Overrides the Firestore campaigns read below. Tests pass lambdas that
+  /// return typed models; production uses [createFirebaseCatalogRepository].
   final Future<List<CampaignSummary>> Function()? fetchActiveCampaigns;
 
   Future<List<String>> publishedStoryIds() => fetchPublishedIds();
@@ -33,9 +42,13 @@ class CatalogRepository {
     ];
   }
 
-  /// The featured published story, picked in memory like `startRun` does,
-  /// so no composite index is needed. Null when none is flagged.
+  /// The featured published story. Without an injected fetch, falls back
+  /// to the first flagged story in [publishedStories] (swipe-only setups
+  /// and tests without a featured fetch use this path). Null when none
+  /// is flagged.
   Future<StorySummary?> featuredStory() async {
+    final fetch = fetchFeaturedStory;
+    if (fetch != null) return fetch();
     final stories = await publishedStories();
     for (final story in stories) {
       if (story.featured) return story;
@@ -50,10 +63,20 @@ class CatalogRepository {
     return const [];
   }
 }
-
-/// Production source: `stories` with `status == published`, and
-/// `campaigns` with `active == true`. Both are single-field equality
-/// filters, so no composite index is needed; grids sort in memory.
+/// Production source:
+/// * grid: `stories` with `status == published`, newest `publishedAt`
+///   first (`orderBy('publishedAt', descending: true)`, first page of 50);
+/// * featured: `stories` with `status == published` and
+///   `featured == true`, `limit(1)`;
+/// * campaigns: `campaigns` with `active == true`, `limit(20)`.
+///
+/// The `status` filter doubles as the security-rules guard: `stories` are
+/// readable only when published (or by their author), so every stories
+/// query carries it. The grid and featured queries need the composite
+/// indexes in `firestore.indexes.json`; the campaigns read is a
+/// single-field filter and needs none. Firestore sorts missing
+/// `publishedAt` values last under a descending order, which preserves
+/// the old in-memory fallback behavior for console-written docs.
 CatalogRepository createFirebaseCatalogRepository([
   FirebaseFirestore? firestore,
 ]) {
@@ -77,16 +100,11 @@ CatalogRepository createFirebaseCatalogRepository([
         final snap = await db
             .collection('stories')
             .where('status', isEqualTo: 'published')
+            .orderBy('publishedAt', descending: true)
             .limit(50)
             .get();
-        final docs = snap.docs.toList()
-          ..sort(
-            (a, b) => _publishedRank(b.data()).compareTo(
-              _publishedRank(a.data()),
-            ),
-          );
         final stories = <StorySummary>[];
-        for (final doc in docs) {
+        for (final doc in snap.docs) {
           try {
             stories.add(StorySummary.fromDoc(doc.id, doc.data()));
           } on AppFailure {
@@ -94,6 +112,27 @@ CatalogRepository createFirebaseCatalogRepository([
           }
         }
         return stories;
+      } on FirebaseException catch (error) {
+        throw AppFailure(appFailureCodeFor(error.code), cause: error);
+      } catch (error) {
+        throw AppFailure(.failed, cause: error);
+      }
+    },
+    fetchFeaturedStory: () async {
+      try {
+        final snap = await db
+            .collection('stories')
+            .where('status', isEqualTo: 'published')
+            .where('featured', isEqualTo: true)
+            .limit(1)
+            .get();
+        if (snap.docs.isEmpty) return null;
+        final doc = snap.docs.first;
+        try {
+          return StorySummary.fromDoc(doc.id, doc.data());
+        } on AppFailure {
+          return null;
+        }
       } on FirebaseException catch (error) {
         throw AppFailure(appFailureCodeFor(error.code), cause: error);
       } catch (error) {
@@ -123,17 +162,4 @@ CatalogRepository createFirebaseCatalogRepository([
       }
     },
   );
-}
-
-/// Newest `publishedAt` first; docs without one sort last. Accepts the
-/// Timestamp, numeric epoch, and ISO-string shapes the console writes.
-int _publishedRank(Map<String, dynamic> data) {
-  final value = data['publishedAt'];
-  if (value is Timestamp) return value.millisecondsSinceEpoch;
-  if (value is num) return value.toInt();
-  if (value is String) {
-    final parsed = DateTime.tryParse(value.trim());
-    if (parsed != null) return parsed.millisecondsSinceEpoch;
-  }
-  return -1;
 }
