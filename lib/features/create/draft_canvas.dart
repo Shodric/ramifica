@@ -146,19 +146,28 @@ class DraftCanvas extends StatelessWidget {
   Widget build(BuildContext context) {
     if (nodes.isEmpty) return const SizedBox.shrink();
     final layout = layoutDraft(nodes, rootNodeId: rootNodeId);
-    return SingleChildScrollView(
-      scrollDirection: .horizontal,
+    // 24 px Stitch card on the opaque ramp. DecoratedBox only: no padding,
+    // so the CustomPaint origin (and tap mapping) stays exact.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: RamificaColors.containerBase,
+        borderRadius: RamificaLayout.cardBorderRadius,
+        border: Border.all(color: RamificaColors.outlineVariant),
+      ),
       child: SingleChildScrollView(
-        scrollDirection: .vertical,
-        child: GestureDetector(
-          onTapUp: (details) => _tap(details, layout),
-          child: CustomPaint(
-            size: layout.size,
-            painter: _DraftPainter(
-              nodes: nodes,
-              layout: layout,
-              orphans: orphans,
-              openNodeId: openNodeId,
+        scrollDirection: .horizontal,
+        child: SingleChildScrollView(
+          scrollDirection: .vertical,
+          child: GestureDetector(
+            onTapUp: (details) => _tap(details, layout),
+            child: CustomPaint(
+              size: layout.size,
+              painter: _DraftPainter(
+                nodes: nodes,
+                layout: layout,
+                orphans: orphans,
+                openNodeId: openNodeId,
+              ),
             ),
           ),
         ),
@@ -258,6 +267,15 @@ class _DraftPainter extends CustomPainter {
       _paintLock(canvas, center);
     }
     if (open) {
+      // Static ping halo: the zone-ring shape in a glow wash. No animation.
+      canvas.drawCircle(
+        center,
+        _nodeRadius + 11,
+        Paint()
+          ..color = RamificaColors.glowCyan
+          ..style = .stroke
+          ..strokeWidth = 2,
+      );
       canvas.drawCircle(
         center,
         _nodeRadius + 5,
@@ -272,7 +290,7 @@ class _DraftPainter extends CustomPainter {
     final line = TextPainter(
       text: TextSpan(
         text: '$caption$suffix',
-        style: RamificaText.meta.copyWith(
+        style: RamificaText.caption.copyWith(
           color: orphan
               ? RamificaColors.textSecondary
               : RamificaColors.textPrimary,

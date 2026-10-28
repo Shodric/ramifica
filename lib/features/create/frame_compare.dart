@@ -46,30 +46,43 @@ class _Frame extends StatelessWidget {
       crossAxisAlignment: .stretch,
       mainAxisSize: .min,
       children: [
-        Text(label, style: RamificaText.meta),
+        Text(label, style: RamificaText.labelSM),
         const SizedBox(height: 4),
         AspectRatio(
           aspectRatio: 9 / 16,
           child: url == null
               ? Container(
-                  decoration: BoxDecoration(
-                    color: RamificaColors.glass,
-                    borderRadius: .circular(8),
-                    border: .all(color: RamificaColors.glassBorder),
+                  decoration: const BoxDecoration(
+                    color: RamificaColors.inputFill,
+                    borderRadius: RamificaLayout.cardBorderRadius,
+                    border: Border.fromBorderSide(RamificaColors.inputBorder),
                   ),
                   child: const Center(
-                    child: Text('Missing', style: RamificaText.meta),
+                    child: Text('Missing', style: RamificaText.caption),
                   ),
                 )
-              : ClipRRect(
-                  borderRadius: .circular(8),
-                  child: Image.network(
-                    url,
-                    fit: .cover,
-                    errorBuilder: (_, _, _) => Container(
-                      color: RamificaColors.glass,
-                      child: const Center(
-                        child: Text('Missing', style: RamificaText.meta),
+              : Container(
+                  decoration: const BoxDecoration(
+                    borderRadius: RamificaLayout.cardBorderRadius,
+                    border: Border.fromBorderSide(RamificaColors.inputBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x66000000),
+                        blurRadius: 16,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: RamificaLayout.cardBorderRadius,
+                    child: Image.network(
+                      url,
+                      fit: .cover,
+                      errorBuilder: (_, _, _) => Container(
+                        color: RamificaColors.inputFill,
+                        child: const Center(
+                          child: Text('Missing', style: RamificaText.caption),
+                        ),
                       ),
                     ),
                   ),

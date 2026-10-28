@@ -117,6 +117,12 @@ class _CreateViewState extends State<CreateView> {
 
   Widget _body(BuildContext context, CreateState state) {
     final bloc = context.read<CreateBloc>();
+    final openIndex = state.openNodeId == null
+        ? -1
+        : state.nodes.indexWhere((node) => node.nodeId == state.openNodeId);
+    final sceneLabel = openIndex >= 0
+        ? 'Scene ${openIndex + 1} editing'
+        : 'Draft editing';
     return Padding(
       padding: const .all(16),
       child: Column(
@@ -135,6 +141,53 @@ class _CreateViewState extends State<CreateView> {
                 ),
             ],
           ),
+          if (state.hasDraft) ...[
+            const SizedBox(height: 8),
+            // Status HUD: static glow dot (no AnimationController here, so
+            // no pulse) plus a StatusPill-style Draft pill.
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    shape: .circle,
+                    color: RamificaColors.hotspot,
+                    boxShadow: [
+                      BoxShadow(
+                        color: RamificaColors.glowCyan,
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  sceneLabel,
+                  style: RamificaText.labelSM.copyWith(
+                    color: RamificaColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: RamificaColors.glass,
+                    borderRadius: .circular(999),
+                    border: .all(color: RamificaColors.glassBorder),
+                  ),
+                  child: Padding(
+                    padding: const .symmetric(horizontal: 10, vertical: 4),
+                    child: Text(
+                      'Draft',
+                      style: RamificaText.meta.copyWith(
+                        color: RamificaColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           if (state.failure != null) ...[
             FailureText(message: state.failure!),

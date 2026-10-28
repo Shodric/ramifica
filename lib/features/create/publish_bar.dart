@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/glass_panel.dart';
 
 /// Publish readiness bar: the story-level missing list plus the publish
 /// CTA.
@@ -21,33 +22,56 @@ class PublishBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ready = problems.isEmpty;
-    return Column(
+    return GlassPanel.card(
       key: const ValueKey('publish-bar'),
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        Text(
-          ready
-              ? 'Ready to publish.'
-              : '${problems.length} item${problems.length == 1 ? '' : 's'} left to publish.',
-          key: const ValueKey('publish-status'),
-          style: RamificaText.label,
-        ),
-        if (!ready) ...[
-          const SizedBox(height: 4),
-          for (final problem in problems)
-            Padding(
-              padding: const .symmetric(vertical: 2),
-              child: Text(problem, style: RamificaText.meta),
-            ),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: .circle,
+                  color: ready
+                      ? RamificaColors.hotspot
+                      : RamificaColors.textSecondary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  ready
+                      ? 'Ready to publish.'
+                      : '${problems.length} item${problems.length == 1 ? '' : 's'} left to publish.',
+                  key: const ValueKey('publish-status'),
+                  style: RamificaText.labelSM.copyWith(
+                    color: ready
+                        ? RamificaColors.rewardGold
+                        : RamificaColors.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!ready) ...[
+            const SizedBox(height: 4),
+            for (final problem in problems)
+              Padding(
+                padding: const .symmetric(vertical: 2),
+                child: Text(problem, style: RamificaText.caption),
+              ),
+          ],
+          const SizedBox(height: 8),
+          FilledButton(
+            key: const ValueKey('publish-button'),
+            onPressed: ready && onPublish != null ? onPublish : null,
+            child: Text(ready ? 'Publish' : 'Publish (${problems.length} left)'),
+          ),
         ],
-        const SizedBox(height: 8),
-        FilledButton(
-          key: const ValueKey('publish-button'),
-          onPressed: ready && onPublish != null ? onPublish : null,
-          child: Text(ready ? 'Publish' : 'Publish (${problems.length} left)'),
-        ),
-      ],
+      ),
     );
   }
 }

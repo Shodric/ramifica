@@ -140,13 +140,13 @@ class _ZoneMarkerState extends State<ZoneMarker> {
               width: width,
               height: height,
               child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: RamificaColors.glass,
-                  borderRadius: .circular(8),
-                  border: .all(color: RamificaColors.glassBorder),
+                decoration: const BoxDecoration(
+                  color: RamificaColors.inputFill,
+                  borderRadius: RamificaLayout.cardBorderRadius,
+                  border: Border.fromBorderSide(RamificaColors.inputBorder),
                 ),
                 child: ClipRRect(
-                  borderRadius: .circular(8),
+                  borderRadius: RamificaLayout.cardBorderRadius,
                   child: Stack(
                     children: [
                       Positioned.fill(child: _frameImage()),
@@ -237,12 +237,19 @@ class _ZoneMarkerState extends State<ZoneMarker> {
           key: ValueKey('zone-ring-$nodeId-${choice.choiceId}'),
           decoration: BoxDecoration(
             shape: .circle,
+            color: RamificaColors.glowCyan,
             border: Border.all(
               color: selected
                   ? RamificaColors.nodeActive
                   : RamificaColors.hotspot,
               width: selected ? 3 : 2,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: RamificaColors.glowCyan,
+                blurRadius: selected ? 16 : 8,
+              ),
+            ],
           ),
           child: Center(
             child: Text(
@@ -287,7 +294,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
             required int? maxLength,
           }) =>
               Text('$currentLength/24', style: RamificaText.meta),
-          decoration: const InputDecoration(labelText: 'Zone label'),
+          decoration: _zoneInputDecoration(),
           onChanged: (label) =>
               widget.onLabelChanged?.call(selected.choiceId, label),
         ),
@@ -356,4 +363,21 @@ class _ZoneMarkerState extends State<ZoneMarker> {
       ],
     );
   }
+}
+
+/// Creator input styling: 6% white fill with a hotspot focus edge.
+InputDecoration _zoneInputDecoration() {
+  return const InputDecoration(
+    labelText: 'Zone label',
+    filled: true,
+    fillColor: RamificaColors.inputFill,
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+      borderSide: RamificaColors.inputBorder,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+      borderSide: RamificaColors.inputFocusedBorder,
+    ),
+  );
 }

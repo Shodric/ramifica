@@ -33,48 +33,73 @@ class WindowPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final shown = value.clamp(minSeconds, maxSeconds).toInt();
     final enabled = !busy && onChanged != null;
-    return Row(
-      children: [
-        IconButton(
-          key: ValueKey('window-minus-$nodeId'),
-          icon: const Icon(Icons.remove),
-          onPressed: enabled && shown > minSeconds
-              ? () => onChanged!(shown - 1)
-              : null,
-        ),
-        Expanded(
-          child: Slider(
-            key: ValueKey('window-slider-$nodeId'),
-            value: shown.toDouble(),
-            min: minSeconds.toDouble(),
-            max: maxSeconds.toDouble(),
-            divisions: maxSeconds - minSeconds,
-            label: '${shown}s',
-            onChanged: enabled
-                ? (picked) => onChanged!(picked.round().clamp(
-                      minSeconds,
-                      maxSeconds,
-                    ))
+    return Container(
+      decoration: const BoxDecoration(
+        color: RamificaColors.inputFill,
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+        border: Border.fromBorderSide(RamificaColors.inputBorder),
+      ),
+      padding: const .symmetric(horizontal: 4, vertical: 4),
+      child: Row(
+        children: [
+          IconButton(
+            key: ValueKey('window-minus-$nodeId'),
+            icon: const Icon(Icons.remove),
+            color: RamificaColors.hotspot,
+            onPressed: enabled && shown > minSeconds
+                ? () => onChanged!(shown - 1)
                 : null,
           ),
-        ),
-        IconButton(
-          key: ValueKey('window-plus-$nodeId'),
-          icon: const Icon(Icons.add),
-          onPressed: enabled && shown < maxSeconds
-              ? () => onChanged!(shown + 1)
-              : null,
-        ),
-        SizedBox(
-          width: 44,
-          child: Text(
-            '${shown}s',
-            key: ValueKey('window-value-$nodeId'),
-            style: RamificaText.label,
-            textAlign: .right,
+          Expanded(
+            child: SliderTheme(
+              data: SliderThemeData(
+                activeTrackColor: RamificaColors.hotspot,
+                inactiveTrackColor: RamificaColors.glass,
+                thumbColor: RamificaColors.hotspot,
+                overlayColor: RamificaColors.glowCyan,
+                valueIndicatorColor: RamificaColors.primaryContainer,
+              ),
+              child: Slider(
+                key: ValueKey('window-slider-$nodeId'),
+                value: shown.toDouble(),
+                min: minSeconds.toDouble(),
+                max: maxSeconds.toDouble(),
+                divisions: maxSeconds - minSeconds,
+                label: '${shown}s',
+                onChanged: enabled
+                    ? (picked) => onChanged!(picked.round().clamp(
+                          minSeconds,
+                          maxSeconds,
+                        ))
+                    : null,
+              ),
+            ),
           ),
-        ),
-      ],
+          IconButton(
+            key: ValueKey('window-plus-$nodeId'),
+            icon: const Icon(Icons.add),
+            color: RamificaColors.hotspot,
+            onPressed: enabled && shown < maxSeconds
+                ? () => onChanged!(shown + 1)
+                : null,
+          ),
+          Container(
+            decoration: const BoxDecoration(
+              color: RamificaColors.glass,
+              borderRadius: BorderRadius.all(Radius.circular(999)),
+              border: Border.fromBorderSide(RamificaColors.inputBorder),
+            ),
+            padding: const .symmetric(horizontal: 10, vertical: 4),
+            margin: const .only(right: 8),
+            child: Text(
+              '${shown}s',
+              key: ValueKey('window-value-$nodeId'),
+              style: RamificaText.labelSM,
+              textAlign: .right,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

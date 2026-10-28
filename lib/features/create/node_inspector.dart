@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/glass_panel.dart';
+import 'package:ramifica/core/widgets/meta_badge.dart';
+import 'package:ramifica/core/widgets/ramifica_isotipo.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/frame_compare.dart';
@@ -183,7 +185,7 @@ class _NodeInspectorState extends State<NodeInspector> {
             controller: _title,
             enabled: !widget.busy,
             maxLength: 40,
-            decoration: const InputDecoration(
+            decoration: _inspectorInputDecoration(
               labelText: 'Title',
               hintText: 'The temple door',
             ),
@@ -195,7 +197,7 @@ class _NodeInspectorState extends State<NodeInspector> {
             controller: _line,
             enabled: !widget.busy,
             maxLines: 3,
-            decoration: const InputDecoration(
+            decoration: _inspectorInputDecoration(
               labelText: 'Narrator line',
               hintText: 'What should they do next?',
             ),
@@ -208,7 +210,7 @@ class _NodeInspectorState extends State<NodeInspector> {
               controller: _labels[choice.choiceId],
               enabled: !widget.busy,
               maxLength: 24,
-              decoration: const InputDecoration(
+              decoration: _inspectorInputDecoration(
                 labelText: 'Choice',
                 hintText: 'Enter the temple',
               ),
@@ -448,6 +450,19 @@ class _NodeInspectorState extends State<NodeInspector> {
               ],
             ),
           ],
+          const Text('Generate variations', style: RamificaText.labelSM),
+          const SizedBox(height: 8),
+          const Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              MetaBadge(label: 'generateNodeText'),
+              MetaBadge(label: 'generateNodeImage'),
+              MetaBadge(label: 'generateNodeVideo'),
+              MetaBadge(label: 'generateNodeVoice'),
+            ],
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
@@ -458,9 +473,9 @@ class _NodeInspectorState extends State<NodeInspector> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: OutlinedButton(
+                child: _GradientCta(
+                  label: 'Spark',
                   onPressed: widget.busy ? null : widget.onGenerate,
-                  child: const Text('Spark'),
                 ),
               ),
               TextButton(
@@ -643,4 +658,67 @@ class _NodeInspectorState extends State<NodeInspector> {
 
 void _setIfDifferent(TextEditingController controller, String value) {
   if (controller.text != value) controller.text = value;
+}
+
+/// Creator input styling: 6% white fill with a hotspot focus edge.
+InputDecoration _inspectorInputDecoration({
+  required String labelText,
+  required String hintText,
+}) {
+  return InputDecoration(
+    labelText: labelText,
+    hintText: hintText,
+    filled: true,
+    fillColor: RamificaColors.inputFill,
+    enabledBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+      borderSide: RamificaColors.inputBorder,
+    ),
+    focusedBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+      borderSide: RamificaColors.inputFocusedBorder,
+    ),
+  );
+}
+
+/// Gradient CTA reusing the existing generate event: same callback, Stitch
+/// brand-ramp treatment. Disabled state falls back to a flat glass fill.
+class _GradientCta extends StatelessWidget {
+  const _GradientCta({required this.label, required this.onPressed});
+
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: enabled
+            ? const LinearGradient(
+                begin: Alignment.bottomLeft,
+                end: Alignment.topRight,
+                colors: ramificaBrandRampColors,
+              )
+            : null,
+        color: enabled ? null : RamificaColors.glass,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        boxShadow: enabled
+            ? const [
+                BoxShadow(color: Color(0x8000F2FE), blurRadius: 16),
+              ]
+            : null,
+      ),
+      child: TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: RamificaColors.onSurface,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+        ),
+        child: Text(label, style: RamificaText.labelSM),
+      ),
+    );
+  }
 }
