@@ -1,7 +1,7 @@
 import {strict as assert} from "assert";
 import {test} from "node:test";
 import {Db, DbCol, DbDoc, DbRef, DbTx} from "../feed/shared";
-import {createNodeWith, saveNodeWith} from "./nodes";
+import {createNodeWith, deleteNodeWith, saveNodeWith} from "./nodes";
 
 type Fields = {[field: string]: unknown};
 
@@ -59,13 +59,18 @@ class MemRef implements DbRef {
       opts?.merge ? {...before, ...data} : {...data}
     );
   }
-
   /** @param {Record<string, unknown>} data Fields to merge. */
   async update(data: Record<string, unknown>): Promise<void> {
     if (!this.db.store.has(this.path)) {
       throw new Error(`not-found: ${this.path}`);
     }
     this.db.store.set(this.path, {...this.db.store.get(this.path), ...data});
+  }
+
+
+  /** Deletes the doc. Extra beyond DbRef: served through a narrow cast. */
+  async delete(): Promise<void> {
+    this.db.store.delete(this.path);
   }
 }
 
@@ -119,9 +124,20 @@ class MemCol implements DbCol {
     throw new Error("MemCol.limit is not stubbed.");
   }
 
-  /** @return {Promise<Object>} Never resolves; node tests never query. */
+  /**
+   * Lists direct children, by id. Delete guards scan choices this way.
+   * @return {Promise<Object>} Whether empty, plus the doc snapshots.
+   */
   async get(): Promise<{empty: boolean; docs: DbDoc[]}> {
-    throw new Error("MemCol.get is not stubbed.");
+    const prefix = `${this.path}/`;
+    const docs: DbDoc[] = [];
+    for (const [key, fields] of this.db.store) {
+      if (!key.startsWith(prefix)) continue;
+      if (key.slice(prefix.length).includes("/")) continue;
+      docs.push(new MemDoc(true, key.slice(prefix.length), fields));
+    }
+    docs.sort((left, right) => (left.id < right.id ? -1 : 1));
+    return {empty: docs.length === 0, docs};
   }
 }
 
@@ -148,10 +164,17 @@ class MemDb implements Db {
 
   /** @param {Function} fn Transaction body. */
   async runTransaction<T>(fn: (tx: DbTx) => Promise<T>): Promise<T> {
-    const tx: DbTx = {
-      get: (ref) => ref.get(),
-      set: (ref, data, opts) => ref.set(data, opts),
-      update: (ref, data) => ref.update(data),
+    // Delete rides along untyped: the Db surface stays get/set/update.
+    const tx = {
+      get: (ref: DbRef) => ref.get(),
+      set: (
+        ref: DbRef,
+        data: Record<string, unknown>,
+        opts?: {merge?: boolean}
+      ) => ref.set(data, opts),
+      update: (ref: DbRef, data: Record<string, unknown>) =>
+        ref.update(data),
+      delete: (ref: DbRef) => (ref as unknown as MemRef).delete(),
     };
     return fn(tx);
   }
@@ -555,4 +578,137 @@ test("saveNode validates every whitelisted field", async () => {
   }
   const node = await db.doc("stories/story_draft/nodes/node_001").get();
   assert.equal(node.data()?.title, "Old title");
+});
+
+test("deleteNode removes an unlinked node", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_leaf").set({
+    title: "Leaf",
+    visibility: "secret",
+    isEnding: false,
+    videoUrl: "https://media.example/leaf.mp4",
+    videoStatus: "ready",
+    ttsAudioUrl: "https://media.example/leaf.m4a",
+    ttsStatus: "ready",
+    choices: [],
+  });
+  const storyBefore = await db.doc("stories/story_draft").get();
+  const before = outsideSnapshot(db, "story_draft");
+  const result = await deleteNodeWith(db, "u1", {
+    storyId: "story_draft",
+    nodeId: "node_leaf",
+  });
+  assert.deepEqual(result, {nodeId: "node_leaf"});
+  const gone = await db.doc("stories/story_draft/nodes/node_leaf").get();
+  assert.equal(gone.exists, false);
+  assert.equal(
+    [...db.store.keys()].some((key) => key.endsWith("/node_leaf")),
+    false
+  );
+  const storyAfter = await db.doc("stories/story_draft").get();
+  assert.deepEqual(storyAfter.data(), storyBefore.data());
+  assert.equal(storyAfter.data()?.rootNodeId, "node_001");
+  const kept = await db.doc("stories/story_draft/nodes/node_001").get();
+  assert.equal(kept.exists, true);
+  assert.equal(outsideSnapshot(db, "story_draft"), before);
+});
+
+test("deleteNode refuses the root node", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const storyBefore = JSON.stringify(
+    (await db.doc("stories/story_draft").get()).data()
+  );
+  await assert.rejects(
+    deleteNodeWith(db, "u1", {storyId: "story_draft", nodeId: "node_001"}),
+    (error: unknown) => {
+      const got = error as {code?: string; message?: string};
+      return got.code === "failed-precondition" &&
+        got.message === "The root node cannot be deleted.";
+    }
+  );
+  const kept = await db.doc("stories/story_draft/nodes/node_001").get();
+  assert.equal(kept.exists, true);
+  assert.equal(
+    JSON.stringify((await db.doc("stories/story_draft").get()).data()),
+    storyBefore
+  );
+});
+
+test("deleteNode refuses a node targeted by another choice", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_leaf").set({
+    title: "Leaf",
+    choices: [],
+  });
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      choices: [
+        {
+          choiceId: "c1",
+          label: "Down",
+          targetNodeId: "node_leaf",
+          isDefault: true,
+        },
+      ],
+    },
+  });
+  await assert.rejects(
+    deleteNodeWith(db, "u1", {storyId: "story_draft", nodeId: "node_leaf"}),
+    (error: unknown) =>
+      (error as {code?: string}).code === "failed-precondition" &&
+      ((error as {message?: string }).message ?? "").includes("c1") &&
+      ((error as {message?: string }).message ?? "").includes("node_001")
+  );
+  const kept = await db.doc("stories/story_draft/nodes/node_leaf").get();
+  assert.equal(kept.exists, true);
+});
+
+test("deleteNode deletes again once the link is gone", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_leaf").set({
+    title: "Leaf",
+    choices: [],
+  });
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {nodeId: "node_001", choices: []},
+  });
+  const result = await deleteNodeWith(db, "u1", {
+    storyId: "story_draft",
+    nodeId: "node_leaf",
+  });
+  assert.deepEqual(result, {nodeId: "node_leaf"});
+  assert.equal(
+    (await db.doc("stories/story_draft/nodes/node_leaf").get()).exists,
+    false
+  );
+});
+
+test("deleteNode rejects bad callers and targets", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const codes: Array<[unknown, string]> = [
+    [{storyId: "", nodeId: "node_001"}, "invalid-argument"],
+    [{storyId: "story_draft", nodeId: ""}, "invalid-argument"],
+    [{storyId: "story_draft", nodeId: "nope"}, "not-found"],
+    [{storyId: "story_missing", nodeId: "node_001"}, "not-found"],
+    [{storyId: "story_foreign", nodeId: "node_f1"}, "permission-denied"],
+    [{storyId: "story_pub", nodeId: "node_p1"}, "failed-precondition"],
+  ];
+  for (const [data, code] of codes) {
+    await assert.rejects(
+      deleteNodeWith(db, "u1", data),
+      (error: unknown) => (error as {code?: string}).code === code
+    );
+  }
+  await assert.rejects(
+    deleteNodeWith(db, "", {storyId: "story_draft", nodeId: "node_001"}),
+    (error: unknown) => (error as {code?: string}).code === "unauthenticated"
+  );
 });

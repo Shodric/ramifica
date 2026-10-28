@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
@@ -25,7 +27,13 @@ class CreateView extends StatefulWidget {
     this.authRepository,
     this.pickVideo,
     this.newTakeId = _defaultTakeId,
+    this.onPublished,
   });
+
+  /// Fires once with the story id when `publishStory` succeeds. Tests
+  /// inject this and assert navigation; production leaves it null and the
+  /// view routes to Explore through [AppNavigation] instead.
+  final void Function(String storyId)? onPublished;
 
   final CreateBloc? bloc;
   final CreateRepository? repository;
@@ -80,8 +88,27 @@ class _CreateViewState extends State<CreateView> {
       body: SafeArea(
         child: BlocProvider.value(
           value: bloc,
-          child: BlocBuilder<CreateBloc, CreateState>(
-            builder: (context, state) => _body(context, state),
+          child: BlocListener<CreateBloc, CreateState>(
+            listenWhen: (previous, next) =>
+                previous.publishedStoryId != next.publishedStoryId &&
+                next.publishedStoryId != null,
+            listener: (context, state) {
+              final storyId = state.publishedStoryId;
+              if (storyId == null) return;
+              final open = widget.onPublished;
+              if (open != null) {
+                open(storyId);
+                return;
+              }
+              try {
+                AppNavigation.read(context).go(AppRoutes.explore);
+              } on FlutterError {
+                // Widget tests mount CreateView without the router.
+              }
+            },
+            child: BlocBuilder<CreateBloc, CreateState>(
+              builder: (context, state) => _body(context, state),
+            ),
           ),
         ),
       ),
@@ -211,6 +238,10 @@ class _CreateViewState extends State<CreateView> {
                     onZonesSaved: () => bloc.add(const ZonesSaved()),
                     onWindowSaved: () => bloc.add(const WindowSaved()),
                     onSave: () => bloc.add(const NodeSaved()),
+                    onDelete: () => bloc.add(const NodeDeleted()),
+                    deleteBlockedReason: state.deleteBlockReason(
+                      state.openNodeId!,
+                    ),
                     onGenerate: () => bloc.add(const TextGenerateRequested()),
                     onRegenerate: () =>
                         bloc.add(const TextGenerateRequested(regenerate: true)),
@@ -265,17 +296,11 @@ class _CreateViewState extends State<CreateView> {
               const SizedBox(height: 12),
               PublishBar(
                 problems: state.publishProblems(),
-                // #51 owns the real publish call: for now the CTA only
-                // reports readiness, touching nothing.
-                onPublish: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Story is ready. Publishing lands in #51.',
-                      ),
-                    ),
-                  );
-                },
+                // Disabled while a job runs; the bar itself disables the
+                // CTA until the missing list is empty.
+                onPublish: state.job == CreateJob.none
+                    ? () => bloc.add(const StoryPublished())
+                    : null,
               ),
             ],
           ],

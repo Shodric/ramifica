@@ -145,7 +145,9 @@ class DraftNode {
       videoJobId: _optionalString(data['videoJobId']),
       videoPrompt: _optionalString(data['videoPrompt']),
       pauseAtSeconds: _optionalDouble(data['pauseAtSeconds']),
-      windowSeconds: _optionalInt(data['windowSeconds']) ?? 6,
+      windowSeconds: data['isEnding'] == true
+          ? null
+          : (_optionalInt(data['windowSeconds']) ?? 6),
       startImageSourceUrl: _optionalString(data['startImageSourceUrl']),
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
       startHash: _optionalString(data['startHash']),

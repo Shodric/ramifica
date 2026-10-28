@@ -600,6 +600,362 @@ void main() {
 
       expect(calls.where((call) => call.name == 'saveNode'), hasLength(2));
     });
+
+    testWidgets('the root delete button is disabled with its reason', (
+      tester,
+    ) async {
+      await _pumpDraft(tester);
+
+      final remove = find.byKey(const ValueKey('delete-node-node_1'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+
+      expect(find.text('The root node cannot be deleted.'), findsOneWidget);
+      expect(tester.widget<TextButton>(remove).onPressed, isNull);
+    });
+
+    testWidgets('a targeted node delete button names the blocker', (
+      tester,
+    ) async {
+      final bloc = await _pumpDraft(tester);
+
+      // The root choice targets the leaf.
+      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
+      final origin = tester.getTopLeft(find.byType(DraftCanvas));
+      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNodeId, 'node_2');
+
+      final remove = find.byKey(const ValueKey('delete-node-node_2'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Node node_2 is a choice target — remove the choice first.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.widget<TextButton>(remove).onPressed, isNull);
+    });
+
+    testWidgets('deleting an untargeted node removes it from the canvas', (
+      tester,
+    ) async {
+      final docs = [
+        MapEntry('node_1', {
+          'title': 'Root',
+          'visibility': 'visible',
+          'isEnding': false,
+          'videoStatus': 'idle',
+          'windowSeconds': 6,
+          'ttsText': '',
+          'lineApproved': false,
+          'ttsStatus': 'idle',
+          'choices': [
+            {
+              'choiceId': 'c1',
+              'label': 'Enter',
+              'targetNodeId': 'node_2',
+              'isDefault': true,
+              'x': 0.25,
+              'y': 0.65,
+              'radius': 0.15,
+            },
+          ],
+        }),
+        const MapEntry('node_2', {
+          'title': 'Leaf',
+          'visibility': 'secret',
+          'isEnding': true,
+          'endingName': 'Escape',
+          'endingType': 'abierto',
+        }),
+        const MapEntry('node_3', {'title': 'Spare'}),
+      ];
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => List.of(docs),
+          callFunction: (name, data) async {
+            calls.add(_Call(name, data));
+            if (name == 'deleteNode') {
+              docs.removeWhere((doc) => doc.key == data['nodeId']);
+              return {'nodeId': data['nodeId']};
+            }
+            return <String, dynamic>{};
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      bloc.add(const NodeSelected('node_3'));
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNodeId, 'node_3');
+
+      final remove = find.byKey(const ValueKey('delete-node-node_3'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextButton>(remove).onPressed, isNotNull);
+
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      final deleted = calls.singleWhere(
+        (call) => call.name == 'deleteNode',
+      );
+      expect(deleted.data, {'storyId': 'story_1', 'nodeId': 'node_3'});
+      expect(
+        bloc.state.nodes.map((node) => node.nodeId),
+        containsAll(['node_1', 'node_2']),
+      );
+      expect(
+        bloc.state.nodes.map((node) => node.nodeId),
+        isNot(contains('node_3')),
+      );
+      expect(bloc.state.openNodeId, 'node_1');
+    });
+
+    testWidgets('a delete rejection surfaces its phrase', (tester) async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {'title': 'Root'}),
+            const MapEntry('node_3', {'title': 'Spare'}),
+          ],
+          callFunction: (name, data) async {
+            if (name == 'deleteNode') throw const AppFailure(.invalid);
+            return <String, dynamic>{};
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      bloc.add(const NodeSelected('node_3'));
+      await tester.pumpAndSettle();
+
+      final remove = find.byKey(const ValueKey('delete-node-node_3'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      expect(find.text('That action is not valid'), findsOneWidget);
+      expect(
+        bloc.state.nodes.map((node) => node.nodeId),
+        contains('node_3'),
+      );
+    });
+
+    testWidgets('publish success navigates through onPublished', (
+      tester,
+    ) async {
+      String? published;
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {'title': 'Root'}),
+          ],
+          callFunction: (name, data) async => {
+            'storyId': 'story_1',
+            'published': true,
+            'problems': <String>[],
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CreateView(
+            bloc: bloc,
+            onPublished: (storyId) => published = storyId,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      bloc.add(const StoryPublished());
+      await tester.pumpAndSettle();
+
+      expect(published, 'story_1');
+    });
+
+    testWidgets('publish problems render as the checklist', (tester) async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {'title': 'Root'}),
+          ],
+          callFunction: (name, data) async => {
+            'storyId': 'story_1',
+            'published': false,
+            'problems': ['Node node_1 needs a ready video.'],
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      bloc.add(const StoryPublished());
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Node node_1 needs a ready video.'),
+        findsOneWidget,
+      );
+      expect(bloc.state.publishedStoryId, isNull);
+    });
+
+    testWidgets('a ready story publishes from the publish button', (
+      tester,
+    ) async {
+      String? published;
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            MapEntry('node_1', {
+              'title': 'Root',
+              'visibility': 'visible',
+              'isEnding': false,
+              'videoStatus': 'ready',
+              'videoUrl': 'https://cdn.example/root.mp4',
+              'windowSeconds': 6,
+              'startImageSourceUrl': 'https://frames.invalid/s.webp',
+              'startImageStatus': 'ready',
+              'startImageApproved': true,
+              'endImageSourceUrl': 'https://frames.invalid/e1.webp',
+              'endImageStatus': 'ready',
+              'endHash': 'hash-e1',
+              'endImageApproved': true,
+              'ttsText': 'Go left',
+              'lineApproved': true,
+              'ttsAudioUrl': 'https://cdn.example/root.m4a',
+              'ttsStatus': 'ready',
+              'ttsDurationSeconds': 2.5,
+              'ttsApproved': true,
+              'choices': [
+                {
+                  'choiceId': 'c1',
+                  'label': 'Enter',
+                  'targetNodeId': 'node_2',
+                  'isDefault': true,
+                  'x': 0.25,
+                  'y': 0.65,
+                  'radius': 0.15,
+                },
+              ],
+            }),
+            const MapEntry('node_2', {
+              'title': 'Dawn',
+              'visibility': 'visible',
+              'isEnding': true,
+              'endingName': 'Dawn',
+              'endingType': 'abierto',
+              'videoStatus': 'ready',
+              'videoUrl': 'https://cdn.example/dawn.mp4',
+              'endImageSourceUrl': 'https://frames.invalid/e2.webp',
+              'endImageStatus': 'ready',
+              'endHash': 'hash-e2',
+              'endImageApproved': true,
+              'ttsText': '',
+            }),
+          ],
+          callFunction: (name, data) async {
+            calls.add(_Call(name, data));
+            return {
+              'storyId': 'story_1',
+              'published': true,
+              'problems': <String>[],
+            };
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CreateView(
+            bloc: bloc,
+            onPublished: (storyId) => published = storyId,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The whole checklist passes, so the CTA is armed.
+      expect(find.text('Ready to publish.'), findsOneWidget);
+      final cta = find.byKey(const ValueKey('publish-button'));
+      await tester.ensureVisible(cta);
+      await tester.pumpAndSettle();
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      final publishedCall = calls.singleWhere(
+        (call) => call.name == 'publishStory',
+      );
+      expect(publishedCall.data, {'storyId': 'story_1'});
+      expect(published, 'story_1');
+    });
   });
 }
 

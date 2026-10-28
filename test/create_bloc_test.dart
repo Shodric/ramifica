@@ -279,6 +279,314 @@ void main() {
     });
   });
 
+  group('CreateDeletePublish', () {
+    test('deleteNode sends the story and node ids', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await repository.deleteNode(storyId: 'story_1', nodeId: 'node_2');
+
+      final deleted = calls.singleWhere(
+        (call) => call.name == 'deleteNode',
+      );
+      expect(deleted.data['storyId'], 'story_1');
+      expect(deleted.data['nodeId'], 'node_2');
+    });
+
+    test('deleteNode rejects blank ids without calling', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await expectLater(
+        repository.deleteNode(storyId: 'story_1', nodeId: '  '),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('publishStory returns the server problems list', () async {
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async => {
+          'storyId': 'story_1',
+          'published': false,
+          'problems': ['Node node_1 needs a ready video.'],
+        },
+      );
+
+      final problems = await repository.publishStory(storyId: 'story_1');
+
+      expect(problems, ['Node node_1 needs a ready video.']);
+    });
+
+    test('publishStory rejects a blank id without calling', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await expectLater(
+        repository.publishStory(storyId: '  '),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('deleteBlockReason guards the root and targeted nodes', () {
+      const story = DraftStory(
+        storyId: 'story_1',
+        authorId: 'uid_1',
+        title: 'Temple',
+        rootNodeId: 'node_1',
+      );
+      const state = CreateState(
+        story: story,
+        nodes: [
+          DraftNode(
+            nodeId: 'node_1',
+            choices: [
+              DraftChoice(
+                choiceId: 'c1',
+                label: 'Enter',
+                targetNodeId: 'node_2',
+                isDefault: true,
+              ),
+            ],
+          ),
+          DraftNode(nodeId: 'node_2'),
+          DraftNode(nodeId: 'node_3'),
+        ],
+        openNodeId: 'node_3',
+      );
+
+      expect(
+        state.deleteBlockReason('node_1'),
+        'The root node cannot be deleted.',
+      );
+      expect(
+        state.deleteBlockReason('node_2'),
+        'Node node_2 is a choice target — remove the choice first.',
+      );
+      expect(state.deleteBlockReason('node_3'), isNull);
+    });
+
+    test('NodeDeleted removes the node and reopens the root', () async {
+      final docs = [
+        MapEntry('node_1', _nodeDoc()),
+        MapEntry('node_2', _nodeDoc()),
+        const MapEntry('node_3', {'title': 'Spare'}),
+      ];
+      final calls = <_Call>[];
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => List.of(docs),
+        callFunction: (name, data) async {
+          calls.add(_Call(name, data));
+          if (name == 'deleteNode') {
+            docs.removeWhere((doc) => doc.key == data['nodeId']);
+            return {'nodeId': data['nodeId']};
+          }
+          return <String, dynamic>{};
+        },
+      );
+      final bloc = CreateBloc(repository: repository, auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeSelected('node_3'));
+      await bloc.stream.firstWhere((state) => state.openNodeId == 'node_3');
+
+      bloc.add(const NodeDeleted());
+      final after = await bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            state.nodes.every((node) => node.nodeId != 'node_3'),
+      );
+
+      final deleted = calls.singleWhere(
+        (call) => call.name == 'deleteNode',
+      );
+      expect(deleted.data, {'storyId': 'story_1', 'nodeId': 'node_3'});
+      expect(after.openNodeId, 'node_1');
+      expect(after.failure, isNull);
+    });
+
+    test('a delete rejection shows its phrase and keeps the node', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async {
+            if (name == 'deleteNode') throw const AppFailure(.invalid);
+            return <String, dynamic>{};
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeDeleted());
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(bloc.state.failure, 'That action is not valid');
+      expect(
+        bloc.state.nodes.map((node) => node.nodeId),
+        contains('node_1'),
+      );
+    });
+
+    test('StoryPublished marks the story published on empty problems', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async => {
+            'storyId': 'story_1',
+            'published': true,
+            'problems': <String>[],
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const StoryPublished());
+      final published = await bloc.stream.firstWhere(
+        (state) => state.publishedStoryId != null,
+      );
+
+      expect(published.publishedStoryId, 'story_1');
+      expect(published.failure, isNull);
+    });
+
+    test('StoryPublished shows the server problems without publishing', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async => {
+            'storyId': 'story_1',
+            'published': false,
+            'problems': [
+              'Node node_1 needs a ready video.',
+              'At least one ending is required.',
+            ],
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const StoryPublished());
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(
+        bloc.state.failure,
+        'Node node_1 needs a ready video.\nAt least one ending is required.',
+      );
+      expect(bloc.state.publishedStoryId, isNull);
+    });
+
+    test('a publish transport failure shows its phrase', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async => throw const AppFailure(.offline),
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const StoryPublished());
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.publishedStoryId, isNull);
+    });
+
+    test('delete and publish go through the backend only', () async {
+      final docs = [
+        MapEntry('node_1', _nodeDoc()),
+        MapEntry('node_2', _nodeDoc()),
+      ];
+      final calls = <_Call>[];
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => List.of(docs),
+        callFunction: (name, data) async {
+          calls.add(_Call(name, data));
+          if (name == 'deleteNode') {
+            docs.removeWhere((doc) => doc.key == data['nodeId']);
+            return {'nodeId': data['nodeId']};
+          }
+          return {
+            'storyId': 'story_1',
+            'published': true,
+            'problems': <String>[],
+          };
+        },
+      );
+      final bloc = CreateBloc(repository: repository, auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeSelected('node_2'));
+      await bloc.stream.firstWhere((state) => state.openNodeId == 'node_2');
+      bloc.add(const NodeDeleted());
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            state.nodes.every((node) => node.nodeId != 'node_2'),
+      );
+
+      bloc.add(const StoryPublished());
+      await bloc.stream.firstWhere((state) => state.publishedStoryId != null);
+
+      expect(
+        calls.map((call) => call.name),
+        containsAll(['deleteNode', 'publishStory']),
+      );
+      expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
+    });
+
+    test('ending docs parse a null windowSeconds and round-trip it', () {
+      final node = DraftNode.fromMap('node_9', {
+        'title': 'Dawn',
+        'visibility': 'visible',
+        'isEnding': true,
+        'endingName': 'Dawn',
+        'endingType': 'abierto',
+      });
+
+      expect(node.isEnding, isTrue);
+      expect(node.windowSeconds, isNull);
+
+      final reparsed = DraftNode.fromMap('node_9', node.toJson());
+      expect(reparsed.windowSeconds, isNull);
+      expect(reparsed, node);
+    });
+  });
+
   group('CreateMedia', () {
     test('generateNodeImage sends which and validates it', () async {
       final calls = <_Call>[];

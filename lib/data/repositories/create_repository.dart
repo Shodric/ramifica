@@ -259,6 +259,42 @@ class CreateRepository {
     return nodeId;
   }
 
+  /// Deletes one non-root, untargeted node through the `deleteNode`
+  /// callable. GUARDED server-side: the root (`rootNodeId`) and any node
+  /// targeted by another node's choices are rejected and surface as
+  /// [AppFailure] phrases. Blank ids throw [AppFailure.invalid] without
+  /// touching the network.
+  Future<void> deleteNode({
+    required String storyId,
+    required String nodeId,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    await callFunction('deleteNode', {'storyId': story, 'nodeId': node});
+  }
+
+  /// Publishes the draft through the `publishStory` callable. Returns the
+  /// server's `problems` list: empty when the story flipped `draft` to
+  /// `published`, one message per unmet `validateStory` condition
+  /// otherwise (no state change server-side). Render a non-empty list as
+  /// the checklist — never as a generic error. Transport failures throw
+  /// [AppFailure]; a blank id throws [AppFailure.invalid] without
+  /// touching the network.
+  Future<List<String>> publishStory({required String storyId}) async {
+    final story = storyId.trim();
+    if (story.isEmpty) throw const AppFailure(.invalid);
+    final payload = await callFunction('publishStory', {'storyId': story});
+    final problems = payload['problems'];
+    if (problems is List) {
+      return [
+        for (final item in problems)
+          if (item is String && item.trim().isNotEmpty) item.trim(),
+      ];
+    }
+    return const [];
+  }
+
   /// Persists the author's edits through the `saveNode` callable.
   Future<void> saveNode({
     required String storyId,

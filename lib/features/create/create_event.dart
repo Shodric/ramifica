@@ -233,3 +233,22 @@ final class ZonesSaved extends CreateEvent {
 final class WindowSaved extends CreateEvent {
   const WindowSaved();
 }
+
+/// Deletes the open node through `deleteNode`. GUARDED server-side:
+/// the root and any node targeted by another node's choices are rejected
+/// (the delete button disables with the reason in those cases, computed
+/// from the local graph). On success the bloc reloads the nodes and
+/// reopens the root; a rejection lands as [CreateState.failure].
+/// `droppable`: a second delete while one is in flight is dropped.
+final class NodeDeleted extends CreateEvent {
+  const NodeDeleted();
+}
+
+/// Publishes the draft through `publishStory`. The server re-runs the full
+/// `validateStory` checklist and flips `draft` to `published` only when it
+/// passes; a returned missing list lands as [CreateState.failure] with no
+/// state change. On success the view leaves for Explore. `droppable`: a
+/// second publish while one is in flight is dropped.
+final class StoryPublished extends CreateEvent {
+  const StoryPublished();
+}

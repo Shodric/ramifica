@@ -39,6 +39,8 @@ class NodeInspector extends StatefulWidget {
     this.onZonesSaved,
     this.onWindowSaved,
     this.onSave,
+    this.onDelete,
+    this.deleteBlockedReason,
     this.onGenerate,
     this.onRegenerate,
     this.onImageApprovalChanged,
@@ -85,6 +87,14 @@ class NodeInspector extends StatefulWidget {
   final VoidCallback? onZonesSaved;
   final VoidCallback? onWindowSaved;
   final VoidCallback? onSave;
+
+  /// Deletes the open node. Null while no draft guards apply — always set
+  /// by the view; null only in bare widget tests.
+  final VoidCallback? onDelete;
+
+  /// Why the open node cannot be deleted, or null when it can go. Non-null
+  /// disables the delete button with this reason.
+  final String? deleteBlockedReason;
   final VoidCallback? onGenerate;
   final VoidCallback? onRegenerate;
 
@@ -458,6 +468,23 @@ class _NodeInspectorState extends State<NodeInspector> {
                 child: const Text('Regenerate'),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          if (widget.deleteBlockedReason != null)
+            Text(widget.deleteBlockedReason!, style: RamificaText.meta),
+          if (widget.deleteBlockedReason != null) const SizedBox(height: 4),
+          Align(
+            alignment: .centerRight,
+            child: TextButton(
+              key: ValueKey('delete-node-${node.nodeId}'),
+              onPressed: widget.busy || widget.deleteBlockedReason != null
+                  ? null
+                  : widget.onDelete,
+              child: Text(
+                'Delete node',
+                style: TextStyle(color: RamificaColors.error),
+              ),
+            ),
           ),
         ],
       ),

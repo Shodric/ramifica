@@ -17,6 +17,7 @@ class CreateState {
     this.jobNodeId,
     this.uploadProgress,
     this.failure,
+    this.publishedStoryId,
   });
 
   final DraftStory? story;
@@ -37,6 +38,10 @@ class CreateState {
   /// The phrase the bloc already emitted, or null. Retry sends the same
   /// event again.
   final String? failure;
+
+  /// The story id once `publishStory` succeeds, or null while a draft.
+  /// The view navigates to Explore exactly once per value.
+  final String? publishedStoryId;
 
   /// True once a draft is open.
   bool get hasDraft => story != null;
@@ -184,6 +189,7 @@ class CreateState {
     String? Function()? jobNodeId,
     double? Function()? uploadProgress,
     String? Function()? failure,
+    String? Function()? publishedStoryId,
   }) {
     return CreateState(
       story: story == null ? this.story : story(),
@@ -195,6 +201,9 @@ class CreateState {
           ? this.uploadProgress
           : uploadProgress(),
       failure: failure == null ? this.failure : failure(),
+      publishedStoryId: publishedStoryId == null
+          ? this.publishedStoryId
+          : publishedStoryId(),
     );
   }
 
@@ -207,7 +216,8 @@ class CreateState {
         other.job == job &&
         other.jobNodeId == jobNodeId &&
         other.uploadProgress == uploadProgress &&
-        other.failure == failure;
+        other.failure == failure &&
+        other.publishedStoryId == publishedStoryId;
   }
 
   @override
@@ -219,8 +229,25 @@ class CreateState {
     jobNodeId,
     uploadProgress,
     failure,
+    publishedStoryId,
   );
-}
+
+  /// Why [nodeId] cannot be deleted, or null when `deleteNode` may run.
+  /// The root can never go; any other node targeted by a choice must lose
+  /// that choice first. Computed from the local graph like [orphanNodeIds]
+  /// (the server re-guards both); the delete button disables with this.
+  String? deleteBlockReason(String nodeId) {
+    if ((story?.rootNodeId ?? '') == nodeId) {
+      return 'The root node cannot be deleted.';
+    }
+    for (final node in nodes) {
+      if (node.childIds.contains(nodeId)) {
+        return 'Node $nodeId is a choice target — remove the choice first.';
+      }
+    }
+    return null;
+  }
+  }
 
 /// The publish checklist for one node, shared by the state and the tests.
 /// Mirrors functions/src/publish/validateStory.ts per node, minus the

@@ -489,3 +489,117 @@ const parseZone = (value: unknown, field: string, fallback: number): number => {
   }
   return value;
 };
+
+/** Result of `deleteNode`: the deleted node id. */
+export interface DeleteNodeResult {
+  nodeId: string;
+}
+
+/**
+ * Deletes one unlinked non-root node from an author-owned draft. Guards:
+ * the root (`stories/{storyId}.rootNodeId`) never deletes, and neither
+ * does a node still targeted by another node's `choices[].targetNodeId`.
+ * The story doc is only read: a successful delete leaves `rootNodeId` and
+ * every other pointer exactly as they were. Media bytes stay in Storage —
+ * deleting the node doc drops every media reference, and sweeping the
+ * orphaned bytes is out of scope (no media GC here). This never touches
+ * other stories, runs, or published docs.
+ */
+export const deleteNode = onCall(
+  {enforceAppCheck: true, maxInstances: 20},
+  async (req) => {
+    const uid = requireUid(req.auth);
+    return deleteNodeWith(
+      admin.firestore() as unknown as Db,
+      uid,
+      req.data ?? {}
+    );
+  }
+);
+
+/**
+ * Testable core of `deleteNode`.
+ * @param {Db} db Firestore.
+ * @param {string} uid Caller.
+ * @param {unknown} data Raw `{storyId, nodeId}`.
+ * @return {Promise<DeleteNodeResult>} The deleted node id.
+ */
+export const deleteNodeWith = async (
+  db: Db,
+  uid: string,
+  data: unknown
+): Promise<DeleteNodeResult> => {
+  if (typeof uid !== "string" || uid.trim() === "") {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+  const fields = toRecord(data);
+  const storyId = cleanId(fields.storyId, "storyId");
+  const nodeId = cleanId(fields.nodeId, "nodeId");
+  // Choice links live on the node docs, so linkers are found with one
+  // collection read. The listing happens outside the transaction (the Db
+  // transaction only serves single refs); every guard below is re-checked
+  // on transaction-fresh reads before the delete lands.
+  const listed = await db.collection(`stories/${storyId}/nodes`).get();
+  const listedIds = listed.docs.map((snap) => snap.id);
+  return db.runTransaction(async (tx) => {
+    const storySnap = await tx.get(db.doc(`stories/${storyId}`));
+    if (!storySnap.exists) {
+      throw new HttpsError("not-found", "Story not found.");
+    }
+    const story = docData(storySnap, "Story");
+    if (story.authorId !== uid) {
+      throw new HttpsError("permission-denied", "Not your draft.");
+    }
+    if (story.status !== "draft") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Only drafts can delete nodes."
+      );
+    }
+    if (story.rootNodeId === nodeId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "The root node cannot be deleted."
+      );
+    }
+    const nodeRef = db.doc(`stories/${storyId}/nodes/${nodeId}`);
+    const nodeSnap = await tx.get(nodeRef);
+    if (!nodeSnap.exists) {
+      throw new HttpsError("not-found", "Node not found.");
+    }
+    // Re-read every listed node: a choice added after the listing (via a
+    // concurrent saveNode) still blocks the delete. Nodes born after the
+    // listing carry no choices yet, so they cannot link the target.
+    for (const otherId of listedIds) {
+      if (otherId === nodeId) continue;
+      const otherSnap = await tx.get(
+        db.doc(`stories/${storyId}/nodes/${otherId}`)
+      );
+      if (!otherSnap.exists) continue;
+      const other = docData(otherSnap, "Node");
+      const choices = Array.isArray(other.choices) ? other.choices : [];
+      for (const raw of choices) {
+        const choice = toRecord(raw);
+        if (choice.targetNodeId === nodeId) {
+          const rawId = choice.choiceId;
+          const choiceId =
+            typeof rawId === "string" && rawId.trim() !== "" ?
+              rawId :
+              "unknown";
+          throw new HttpsError(
+            "failed-precondition",
+            `Node is targeted by choice ${choiceId} on node ${otherId}.`
+          );
+        }
+      }
+    }
+    // Db covers single-ref get/set/update; real Firestore transactions
+    // and the test doubles both serve delete through this narrow cast,
+    // so the shared Db surface stays untouched.
+    const deleter = tx as unknown as {
+      delete: (ref: unknown) => Promise<void>;
+    };
+    await deleter.delete(nodeRef);
+    return {nodeId};
+  });
+};

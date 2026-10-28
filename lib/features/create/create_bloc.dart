@@ -27,6 +27,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<NodeAdded>(_onNodeAdded, transformer: droppable());
     on<NodeFieldChanged>(_onFieldChanged);
     on<NodeSaved>(_onNodeSaved, transformer: droppable());
+    on<NodeDeleted>(_onNodeDeleted, transformer: droppable());
+    on<StoryPublished>(_onStoryPublished, transformer: droppable());
     on<ZonesSaved>(_onZonesSaved, transformer: droppable());
     on<WindowSaved>(_onWindowSaved, transformer: droppable());
     on<ZoneMoved>(_onZoneMoved);
@@ -350,6 +352,103 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         state.copy(
           job: CreateJob.none,
           jobNodeId: () => node.nodeId,
+          failure: () => error.phrase,
+        ),
+      );
+    }
+  }
+
+  /// Deletes the open node through `deleteNode`, then reloads the nodes so
+  /// the canvas drops it. The server guards the root and targeted nodes;
+  /// a rejection lands as [CreateState.failure] and nothing is removed.
+  /// When the open node is gone, the root reopens (or the first survivor).
+  Future<void> _onNodeDeleted(
+    NodeDeleted event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    final node = state.openNode;
+    if (story == null || node == null) return;
+    final nodeId = node.nodeId;
+    emit(
+      state.copy(
+        job: CreateJob.saving,
+        jobNodeId: () => nodeId,
+        failure: () => null,
+      ),
+    );
+    try {
+      await repository.deleteNode(storyId: story.storyId, nodeId: nodeId);
+      final nodes = await repository.fetchNodes(story.storyId);
+      var open = state.openNodeId;
+      if (!nodes.any((current) => current.nodeId == open)) {
+        final root = story.rootNodeId;
+        open = nodes.any((current) => current.nodeId == root)
+            ? root
+            : (nodes.isEmpty ? null : nodes.first.nodeId);
+      }
+      emit(
+        state.copy(
+          nodes: nodes,
+          openNodeId: () => open,
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => nodeId,
+          failure: () => error.phrase,
+        ),
+      );
+    }
+  }
+
+  /// Publishes the draft through `publishStory`. A returned missing list
+  /// becomes [CreateState.failure] (the server changed nothing); an empty
+  /// list marks [CreateState.publishedStoryId] and the view leaves for
+  /// Explore. Transport rejections land as their phrase.
+  Future<void> _onStoryPublished(
+    StoryPublished event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    emit(
+      state.copy(
+        job: CreateJob.saving,
+        jobNodeId: () => null,
+        failure: () => null,
+      ),
+    );
+    try {
+      final missing = await repository.publishStory(storyId: story.storyId);
+      if (missing.isNotEmpty) {
+        emit(
+          state.copy(
+            job: CreateJob.none,
+            jobNodeId: () => null,
+            failure: () => missing.join('\n'),
+          ),
+        );
+        return;
+      }
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+          publishedStoryId: () => story.storyId,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
           failure: () => error.phrase,
         ),
       );

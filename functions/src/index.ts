@@ -8,7 +8,8 @@ import {
 } from "./create/generateNodeMedia";
 import {generateNodeText} from "./create/generateNodeText";
 import {generateNodeVoice} from "./media/generateNodeVoice";
-import {createNode, saveNode} from "./create/nodes";
+import {createNode, deleteNode, saveNode} from "./create/nodes";
+import {publishStory} from "./publish/publishStory";
 import {loadPlayback} from "./feed/loadPlayback";
 import {startRun} from "./feed/startRun";
 import {graphStubs} from "./graph/graphStubs";
@@ -22,16 +23,18 @@ export {
   approveNodeImage,
   commitChoice,
   createNode,
+  deleteNode,
   generateNodeImage,
   generateNodeText,
   generateNodeVideo,
   generateNodeVoice,
+  graphStubs,
   loadPlayback,
   onUploadFinalized,
+  playApproach,
+  publishStory,
+  rewindRun,
   saveNode,
   startRun,
   storyPage,
-  graphStubs,
-  playApproach,
-  rewindRun,
 };
