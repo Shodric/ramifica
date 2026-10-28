@@ -17,19 +17,33 @@ class FollowStoryDoc {
   final Map<String, dynamic> data;
 }
 
-/// Read-only follow state for Explore. The client writes follows only
-/// from Profile (`follows/{uid}/authors/{authorId}`); this repository
-/// never writes.
+/// Read-mostly follow state for Explore and Profile. Reads come from
+/// `follows/{uid}/authors`; writes go to the same path, but only from
+/// Profile (follow/unfollow an author the viewer is looking at).
 class FollowRepository {
-  FollowRepository({required this.fetchAuthorIds, this.fetchStoryDocs});
+  FollowRepository({
+    required this.fetchAuthorIds,
+    this.fetchStoryDocs,
+    this.writeFollow,
+    this.removeFollow,
+  });
 
   final Future<Set<String>> Function(String uid) fetchAuthorIds;
+
+  /// Writes `follows/{uid}/authors/{authorId}`. Null in setups that
+  /// never follow from Profile (feed/explore-only tests).
+  final Future<void> Function(String uid, String authorId)? writeFollow;
+
+  /// Deletes `follows/{uid}/authors/{authorId}`. Null alongside
+  /// [writeFollow].
+  final Future<void> Function(String uid, String authorId)? removeFollow;
 
   /// Reads one batch of `stories` docs whose `authorId` is in [authorIds].
   /// Never called with an empty list or more than [authorBatchSize] ids.
   /// Null in setups that never show the Following feed (swipe-only tests).
   final Future<List<FollowStoryDoc>> Function(List<String> authorIds)?
       fetchStoryDocs;
+
 
   /// Firestore `in` accepts at most 10 values per query.
   static const int authorBatchSize = 10;
@@ -58,6 +72,30 @@ class FollowRepository {
     if (uid.trim().isEmpty || author.isEmpty) return false;
     final ids = await fetchAuthorIds(uid.trim());
     return ids.contains(author);
+  }
+
+  /// Follows [authorId] as [uid] by creating
+  /// `follows/{uid}/authors/{authorId}`. Blank ids are a no-op and never
+  /// touch the network; a missing writer is also a no-op (read-only
+  /// setups). Failures throw [AppFailure]; the bloc shows its phrase.
+  Future<void> follow({required String uid, required String authorId}) {
+    final user = uid.trim();
+    final author = authorId.trim();
+    if (user.isEmpty || author.isEmpty) return Future.value();
+    final write = writeFollow;
+    if (write == null) return Future.value();
+    return write(user, author);
+  }
+
+  /// Unfollows [authorId] as [uid] by deleting
+  /// `follows/{uid}/authors/{authorId}`. Same no-op contract as [follow].
+  Future<void> unfollow({required String uid, required String authorId}) {
+    final user = uid.trim();
+    final author = authorId.trim();
+    if (user.isEmpty || author.isEmpty) return Future.value();
+    final remove = removeFollow;
+    if (remove == null) return Future.value();
+    return remove(user, author);
   }
 
   /// Published stories by the authors [uid] follows, newest first.
@@ -143,6 +181,38 @@ FollowRepository createFirebaseFollowRepository([
         return [
           for (final doc in snap.docs) FollowStoryDoc(doc.id, doc.data()),
         ];
+      } on FirebaseException catch (error) {
+        throw AppFailure(appFailureCodeFor(error.code), cause: error);
+      } catch (error) {
+        throw AppFailure(.failed, cause: error);
+      }
+    },
+    // Writes land on the same `follows/{uid}/authors/{authorId}` docs
+    // the reads mirror. firestore.rules allows read and write exactly
+    // when the signed-in uid owns the parent, so no new backend was
+    // needed for #39.
+    writeFollow: (uid, authorId) async {
+      try {
+        await db
+            .collection('follows')
+            .doc(uid)
+            .collection('authors')
+            .doc(authorId)
+            .set({'createdAt': FieldValue.serverTimestamp()});
+      } on FirebaseException catch (error) {
+        throw AppFailure(appFailureCodeFor(error.code), cause: error);
+      } catch (error) {
+        throw AppFailure(.failed, cause: error);
+      }
+    },
+    removeFollow: (uid, authorId) async {
+      try {
+        await db
+            .collection('follows')
+            .doc(uid)
+            .collection('authors')
+            .doc(authorId)
+            .delete();
       } on FirebaseException catch (error) {
         throw AppFailure(appFailureCodeFor(error.code), cause: error);
       } catch (error) {

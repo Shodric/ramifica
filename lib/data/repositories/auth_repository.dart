@@ -45,6 +45,23 @@ abstract class UserDirectory {
   Future<bool> exists(String uid);
 
   Future<void> create(UserAccount user);
+
+  /// Reads `users/{uid}`, or null when the doc does not exist.
+  /// Foreign docs are denied by firestore.rules (reads are owner-only),
+  /// which surfaces as an [AuthException]; callers showing a foreign
+  /// profile treat that as "minimal profile", not as a load failure.
+  Future<UserAccount?> read(String uid);
+
+  /// Writes only the four editable profile fields (`displayName`,
+  /// `handle`, `photoUrl`, `locale`), matching what firestore.rules
+  /// allows on update. Nulls clear the field.
+  Future<void> updateProfile({
+    required String uid,
+    String? displayName,
+    String? handle,
+    String? photoUrl,
+    required String locale,
+  });
 }
 
 /// Installed iOS PWAs cannot rely on a Google popup.

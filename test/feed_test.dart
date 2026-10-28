@@ -712,6 +712,18 @@ class _Users implements UserDirectory {
 
   @override
   Future<bool> exists(String uid) async => true;
+
+  @override
+  Future<UserAccount?> read(String uid) async => null;
+
+  @override
+  Future<void> updateProfile({
+    required String uid,
+    String? displayName,
+    String? handle,
+    String? photoUrl,
+    required String locale,
+  }) async {}
 }
 
 Future<FeedBloc> _pumpFeed(

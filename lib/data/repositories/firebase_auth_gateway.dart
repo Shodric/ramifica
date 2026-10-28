@@ -115,6 +115,42 @@ class FirestoreUserDirectory implements UserDirectory {
       throw AuthException(authErrorCodeFor(error.code), cause: error);
     }
   }
+
+  @override
+  Future<UserAccount?> read(String uid) async {
+    try {
+      final snapshot = await _firestore.collection('users').doc(uid).get();
+      if (!snapshot.exists) return null;
+      return UserAccount.fromDoc(uid, snapshot.data() ?? const {});
+    } on FirebaseException catch (error) {
+      throw AuthException(authErrorCodeFor(error.code), cause: error);
+    }
+  }
+
+  @override
+  Future<void> updateProfile({
+    required String uid,
+    String? displayName,
+    String? handle,
+    String? photoUrl,
+    required String locale,
+  }) async {
+    final account = UserAccount(
+      uid: uid,
+      displayName: displayName,
+      handle: handle,
+      photoUrl: photoUrl,
+      locale: locale,
+    );
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .update(account.toUpdateMap());
+    } on FirebaseException catch (error) {
+      throw AuthException(authErrorCodeFor(error.code), cause: error);
+    }
+  }
 }
 
 Future<void> configureFirebaseAuth() {
