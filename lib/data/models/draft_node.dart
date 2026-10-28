@@ -123,6 +123,7 @@ class DraftNode {
     this.ttsAudioUrl,
     this.ttsStatus = 'idle',
     this.ttsDurationSeconds,
+    this.ttsApproved = false,
     this.choices = const [],
   });
 
@@ -163,6 +164,7 @@ class DraftNode {
       ttsAudioUrl: _optionalString(data['ttsAudioUrl']),
       ttsStatus: _optionalString(data['ttsStatus']) ?? 'idle',
       ttsDurationSeconds: _optionalDouble(data['ttsDurationSeconds']),
+      ttsApproved: data['ttsApproved'] == true,
       choices: rawChoices is List
           ? [
               for (final raw in rawChoices)
@@ -225,6 +227,10 @@ class DraftNode {
   final String? ttsAudioUrl;
   final String? ttsStatus;
   final double? ttsDurationSeconds;
+  /// The narrator take approval. Set when the author approves the
+  /// generated voice (`generateNodeVoice` always lands unapproved);
+  /// editing the line idles the voice and clears this server-side.
+  final bool ttsApproved;
   final List<DraftChoice> choices;
 
   /// True while the map must hide the body from players.
@@ -282,6 +288,7 @@ class DraftNode {
       'ttsAudioUrl': ttsAudioUrl,
       'ttsStatus': ttsStatus,
       'ttsDurationSeconds': ttsDurationSeconds,
+      'ttsApproved': ttsApproved,
       'choices': [for (final choice in choices) choice.toJson()],
     };
   }
@@ -319,6 +326,7 @@ class DraftNode {
     String? Function()? ttsAudioUrl,
     String? ttsStatus,
     double? Function()? ttsDurationSeconds,
+    bool? ttsApproved,
     List<DraftChoice>? choices,
   }) {
     return DraftNode(
@@ -370,6 +378,7 @@ class DraftNode {
       ttsDurationSeconds: ttsDurationSeconds == null
           ? this.ttsDurationSeconds
           : ttsDurationSeconds(),
+      ttsApproved: ttsApproved ?? this.ttsApproved,
       choices: choices ?? this.choices,
     );
   }
@@ -410,6 +419,7 @@ class DraftNode {
         other.ttsAudioUrl == ttsAudioUrl &&
         other.ttsStatus == ttsStatus &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
+        other.ttsApproved == ttsApproved &&
         _sameChoices(other.choices, choices);
   }
 
@@ -448,6 +458,7 @@ class DraftNode {
         ttsAudioUrl,
         ttsStatus,
         ttsDurationSeconds,
+        ttsApproved,
         Object.hashAll(choices),
       ]);
 }

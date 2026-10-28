@@ -45,6 +45,8 @@ final class NodeFieldChanged extends CreateEvent {
     this.choiceLabels,
     this.visibility,
     this.windowSeconds,
+    this.lineApproved,
+    this.ttsApproved,
   });
 
   final String nodeId;
@@ -63,6 +65,15 @@ final class NodeFieldChanged extends CreateEvent {
 
   /// New decision window, or null to leave it.
   final int? windowSeconds;
+
+  /// Narrator line approval, or null to leave it. Persists through
+  /// `saveNode`; the voice gate reads it before generating.
+  final bool? lineApproved;
+
+  /// Narrator take approval, or null to leave it. Fresh takes land
+  /// unapproved; the author approves after listening. Persists through
+  /// `saveNode`.
+  final bool? ttsApproved;
 }
 
 /// Persists the open node through `saveNode`. `droppable`: a second save
@@ -154,4 +165,71 @@ final class VideoUploadProgressed extends CreateEvent {
 
   final String nodeId;
   final double progress;
+}
+
+/// Moves a choice hold-zone inside the 0-1 frame. The bloc clamps [x]
+/// and [y] to 0..1; unknown nodes and choices are ignored. Nothing is
+/// sent until [NodeSaved] — the zone rides the `choices` whitelist.
+final class ZoneMoved extends CreateEvent {
+  const ZoneMoved({
+    required this.nodeId,
+    required this.choiceId,
+    required this.x,
+    required this.y,
+  });
+
+  final String nodeId;
+  final String choiceId;
+  final double x;
+  final double y;
+}
+
+/// Adds a choice (and its center-frame zone) pointing at [targetNodeId].
+/// The label starts empty for the author to type (24 chars max, like
+/// every label field); it is the default only when it is the sole
+/// choice. Ignored on endings, past two choices, blank targets, and
+/// unknown nodes. Nothing is sent until [NodeSaved].
+final class ChoiceAdded extends CreateEvent {
+  const ChoiceAdded({required this.nodeId, required this.targetNodeId});
+
+  final String nodeId;
+  final String targetNodeId;
+}
+
+/// Removes a choice and its zone. When the default goes and choices
+/// remain, the first survivor becomes the default so the
+/// exactly-one-default checklist can still pass. Unknown nodes and
+/// choices are ignored. Nothing is sent until [NodeSaved].
+final class ChoiceRemoved extends CreateEvent {
+  const ChoiceRemoved({required this.nodeId, required this.choiceId});
+
+  final String nodeId;
+  final String choiceId;
+}
+
+/// Asks for the node voice via `generateNodeVoice`. GATED server-side:
+/// the line must be approved first (and non-blank); the call re-renders
+/// the take, which lands unapproved for the author to preview. The bloc
+/// reloads the nodes after so the take status shows up. `restartable`:
+/// a second tap cancels the first.
+final class VoiceGenerateRequested extends CreateEvent {
+  const VoiceGenerateRequested(this.nodeId);
+
+  final String nodeId;
+}
+
+/// Persists the open node's zones through `saveNode`. Thin wrapper over
+/// the save path: zones ride the `choices` whitelist inside the full
+/// node doc, exactly like [NodeSaved]. `droppable`: a second save while
+/// one is in flight is dropped.
+final class ZonesSaved extends CreateEvent {
+  const ZonesSaved();
+}
+
+/// Persists the open node's window through `saveNode`. Thin wrapper over
+/// the save path: the window rides `windowSeconds` inside the full node
+/// doc, exactly like [NodeSaved]. `droppable`: a second save while one
+/// is in flight is dropped.
+final class WindowSaved extends CreateEvent {
+  const WindowSaved();
 }

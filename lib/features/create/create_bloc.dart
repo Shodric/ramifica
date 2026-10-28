@@ -27,7 +27,13 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<NodeAdded>(_onNodeAdded, transformer: droppable());
     on<NodeFieldChanged>(_onFieldChanged);
     on<NodeSaved>(_onNodeSaved, transformer: droppable());
+    on<ZonesSaved>(_onZonesSaved, transformer: droppable());
+    on<WindowSaved>(_onWindowSaved, transformer: droppable());
+    on<ZoneMoved>(_onZoneMoved);
+    on<ChoiceAdded>(_onChoiceAdded);
+    on<ChoiceRemoved>(_onChoiceRemoved);
     on<TextGenerateRequested>(_onGenerate, transformer: restartable());
+    on<VoiceGenerateRequested>(_onVoiceGenerate, transformer: restartable());
     on<ImageGenerateRequested>(_onImageGenerate, transformer: restartable());
     on<ImageApprovalChanged>(_onImageApproval, transformer: droppable());
     on<VideoGenerateRequested>(_onVideoGenerate, transformer: restartable());
@@ -181,7 +187,145 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
   }
 
-  Future<void> _onNodeSaved(NodeSaved event, Emitter<CreateState> emit) async {
+  /// Moves one choice zone, clamping to the 0-1 frame so the payload can
+  /// never fail the `saveNode` zone check. Unknown nodes and choices are
+  /// ignored.
+  void _onZoneMoved(ZoneMoved event, Emitter<CreateState> emit) {
+    if (!state.nodes.any((node) => node.nodeId == event.nodeId)) return;
+    emit(
+      state.copy(
+        nodes: [
+          for (final node in state.nodes)
+            if (node.nodeId == event.nodeId)
+              node.copy(
+                choices: [
+                  for (final choice in node.choices)
+                    if (choice.choiceId == event.choiceId)
+                      choice.copy(
+                        x: event.x.clamp(0, 1).toDouble(),
+                        y: event.y.clamp(0, 1).toDouble(),
+                      )
+                    else
+                      choice,
+                ],
+              )
+            else
+              node,
+        ],
+        failure: () => null,
+      ),
+    );
+  }
+
+  /// Adds a choice with a center-frame zone pointing at its target.
+  /// Ignored on endings, past two choices, blank targets, and unknown
+  /// nodes.
+  void _onChoiceAdded(ChoiceAdded event, Emitter<CreateState> emit) {
+    final target = event.targetNodeId.trim();
+    if (target.isEmpty) return;
+    final index = state.nodes.indexWhere(
+      (node) => node.nodeId == event.nodeId,
+    );
+    if (index < 0) return;
+    final node = state.nodes[index];
+    if (node.isEnding || node.choices.length >= 2) return;
+    final choices = [
+      ...node.choices,
+      DraftChoice(
+        choiceId: const Uuid().v4(),
+        label: '',
+        targetNodeId: target,
+        // The sole choice carries the hold; a second one waits for the
+        // author to pick the default explicitly.
+        isDefault: node.choices.isEmpty,
+      ),
+    ];
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId)
+              current.copy(choices: choices)
+            else
+              current,
+        ],
+        failure: () => null,
+      ),
+    );
+  }
+
+  /// Removes a choice and its zone. When the default goes and choices
+  /// remain, the first survivor inherits the default so the checklist can
+  /// still pass. Unknown nodes and choices are ignored.
+  void _onChoiceRemoved(ChoiceRemoved event, Emitter<CreateState> emit) {
+    final index = state.nodes.indexWhere(
+      (node) => node.nodeId == event.nodeId,
+    );
+    if (index < 0) return;
+    final node = state.nodes[index];
+    if (!node.choices.any((choice) => choice.choiceId == event.choiceId)) {
+      return;
+    }
+    var survivors = [
+      for (final choice in node.choices)
+        if (choice.choiceId != event.choiceId) choice,
+    ];
+    if (survivors.isNotEmpty &&
+        survivors.every((choice) => !choice.isDefault)) {
+      survivors = [
+        survivors.first.copy(isDefault: true),
+        ...survivors.skip(1),
+      ];
+    }
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId)
+              current.copy(choices: survivors)
+            else
+              current,
+        ],
+        failure: () => null,
+      ),
+    );
+  }
+
+  Future<void> _onNodeSaved(NodeSaved event, Emitter<CreateState> emit) {
+    return _saveOpenNode(emit);
+  }
+
+  /// Zones ride the `choices` whitelist inside the full node doc, so
+  /// saving zones is saving the open node.
+  Future<void> _onZonesSaved(ZonesSaved event, Emitter<CreateState> emit) {
+    return _saveOpenNode(emit);
+  }
+
+  /// The window rides `windowSeconds` inside the full node doc, so
+  /// saving the window is saving the open node.
+  Future<void> _onWindowSaved(WindowSaved event, Emitter<CreateState> emit) {
+    return _saveOpenNode(emit);
+  }
+
+  /// Asks for the node voice, then reloads the nodes so the take status
+  /// (and its reset approval) shows up. The backend enforces the
+  /// line-approval gate; a rejection lands as [failure].
+  Future<void> _onVoiceGenerate(
+    VoiceGenerateRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    await _runImaging(
+      emit,
+      event.nodeId,
+      () => repository.generateNodeVoice(
+        storyId: state.story!.storyId,
+        nodeId: event.nodeId,
+      ),
+    );
+  }
+
+  /// Shared save runner: persists the open node through `saveNode`.
+  Future<void> _saveOpenNode(Emitter<CreateState> emit) async {
     final story = state.story;
     final node = state.openNode;
     if (story == null || node == null) return;
@@ -525,7 +669,15 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
     next = next.copy(visibility: event.visibility);
   }
   if (event.windowSeconds != null) {
-    next = next.copy(windowSeconds: () => event.windowSeconds);
+    // Clamp to the `saveNode` window (3-15) so an out-of-range step can
+    // never fail the save.
+    next = next.copy(windowSeconds: () => event.windowSeconds!.clamp(3, 15));
+  }
+  if (event.lineApproved != null) {
+    next = next.copy(lineApproved: event.lineApproved);
+  }
+  if (event.ttsApproved != null) {
+    next = next.copy(ttsApproved: event.ttsApproved);
   }
   final labels = event.choiceLabels;
   if (labels != null && labels.isNotEmpty) {

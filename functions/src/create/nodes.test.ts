@@ -342,6 +342,7 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
       videoUrl: "https://evil.example/v.mp4",
       videoStatus: "ready",
       lineApproved: false,
+      ttsApproved: true,
       startFromNodeId: "node_hack",
     },
   });
@@ -364,7 +365,11 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
     },
   ]);
   assert.equal(saved.videoUrl, "https://old.example/v.mp4");
-  assert.equal(saved.lineApproved, true);
+  assert.equal(saved.lineApproved, false);
+  assert.equal(saved.ttsStatus, "idle");
+  assert.equal(saved.ttsAudioUrl, null);
+  assert.equal(saved.ttsDurationSeconds, null);
+  assert.equal(saved.ttsApproved, false);
   assert.equal(saved.startFromNodeId, null);
   assert.equal("authorId" in saved, false);
   assert.equal("status" in saved, false);
@@ -382,6 +387,82 @@ test("saveNode supports partial updates", async () => {
   const node = await db.doc("stories/story_draft/nodes/node_001").get();
   assert.equal(node.data()?.title, "Only this");
   assert.equal(node.data()?.ttsText, "Old line.");
+});
+
+test("saveNode approves the line and voice without new words", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {nodeId: "node_001", lineApproved: false, ttsApproved: false},
+  });
+  const denied =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(denied.lineApproved, false);
+  assert.equal(denied.ttsApproved, false);
+  assert.equal(denied.ttsStatus, "ready");
+  assert.equal(denied.ttsAudioUrl, "https://old.example/v.m4a");
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {nodeId: "node_001", lineApproved: true, ttsApproved: true},
+  });
+  const approved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(approved.lineApproved, true);
+  assert.equal(approved.ttsApproved, true);
+  assert.equal(approved.ttsStatus, "ready");
+  assert.equal(approved.ttsAudioUrl, "https://old.example/v.m4a");
+});
+
+test("saveNode idles the voice when the words change", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {nodeId: "node_001", ttsText: "Brand new line."},
+  });
+  const idled =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(idled.ttsText, "Brand new line.");
+  assert.equal(idled.lineApproved, false);
+  assert.equal(idled.ttsStatus, "idle");
+  assert.equal(idled.ttsAudioUrl, null);
+  assert.equal(idled.ttsDurationSeconds, null);
+  assert.equal(idled.ttsApproved, false);
+});
+
+test("saveNode honors an explicit line approval with new words", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      ttsText: "Reviewed new line.",
+      lineApproved: true,
+      ttsApproved: true,
+    },
+  });
+  const saved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(saved.lineApproved, true);
+  assert.equal(saved.ttsStatus, "idle");
+  assert.equal(saved.ttsAudioUrl, null);
+  assert.equal(saved.ttsApproved, false);
+});
+
+test("saveNode keeps approvals when the words are unchanged", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {nodeId: "node_001", ttsText: "Old line."},
+  });
+  const saved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(saved.lineApproved, true);
+  assert.equal(saved.ttsStatus, "ready");
+  assert.equal(saved.ttsAudioUrl, "https://old.example/v.m4a");
 });
 
 test("saveNode normalizes endings and rejects choices on them", async () => {
@@ -448,6 +529,8 @@ test("saveNode validates every whitelisted field", async () => {
     {nodeId: "node_001", visibility: "hidden"},
     {nodeId: "node_001", endingType: "sad"},
     {nodeId: "node_001", ttsText: "x".repeat(1001)},
+    {nodeId: "node_001", lineApproved: "yes"},
+    {nodeId: "node_001", ttsApproved: 1},
     {nodeId: "node_001", windowSeconds: null},
     {nodeId: "node_001", windowSeconds: 2},
     {nodeId: "node_001", windowSeconds: 3.5},

@@ -43,6 +43,7 @@ const node = (overrides = {}): ValidatableNode => ({
   ttsAudioUrl: "https://example.com/voz.m4a",
   ttsStatus: "ready",
   ttsDurationSeconds: 4.1,
+  ttsApproved: true,
   choices: [goodChoice()],
   ...overrides,
 });
@@ -154,10 +155,16 @@ test("choices need labels, targets, zones, and one default", () => {
 });
 
 test("decisions need a line, a voice, and a window", () => {
-  const bad = node({lineApproved: false, ttsStatus: "idle", windowSeconds: 2});
+  const bad = node({
+    lineApproved: false,
+    ttsStatus: "idle",
+    ttsApproved: false,
+    windowSeconds: 2,
+  });
   assert.deepEqual(validateStory(story(), [bad, ending()]), [
     "Node node_001 needs an approved narrator line.",
     "Node node_001 needs a ready narrator voice.",
+    "Node node_001 needs an approved narrator voice.",
     "Node node_001 needs windowSeconds between 3 and 15.",
   ]);
 });
@@ -217,5 +224,13 @@ test("an ending with a closing line needs its voice", () => {
   assert.deepEqual(validateStory(story(), [node(), bad]), [
     "Node node_002 needs an approved narrator line.",
     "Node node_002 needs a ready narrator voice.",
+    "Node node_002 needs an approved narrator voice.",
+  ]);
+});
+
+test("a ready voice still needs approval", () => {
+  const bad = node({ttsApproved: false});
+  assert.deepEqual(validateStory(story(), [bad, ending()]), [
+    "Node node_001 needs an approved narrator voice.",
   ]);
 });

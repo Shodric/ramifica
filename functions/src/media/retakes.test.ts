@@ -11,11 +11,10 @@ import {
 type Fields = {[field: string]: unknown};
 
 /**
- * Voice retakes: there is no `generateNodeVoice` callable in
- * functions/src (voice today is node fields only: `ttsText`,
- * `lineApproved`, `ttsAudioUrl`, `ttsStatus`, `ttsDurationSeconds`,
- * with no backend generator). A voice "another take" has no backend
- * to re-dispatch yet; only image and video retakes are proven below.
+ * Voice retakes go through `generateNodeVoice` (media/generateNodeVoice):
+ * the call is gated on the approved line, stores fresh bytes, and resets
+ * the voice approval, so a same-params second call is a new take by
+ * construction. Proven in generateNodeVoice.test.ts.
  * Image and video need no new code: both generators overwrite bytes,
  * reset approvals, and desync per #47, so a same-params second call
  * is a new take by construction.

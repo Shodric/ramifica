@@ -360,6 +360,25 @@ class CreateRepository {
     await callFunction('generateNodeVideo', data);
   }
 
+  /// Renders the node voice via the `generateNodeVoice` callable. GATED
+  /// server-side on the approved, non-blank narrator line; every take
+  /// lands with `ttsApproved: false` for the author to preview. Records
+  /// intent; the caller reloads the nodes to read the resulting
+  /// `pending`/`ready` take. Without TTS credentials the backend records
+  /// `pending` instead of throwing.
+  Future<void> generateNodeVoice({
+    required String storyId,
+    required String nodeId,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    await callFunction('generateNodeVoice', {
+      'storyId': story,
+      'nodeId': node,
+    });
+  }
+
   /// Uploads a picked video for one node to the trigger path
   /// `uploads/{uid}/{storyId}_{nodeId}_{takeId}.mp4|.mov` (backend
   /// contract: `onUploadFinalized` parses the filename — Firestore

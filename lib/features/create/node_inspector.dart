@@ -4,6 +4,9 @@ import 'package:ramifica/core/widgets/glass_panel.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/frame_compare.dart';
+import 'package:ramifica/features/create/window_picker.dart';
+import 'package:ramifica/features/create/zone_marker.dart';
+import 'package:ramifica/features/create/voice_preview.dart';
 
 /// Inspector for the open draft node: manual editing fields, the
 /// per-node [StatusPill], and what is missing for publish.
@@ -22,22 +25,31 @@ class NodeInspector extends StatefulWidget {
     this.busy = false,
     this.isRoot = false,
     this.parent,
+    this.targets = const [],
     this.videoGateMessage,
     this.videoDesynced = false,
     this.onTitleChanged,
     this.onLineChanged,
     this.onChoiceLabelChanged,
     this.onVisibilityChanged,
+    this.onWindowChanged,
+    this.onZoneMoved,
+    this.onZoneAdded,
+    this.onZoneRemoved,
+    this.onZonesSaved,
+    this.onWindowSaved,
     this.onSave,
     this.onGenerate,
     this.onRegenerate,
     this.onImageApprovalChanged,
     this.onImageGenerate,
     this.onVideoGenerate,
+    this.onLineApprovalChanged,
+    this.onVoiceGenerate,
+    this.onVoiceApprovalChanged,
     this.onUploadVideo,
     this.uploadProgress,
   });
-
   final DraftNode node;
   final StatusPillState status;
   final List<String> missing;
@@ -53,6 +65,9 @@ class NodeInspector extends StatefulWidget {
   /// preview on non-root nodes.
   final DraftNode? parent;
 
+  /// Every node but the open one: candidates a new zone may point at.
+  final List<DraftNode> targets;
+
   /// Why video generation is gated, or null when the gate is open.
   final String? videoGateMessage;
 
@@ -63,20 +78,27 @@ class NodeInspector extends StatefulWidget {
   final ValueChanged<String>? onLineChanged;
   final void Function(String choiceId, String label)? onChoiceLabelChanged;
   final ValueChanged<String>? onVisibilityChanged;
+  final ValueChanged<int>? onWindowChanged;
+  final void Function(String choiceId, double x, double y)? onZoneMoved;
+  final ValueChanged<String>? onZoneAdded;
+  final ValueChanged<String>? onZoneRemoved;
+  final VoidCallback? onZonesSaved;
+  final VoidCallback? onWindowSaved;
   final VoidCallback? onSave;
   final VoidCallback? onGenerate;
   final VoidCallback? onRegenerate;
 
-  /// Frame approval flip: `which` is `start` or `end`.
   final void Function(String which, bool approved)? onImageApprovalChanged;
 
   /// Frame generation request: `which` is `start` or `end`.
   final ValueChanged<String>? onImageGenerate;
 
   final VoidCallback? onVideoGenerate;
+  final ValueChanged<bool>? onLineApprovalChanged;
+  final VoidCallback? onVoiceGenerate;
+  final ValueChanged<bool>? onVoiceApprovalChanged;
 
   /// Upload tap for a picked mp4/mov. Null when no picker is wired, in
-  /// which case the upload button hides (picking is view-side injected).
   final VoidCallback? onUploadVideo;
 
   /// Upload progress 0..1 for this node, or null when not uploading.
@@ -291,11 +313,72 @@ class _NodeInspectorState extends State<NodeInspector> {
             ),
           ],
           const SizedBox(height: 16),
+          const Text('Zones', style: RamificaText.label),
+          const SizedBox(height: 8),
+          if (node.isEnding)
+            const Text(
+              'Endings hold no choices, so there are no zones.',
+              style: RamificaText.meta,
+            )
+          else
+            ZoneMarker(
+              nodeId: node.nodeId,
+              choices: node.choices,
+              targets: widget.targets,
+              endImageUrl: node.endImageSourceUrl,
+              busy: widget.busy,
+              onZoneMoved: widget.onZoneMoved,
+              onZoneAdded: widget.onZoneAdded,
+              onZoneRemoved: widget.onZoneRemoved,
+              onLabelChanged: widget.onChoiceLabelChanged,
+            ),
+          if (!node.isEnding) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: .centerRight,
+              child: TextButton(
+                key: ValueKey('save-zones-${node.nodeId}'),
+                onPressed: widget.busy ? null : widget.onZonesSaved,
+                child: const Text('Save zones'),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          const Text('Window', style: RamificaText.label),
+          const SizedBox(height: 8),
+          if (node.isEnding)
+            const Text(
+              'Endings decide nothing, so there is no window.',
+              style: RamificaText.meta,
+            )
+          else
+            WindowPicker(
+              nodeId: node.nodeId,
+              value: node.windowSeconds ?? WindowPicker.defaultSeconds,
+              busy: widget.busy,
+              onChanged: widget.onWindowChanged,
+            ),
+          if (!node.isEnding)
+            Align(
+              alignment: .centerRight,
+              child: TextButton(
+                key: ValueKey('save-window-${node.nodeId}'),
+                onPressed: widget.busy ? null : widget.onWindowSaved,
+                child: const Text('Save window'),
+              ),
+            ),
+          const SizedBox(height: 16),
           const Text('Voice', style: RamificaText.label),
+          const SizedBox(height: 8),
+          _lineApprovalRow(node),
           const SizedBox(height: 8),
           Row(
             children: [
               _voiceStatusPill(node),
+              if (node.ttsApproved) ...[
+                const SizedBox(width: 8),
+                const StatusPill(status: StatusPillState.approved),
+              ],
               if (node.ttsAudioUrl == null) ...[
                 const SizedBox(width: 8),
                 const Expanded(
@@ -307,6 +390,54 @@ class _NodeInspectorState extends State<NodeInspector> {
               ],
             ],
           ),
+          if (!_voiceGateOpen(node)) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Approve the narrator line to generate voice.',
+              style: RamificaText.meta,
+            ),
+          ],
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: ValueKey('gen-voice-${node.nodeId}'),
+            onPressed: widget.busy || !_voiceGateOpen(node)
+                ? null
+                : widget.onVoiceGenerate,
+            child: Text(
+              node.ttsAudioUrl == null ? 'Generate voice' : 'Another take',
+            ),
+          ),
+          if (node.ttsAudioUrl != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: VoicePreview(
+                    nodeId: node.nodeId,
+                    audioUrl: node.ttsAudioUrl!,
+                    busy: widget.busy,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: ValueKey('approve-voice-${node.nodeId}'),
+                  onPressed: widget.busy || node.ttsApproved
+                      ? null
+                      : () =>
+                          widget.onVoiceApprovalChanged?.call(true),
+                  child: const Text('Approve'),
+                ),
+                TextButton(
+                  key: ValueKey('reject-voice-${node.nodeId}'),
+                  onPressed: widget.busy || !node.ttsApproved
+                      ? null
+                      : () =>
+                          widget.onVoiceApprovalChanged?.call(false),
+                  child: const Text('Reject'),
+                ),
+              ],
+            ),
+          ],
           Row(
             children: [
               Expanded(
@@ -411,9 +542,9 @@ class _NodeInspectorState extends State<NodeInspector> {
   }
 
   /// Voice pill from the server [ttsStatus]: ready / pending / failed,
-  /// idle otherwise. Display only — there is no voice-take callable yet
-  /// (no `generateNodeVoice` on the backend), so the section shows status
-  /// and never dispatches.
+  /// idle otherwise. Generation dispatches `generateNodeVoice` through
+  /// [NodeInspector.onVoiceGenerate] (gated on the approved line); the
+  /// pill itself stays display-only.
   StatusPill _voiceStatusPill(DraftNode node) {
     final status = switch (node.ttsStatus) {
       'ready' => StatusPillState.ready,
@@ -422,6 +553,45 @@ class _NodeInspectorState extends State<NodeInspector> {
       _ => StatusPillState.idle,
     };
     return StatusPill(status: status);
+  }
+
+  /// True when the voice gate is open: the line is approved and non-blank,
+  /// mirroring the `generateNodeVoice` failed-precondition.
+  bool _voiceGateOpen(DraftNode node) {
+    return node.lineApproved && node.ttsText.trim().isNotEmpty;
+  }
+
+  /// Narrator line approval row. Approve needs a non-blank line; reject
+  /// flips an approval back off. Both write bloc state and persist with
+  /// the inspector Save (the backend clears line approval when the text
+  /// itself changes in the same save).
+  Widget _lineApprovalRow(DraftNode node) {
+    final nodeId = node.nodeId;
+    final hasLine = node.ttsText.trim().isNotEmpty;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            node.lineApproved ? 'Line approved.' : 'Line not approved.',
+            style: RamificaText.meta,
+          ),
+        ),
+        TextButton(
+          key: ValueKey('approve-line-$nodeId'),
+          onPressed: widget.busy || !hasLine || node.lineApproved
+              ? null
+              : () => widget.onLineApprovalChanged?.call(true),
+          child: const Text('Approve line'),
+        ),
+        TextButton(
+          key: ValueKey('reject-line-$nodeId'),
+          onPressed: widget.busy || !node.lineApproved
+              ? null
+              : () => widget.onLineApprovalChanged?.call(false),
+          child: const Text('Reject'),
+        ),
+      ],
+    );
   }
 
   /// Choice label controllers follow the choice list: new choices get a

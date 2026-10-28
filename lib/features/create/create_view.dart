@@ -11,6 +11,7 @@ import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_state.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/create/node_inspector.dart';
+import 'package:ramifica/features/create/publish_bar.dart';
 import 'package:uuid/uuid.dart';
 
 /// Create tab: draft canvas plus the inspector. Creates its own bloc
@@ -149,6 +150,10 @@ class _CreateViewState extends State<CreateView> {
                         state.job == CreateJob.uploading,
                     isRoot: state.isRoot(state.openNodeId!),
                     parent: state.parentOf(state.openNode!),
+                    targets: [
+                      for (final node in state.nodes)
+                        if (node.nodeId != state.openNodeId) node,
+                    ],
                     videoGateMessage: state.videoGateMessage(state.openNode!),
                     videoDesynced: state.videoDesynced(state.openNode!),
                     uploadProgress:
@@ -177,6 +182,34 @@ class _CreateViewState extends State<CreateView> {
                         visibility: visibility,
                       ),
                     ),
+                    onWindowChanged: (window) => bloc.add(
+                      NodeFieldChanged(
+                        nodeId: state.openNodeId!,
+                        windowSeconds: window,
+                      ),
+                    ),
+                    onZoneMoved: (choiceId, x, y) => bloc.add(
+                      ZoneMoved(
+                        nodeId: state.openNodeId!,
+                        choiceId: choiceId,
+                        x: x,
+                        y: y,
+                      ),
+                    ),
+                    onZoneAdded: (targetNodeId) => bloc.add(
+                      ChoiceAdded(
+                        nodeId: state.openNodeId!,
+                        targetNodeId: targetNodeId,
+                      ),
+                    ),
+                    onZoneRemoved: (choiceId) => bloc.add(
+                      ChoiceRemoved(
+                        nodeId: state.openNodeId!,
+                        choiceId: choiceId,
+                      ),
+                    ),
+                    onZonesSaved: () => bloc.add(const ZonesSaved()),
+                    onWindowSaved: () => bloc.add(const WindowSaved()),
                     onSave: () => bloc.add(const NodeSaved()),
                     onGenerate: () => bloc.add(const TextGenerateRequested()),
                     onRegenerate: () =>
@@ -196,6 +229,20 @@ class _CreateViewState extends State<CreateView> {
                     ),
                     onVideoGenerate: () =>
                         bloc.add(VideoGenerateRequested(state.openNodeId!)),
+                    onLineApprovalChanged: (approved) => bloc.add(
+                      NodeFieldChanged(
+                        nodeId: state.openNodeId!,
+                        lineApproved: approved,
+                      ),
+                    ),
+                    onVoiceGenerate: () =>
+                        bloc.add(VoiceGenerateRequested(state.openNodeId!)),
+                    onVoiceApprovalChanged: (approved) => bloc.add(
+                      NodeFieldChanged(
+                        nodeId: state.openNodeId!,
+                        ttsApproved: approved,
+                      ),
+                    ),
                     onUploadVideo: widget.pickVideo == null
                         ? null
                         : () async {
@@ -214,6 +261,23 @@ class _CreateViewState extends State<CreateView> {
                   ),
                 ),
               ),
+            if (state.hasDraft) ...[
+              const SizedBox(height: 12),
+              PublishBar(
+                problems: state.publishProblems(),
+                // #51 owns the real publish call: for now the CTA only
+                // reports readiness, touching nothing.
+                onPublish: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Story is ready. Publishing lands in #51.',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ],
         ],
       ),

@@ -7,6 +7,7 @@ import {
   generateNodeVideo,
 } from "./create/generateNodeMedia";
 import {generateNodeText} from "./create/generateNodeText";
+import {generateNodeVoice} from "./media/generateNodeVoice";
 import {createNode, saveNode} from "./create/nodes";
 import {loadPlayback} from "./feed/loadPlayback";
 import {startRun} from "./feed/startRun";
@@ -24,6 +25,7 @@ export {
   generateNodeImage,
   generateNodeText,
   generateNodeVideo,
+  generateNodeVoice,
   loadPlayback,
   onUploadFinalized,
   saveNode,

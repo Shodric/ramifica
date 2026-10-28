@@ -64,15 +64,16 @@ export const createNode = onCall(
 
 /**
  * Persists the author's node edits. Field whitelist: title, visibility,
- * isEnding, endingName, endingType, ttsText, windowSeconds, and choices.
- * Everything else in the payload — nodeId routing aside — is ignored, so
- * pipeline-owned media/approval fields and story-level authorId, status,
- * and rootNodeId can never escalate through this path. Endings normalize
- * windowSeconds to null; non-empty choices on an ending are rejected
- * rather than dropped. Target ids stay unchecked here on purpose: a
- * choice may point at a node created next, and the publish checklist
- * reports dangling targets. This never touches other stories, runs, or
- * published docs.
+ * isEnding, endingName, endingType, ttsText, windowSeconds, choices, and
+ * the line/voice approvals. Everything else in the payload — nodeId
+ * routing aside — is ignored, so pipeline-owned media fields and
+ * story-level authorId, status, and rootNodeId can never escalate through
+ * this path. New words idle the stored voice and clear both approvals
+ * unless the same save approves the line. Endings normalize windowSeconds
+ * to null; non-empty choices on an ending are rejected rather than
+ * dropped. Target ids stay unchecked here on purpose: a choice may point
+ * at a node created next, and the publish checklist reports dangling
+ * targets. This never touches other stories, runs, or published docs.
  */
 export const saveNode = onCall(
   {enforceAppCheck: true, maxInstances: 20},
@@ -158,6 +159,7 @@ export const createNodeWith = async (
       ttsAudioUrl: null,
       ttsStatus: "idle",
       ttsDurationSeconds: null,
+      ttsApproved: false,
       choices: [],
       startFromNodeId: parentNodeId,
       startParentEndHash: null,
@@ -257,13 +259,47 @@ const parseNodeUpdate = (
   if ("ttsText" in nodeFields) {
     update.ttsText = parseText(nodeFields.ttsText, "ttsText", maxTtsChars);
   }
+  if ("lineApproved" in nodeFields) {
+    update.lineApproved = parseBoolean(
+      nodeFields.lineApproved,
+      "lineApproved"
+    );
+  }
+  if ("ttsApproved" in nodeFields) {
+    update.ttsApproved = parseBoolean(nodeFields.ttsApproved, "ttsApproved");
+  }
   if ("windowSeconds" in nodeFields) {
     update.windowSeconds = parseWindow(nodeFields.windowSeconds, isEnding);
   }
   if ("choices" in nodeFields) {
     update.choices = parseChoices(nodeFields.choices, isEnding);
   }
+  idleVoiceOnNewLine(nodeFields, current, update);
   return update;
+};
+
+/**
+ * New words invalidate both approvals: the stored voice still speaks the
+ * old line, so it drops to idle and the voice approval clears. An explicit
+ * line approval in the same save is honored (the author just reviewed the
+ * new words); an explicit voice approval is not (no take speaks them yet).
+ * @param {Object} nodeFields Raw node payload.
+ * @param {Object} current Stored node fields.
+ * @param {Object} update The validated update under construction.
+ */
+const idleVoiceOnNewLine = (
+  nodeFields: {[field: string]: unknown},
+  current: {[field: string]: unknown},
+  update: Record<string, unknown>
+): void => {
+  if (!("ttsText" in nodeFields)) return;
+  const before = typeof current.ttsText === "string" ? current.ttsText : "";
+  if (update.ttsText === before) return;
+  if (!("lineApproved" in nodeFields)) update.lineApproved = false;
+  update.ttsStatus = "idle";
+  update.ttsAudioUrl = null;
+  update.ttsDurationSeconds = null;
+  update.ttsApproved = false;
 };
 
 /**

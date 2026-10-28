@@ -78,10 +78,12 @@ class CreateState {
 
   /// Unmet publish conditions for [node], one message each. Mirrors the
   /// per-node checklist in functions/src/publish/validateStory.ts, minus
-  /// the image-frame sync hashes (the image milestone owns those): title,
-  /// video, voice, window, and choices. Empty when the node can publish.
+  /// the server-verified frame sync hashes and the extraction-owned
+  /// `pauseAtSeconds` (the image/video milestones own those): title,
+  /// visibility, video, images, voice, window, and choices. Empty when
+  /// the node can publish.
   List<String> missingFor(DraftNode node) {
-    return missingForNode(node: node);
+    return missingForNode(node: node, isRoot: isRoot(node.nodeId));
   }
 
   /// Per-node status for the inspector [StatusPill]: the job in flight
@@ -101,6 +103,33 @@ class CreateState {
     final node = _byId(nodeId);
     if (node == null) return .idle;
     return missingFor(node).isEmpty ? .ready : .idle;
+  }
+
+  /// Story-level publish problems, mirroring `validateStory`: draft
+  /// presence, root presence, at least one ending, reachability from the
+  /// root, then every node's [missingFor]. Empty when the story can go
+  /// `published` (modulo the server-verified hashes in [missingFor]).
+  List<String> publishProblems() {
+    if (story == null) return ['No draft open yet.'];
+    final problems = <String>[];
+    final rootId = story?.rootNodeId;
+    final byId = {for (final node in nodes) node.nodeId: node};
+    final root = rootId == null ? null : byId[rootId];
+    if (root == null) {
+      problems.add('Missing root node.');
+    }
+    if (!nodes.any((node) => node.isEnding)) {
+      problems.add('At least one ending is required.');
+    }
+    if (root != null) {
+      for (final orphanId in orphanNodeIds) {
+        problems.add('Node $orphanId is not reachable from the root.');
+      }
+    }
+    for (final node in nodes) {
+      problems.addAll(missingFor(node));
+    }
+    return problems;
   }
 
   DraftNode? _byId(String nodeId) {
@@ -194,9 +223,13 @@ class CreateState {
 }
 
 /// The publish checklist for one node, shared by the state and the tests.
-/// Reachability stays out: it is story-level and the canvas marks orphans
-/// distinctly.
-List<String> missingForNode({required DraftNode node}) {
+/// Mirrors functions/src/publish/validateStory.ts per node, minus the
+/// server-verified frame sync hashes and the extraction-owned
+/// `pauseAtSeconds`: title, visibility, video, images, choices, window,
+/// and voice. [isRoot] adds the start-image approval only the root needs
+/// (children inherit S from their parent E). Reachability stays out: it
+/// is story-level and the canvas marks orphans distinctly.
+List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   final missing = <String>[];
   final id = node.nodeId;
   if (node.title.trim().isEmpty || node.title.length > 40) {
@@ -207,6 +240,12 @@ List<String> missingForNode({required DraftNode node}) {
   }
   if (node.videoStatus != 'ready' || node.videoUrl == null) {
     missing.add('Node $id needs a ready video.');
+  }
+  if (!node.endImageApproved) {
+    missing.add('Node $id needs an approved end image.');
+  }
+  if (isRoot && !node.startImageApproved) {
+    missing.add('Node $id needs an approved start image.');
   }
   if (node.isEnding) {
     if (node.choices.isNotEmpty) {
@@ -249,6 +288,8 @@ List<String> missingForNode({required DraftNode node}) {
     }
   }
   // Voice: required on decisions; on endings only when a line exists.
+  // Approval follows generation: fresh takes land unapproved and the
+  // author approves after listening.
   if (!node.isEnding || node.ttsText.trim().isNotEmpty) {
     if (!node.lineApproved) {
       missing.add('Node $id needs an approved narrator line.');
@@ -257,6 +298,9 @@ List<String> missingForNode({required DraftNode node}) {
         node.ttsAudioUrl == null ||
         !_isPositive(node.ttsDurationSeconds)) {
       missing.add('Node $id needs a ready narrator voice.');
+    }
+    if (!node.ttsApproved) {
+      missing.add('Node $id needs an approved narrator voice.');
     }
   }
   // Reachability is story-level: the canvas marks orphans distinctly.

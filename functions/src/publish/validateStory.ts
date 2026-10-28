@@ -32,6 +32,7 @@ export interface ValidatableNode {
   ttsAudioUrl?: string | null;
   ttsStatus?: string | null;
   ttsDurationSeconds?: number | null;
+  ttsApproved?: boolean | null;
   choices: ValidatableChoice[];
 }
 
@@ -225,6 +226,9 @@ const validateVoice = (node: ValidatableNode): string[] => {
     !isPositive(node.ttsDurationSeconds)
   ) {
     problems.push(`Node ${node.nodeId} needs a ready narrator voice.`);
+  }
+  if (node.ttsApproved !== true) {
+    problems.push(`Node ${node.nodeId} needs an approved narrator voice.`);
   }
   return problems;
 };

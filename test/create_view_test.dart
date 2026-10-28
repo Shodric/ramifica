@@ -11,6 +11,8 @@ import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_view.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
+import 'package:ramifica/features/create/publish_bar.dart';
+import 'package:ramifica/features/create/voice_preview.dart';
 
 void main() {
   group('CreateView', () {
@@ -88,7 +90,8 @@ void main() {
       final calls = <_Call>[];
       await _pumpDraft(tester, calls);
 
-      expect(find.textContaining('needs a ready video'), findsOneWidget);
+      expect(find.textContaining('needs a ready video'), findsWidgets);
+      expect(find.byKey(const ValueKey('publish-bar')), findsOneWidget);
       expect(
         find.byWidgetPredicate(
           (widget) =>
@@ -359,6 +362,244 @@ void main() {
 
       expect(find.text('Something failed'), findsOneWidget);
     });
+
+    testWidgets('zones render over the last frame', (tester) async {
+      final bloc = await _pumpDraft(tester);
+
+      // The open root carries one choice with a center-frame zone.
+      final zone = find.byKey(const ValueKey('zone-c1'));
+      await tester.ensureVisible(zone);
+      await tester.pumpAndSettle();
+      expect(zone, findsOneWidget);
+      expect(bloc.state.openNode?.choices.single.x, 0.25);
+    });
+
+    testWidgets('zone labels cap at 24 characters with a counter', (
+      tester,
+    ) async {
+      final bloc = await _pumpDraft(tester);
+
+      final zone = find.byKey(const ValueKey('zone-c1'));
+      await tester.ensureVisible(zone);
+      await tester.pumpAndSettle();
+      await tester.tap(zone);
+      await tester.pumpAndSettle();
+
+      final field = find.byKey(const ValueKey('zone-label-c1'));
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123');
+      await tester.pump();
+
+      // The hard cap truncates the edit; the counter reports 24/24.
+      expect(bloc.state.openNode?.choices.single.label.length, 24);
+      expect(find.text('24/24'), findsOneWidget);
+    });
+
+    testWidgets('deleting a zone removes its choice', (tester) async {
+      final bloc = await _pumpDraft(tester);
+
+      final zone = find.byKey(const ValueKey('zone-c1'));
+      await tester.ensureVisible(zone);
+      await tester.pumpAndSettle();
+      await tester.tap(zone);
+      await tester.pumpAndSettle();
+
+      final remove = find.byKey(const ValueKey('zone-delete-c1'));
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.openNode?.choices, isEmpty);
+      expect(find.byKey(const ValueKey('zone-c1')), findsNothing);
+    });
+
+    testWidgets('a picked target adds its zone', (tester) async {
+      final bloc = await _pumpDraft(tester);
+
+      // One choice so far: the picker offers the leaf as the second target.
+      final picker = find.byKey(const ValueKey('zone-target-node_1'));
+      await tester.ensureVisible(picker);
+      await tester.pumpAndSettle();
+      await tester.tap(picker);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leaf').last);
+      await tester.pumpAndSettle();
+
+      final choices = bloc.state.openNode?.choices ?? const [];
+      expect(choices, hasLength(2));
+      expect(choices.last.targetNodeId, 'node_2');
+      // Two choices is the publish max: the picker hides.
+      expect(find.byKey(const ValueKey('zone-target-node_1')), findsNothing);
+    });
+
+    testWidgets('the window stepper dispatches seconds', (tester) async {
+      final bloc = await _pumpDraft(tester);
+
+      final plus = find.byKey(const ValueKey('window-plus-node_1'));
+      await tester.ensureVisible(plus);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('window-value-node_1')), findsOneWidget);
+      expect(find.text('6s'), findsWidgets);
+
+      await tester.tap(plus);
+      await tester.pump();
+
+      expect(bloc.state.openNode?.windowSeconds, 7);
+      expect(find.text('7s'), findsWidgets);
+    });
+
+    testWidgets('the publish bar lists missing and disables the CTA', (
+      tester,
+    ) async {
+      await _pumpDraft(tester);
+
+      expect(find.byKey(const ValueKey('publish-bar')), findsOneWidget);
+      expect(find.textContaining('left to publish'), findsOneWidget);
+      final cta = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('publish-button')),
+      );
+      expect(cta.onPressed, isNull);
+    });
+
+    testWidgets('a ready bar reports readiness without publishing', (
+      tester,
+    ) async {
+      var reported = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PublishBar(
+              problems: const [],
+              onPublish: () => reported = true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ready to publish.'), findsOneWidget);
+      final cta = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('publish-button')),
+      );
+      expect(cta.onPressed, isNotNull);
+      await tester.tap(find.byKey(const ValueKey('publish-button')));
+      await tester.pumpAndSettle();
+      expect(reported, isTrue);
+    });
+
+    testWidgets('line approval opens the voice gate and generates', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+
+      // Unapproved line: the gate message shows and generation disables.
+      final gate = find.byKey(const ValueKey('gen-voice-node_1'));
+      await tester.ensureVisible(gate);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Approve the narrator line to generate voice.'),
+        findsOneWidget,
+      );
+      expect(tester.widget<OutlinedButton>(gate).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('line-node_1')),
+        'Go left',
+      );
+      await tester.pump();
+      final approve = find.byKey(const ValueKey('approve-line-node_1'));
+      await tester.ensureVisible(approve);
+      await tester.pumpAndSettle();
+      await tester.tap(approve);
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.openNode?.lineApproved, isTrue);
+      expect(tester.widget<OutlinedButton>(gate).onPressed, isNotNull);
+      await tester.tap(gate);
+      await tester.pumpAndSettle();
+
+      final sent = calls.singleWhere(
+        (call) => call.name == 'generateNodeVoice',
+      );
+      expect(sent.data['nodeId'], 'node_1');
+    });
+
+    testWidgets('approving the take clears the approval missing', (
+      tester,
+    ) async {
+      final bloc = await _pumpMediaDraft(tester, null, [
+        MapEntry('node_1', {
+          ..._mediaDocs().first.value,
+          'ttsText': 'Go left',
+          'lineApproved': true,
+          'ttsAudioUrl': 'https://cdn.example/v.m4a',
+          'ttsStatus': 'ready',
+          'ttsDurationSeconds': 2.5,
+          'ttsApproved': false,
+        }),
+        _mediaDocs()[1],
+      ]);
+
+      expect(bloc.state.openNode?.ttsApproved, isFalse);
+      final approve = find.byKey(const ValueKey('approve-voice-node_1'));
+      await tester.ensureVisible(approve);
+      await tester.pumpAndSettle();
+      await tester.tap(approve);
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.openNode?.ttsApproved, isTrue);
+    });
+
+    testWidgets('a voice preview plays and stops through the player', (
+      tester,
+    ) async {
+      final player = _FakePlayback();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VoicePreview(
+              nodeId: 'node_1',
+              audioUrl: 'https://cdn.example/v.m4a',
+              player: player,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(const ValueKey('voice-preview-node_1'));
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(player.played, 'https://cdn.example/v.m4a');
+      expect(find.text('Stop preview'), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(player.stops, 1);
+      expect(find.text('Listen'), findsOneWidget);
+    });
+
+    testWidgets('section saves persist zones and window', (tester) async {
+      final calls = <_Call>[];
+      await _pumpDraft(tester, calls);
+
+      final zones = find.byKey(const ValueKey('save-zones-node_1'));
+      await tester.ensureVisible(zones);
+      await tester.pumpAndSettle();
+      await tester.tap(zones);
+      await tester.pumpAndSettle();
+
+      final window = find.byKey(const ValueKey('save-window-node_1'));
+      await tester.ensureVisible(window);
+      await tester.pumpAndSettle();
+      await tester.tap(window);
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'saveNode'), hasLength(2));
+    });
   });
 }
 
@@ -367,6 +608,24 @@ class _Call {
 
   final String name;
   final Map<String, dynamic> data;
+}
+
+class _FakePlayback implements VoicePlayback {
+  String? played;
+  var stops = 0;
+
+  @override
+  Future<void> play(String url) async {
+    played = url;
+  }
+
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+
+  @override
+  void dispose() {}
 }
 
 Future<CreateBloc> _pumpDraft(WidgetTester tester, [List<_Call>? calls]) async {

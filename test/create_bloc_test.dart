@@ -1126,6 +1126,11 @@ void main() {
         contains('Node node_1 needs a title of 1-40 characters.'),
       );
       expect(missing, contains('Node node_1 needs a ready video.'));
+      expect(missing, contains('Node node_1 needs an approved end image.'));
+      expect(
+        missingForNode(node: node, isRoot: true),
+        contains('Node node_1 needs an approved start image.'),
+      );
       expect(missing, contains('Node node_1 needs one or two choices.'));
       expect(
         missing,
@@ -1133,6 +1138,7 @@ void main() {
       );
       expect(missing, contains('Node node_1 needs an approved narrator line.'));
       expect(missing, contains('Node node_1 needs a ready narrator voice.'));
+      expect(missing, contains('Node node_1 needs an approved narrator voice.'));
     });
 
     test('a complete node has nothing missing', () {
@@ -1184,6 +1190,337 @@ void main() {
       );
 
       expect(state.statusOf('node_1'), StatusPillState.ready);
+    });
+  });
+
+  group('CreateZones', () {
+    test('a zone move clamps to the 0-1 frame', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 1.4, y: -0.2));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final moved = bloc.state.nodes
+          .firstWhere((node) => node.nodeId == 'node_1')
+          .choices
+          .singleWhere((choice) => choice.choiceId == 'c1');
+      expect(moved.x, 1);
+      expect(moved.y, 0);
+    });
+
+    test('zone moves on unknown nodes and choices touch nothing', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      final before = bloc.state.nodes;
+
+      bloc
+        ..add(const ZoneMoved(nodeId: 'missing', choiceId: 'c1', x: 0.1, y: 0.1))
+        ..add(const ZoneMoved(nodeId: 'node_1', choiceId: 'missing', x: 0.1, y: 0.1));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(bloc.state.nodes, before);
+    });
+
+    test('adding a zone targets the picked node', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      // The seed doc carries one choice; clearing the way via removal
+      // keeps the max-two guard honest.
+      bloc.add(const ChoiceRemoved(nodeId: 'node_1', choiceId: 'c1'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceAdded(nodeId: 'node_1', targetNodeId: 'node_2'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final choices = bloc.state.nodes
+          .firstWhere((node) => node.nodeId == 'node_1')
+          .choices;
+      expect(choices, hasLength(1));
+      expect(choices.single.targetNodeId, 'node_2');
+      expect(choices.single.isDefault, isTrue);
+      expect(choices.single.x, 0.5);
+      expect(choices.single.y, 0.5);
+    });
+
+    test('adding a zone is guarded', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      final before = bloc.state.nodes;
+
+      bloc
+        ..add(const ChoiceAdded(nodeId: 'node_1', targetNodeId: '  '))
+        ..add(const ChoiceAdded(nodeId: 'missing', targetNodeId: 'node_2'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(bloc.state.nodes, before);
+    });
+
+    test('removing the default promotes the survivor', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(calls, nodes: [
+          MapEntry('node_1', {
+            ..._nodeDoc(),
+            'choices': [
+              {
+                'choiceId': 'c1',
+                'label': 'One',
+                'targetNodeId': 'node_2',
+                'isDefault': true,
+                'x': 0.2,
+                'y': 0.3,
+                'radius': 0.15,
+              },
+              {
+                'choiceId': 'c2',
+                'label': 'Two',
+                'targetNodeId': 'node_2',
+                'isDefault': false,
+                'x': 0.7,
+                'y': 0.3,
+                'radius': 0.15,
+              },
+            ],
+          }),
+          MapEntry('node_2', _nodeDoc()),
+        ]),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceRemoved(nodeId: 'node_1', choiceId: 'c1'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final choices = bloc.state.nodes
+          .firstWhere((node) => node.nodeId == 'node_1')
+          .choices;
+      expect(choices.map((choice) => choice.choiceId), ['c2']);
+      expect(choices.single.isDefault, isTrue);
+    });
+
+    test('window steps clamp to 3-15', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 99),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        bloc.state.nodes
+            .firstWhere((node) => node.nodeId == 'node_1')
+            .windowSeconds,
+        15,
+      );
+
+      bloc.add(
+        const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 0),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        bloc.state.nodes
+            .firstWhere((node) => node.nodeId == 'node_1')
+            .windowSeconds,
+        3,
+      );
+    });
+
+    test('zones and window persist through saveNode', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(calls),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc
+        ..add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 0.7, y: 0.2))
+        ..add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 9));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const NodeSaved());
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      final save = calls.lastWhere((call) => call.name == 'saveNode');
+      final sent = (save.data['node'] as Map).map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      expect(sent['windowSeconds'], 9);
+      final choices = (sent['choices'] as List).cast<Map>();
+      final moved = choices.singleWhere(
+        (choice) => choice['choiceId'] == 'c1',
+      );
+      expect(moved['x'], 0.7);
+      expect(moved['y'], 0.2);
+    });
+
+    test('publishProblems mirrors the story checklist', () {
+      const story = DraftStory(
+        storyId: 'story_1',
+        authorId: 'uid_1',
+        title: 'Temple',
+        rootNodeId: 'node_1',
+      );
+      final complete = _completeNode().copy(title: 'Done');
+
+      // A lone complete node: reachable, but no ending yet.
+      var problems = CreateState(
+        story: story,
+        nodes: [complete],
+        openNodeId: 'node_1',
+      ).publishProblems();
+      expect(problems, contains('At least one ending is required.'));
+      expect(problems.where((p) => p.startsWith('Node node_1')), isEmpty);
+
+      // Complete story: root decision plus an ending, all checks green.
+      const ending = DraftNode(
+        nodeId: 'node_9',
+        title: 'Dawn',
+        isEnding: true,
+        endingName: 'Dawn',
+        endingType: 'abierto',
+        videoUrl: 'https://example.com/end.mp4',
+        videoStatus: 'ready',
+        endImageApproved: true,
+      );
+      problems = CreateState(
+        story: story,
+        nodes: [
+          complete.copy(
+            choices: const [
+              DraftChoice(
+                choiceId: 'c1',
+                label: 'Enter',
+                targetNodeId: 'node_9',
+                isDefault: true,
+              ),
+            ],
+          ),
+          ending,
+        ],
+        openNodeId: 'node_1',
+      ).publishProblems();
+      expect(problems, isEmpty);
+
+      // An orphan shows its reachability problem.
+      problems = const CreateState(
+        story: story,
+        nodes: [DraftNode(nodeId: 'node_9')],
+        openNodeId: 'node_9',
+      ).publishProblems();
+      expect(
+        problems,
+        contains('Node node_9 is not reachable from the root.'),
+      );
+    });
+
+    test('line and take approvals write bloc state', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', lineApproved: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        bloc.state.nodes
+            .firstWhere((node) => node.nodeId == 'node_1')
+            .lineApproved,
+        isTrue,
+      );
+
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsApproved: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        bloc.state.nodes
+            .firstWhere((node) => node.nodeId == 'node_1')
+            .ttsApproved,
+        isTrue,
+      );
+    });
+
+    test('voice generate dispatches and reloads', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(calls),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VoiceGenerateRequested('node_1'));
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.imaging,
+      );
+      expect(bloc.state.jobNodeId, 'node_1');
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      final sent = calls.singleWhere(
+        (call) => call.name == 'generateNodeVoice',
+      );
+      expect(sent.data['nodeId'], 'node_1');
+    });
+
+    test('voice generate on unknown nodes touches nothing', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(calls),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VoiceGenerateRequested('missing'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(calls, isEmpty);
+      expect(bloc.state.job, CreateJob.none);
+    });
+
+    test('section saves persist through saveNode', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(calls),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const NodeFieldChanged(nodeId: 'node_1', lineApproved: true),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ZonesSaved());
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+      bloc.add(const WindowSaved());
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      final saves = calls.where((call) => call.name == 'saveNode').toList();
+      expect(saves, hasLength(2));
+      for (final save in saves) {
+        final sent = (save.data['node'] as Map).map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+        expect(sent['nodeId'], 'node_1');
+        expect(sent['lineApproved'], isTrue);
+      }
     });
   });
 
@@ -1400,11 +1737,16 @@ DraftNode _completeNode() {
     videoUrl: 'https://example.com/video.mp4',
     videoStatus: 'ready',
     windowSeconds: 6,
+    startImageSourceUrl: 'https://example.com/s.png',
+    startImageApproved: true,
+    endImageSourceUrl: 'https://example.com/e.png',
+    endImageApproved: true,
     ttsText: 'What should they do?',
     lineApproved: true,
     ttsAudioUrl: 'https://example.com/voice.m4a',
     ttsStatus: 'ready',
     ttsDurationSeconds: 4.1,
+    ttsApproved: true,
     choices: [
       DraftChoice(
         choiceId: 'c1',
