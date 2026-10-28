@@ -532,3 +532,159 @@ test("rewindRun rejects a foreign run", async () => {
     "not-found"
   );
 });
+
+/**
+ * @param {MemDb} db Backing store.
+ * @param {string} runId Run id.
+ * @return {Promise<Fields | undefined>} A detached copy of the run doc.
+ */
+const runCopy = async (
+  db: MemDb,
+  runId: string
+): Promise<Fields | undefined> => {
+  const snap = await db.doc(`users/u1/runs/${runId}`).get();
+  const data = snap.data();
+  return data === undefined ?
+    undefined :
+    JSON.parse(JSON.stringify(data)) as Fields;
+};
+
+/**
+ * @param {MemDb} db Backing store.
+ * @return {Promise<Fields | undefined>} A detached copy of the story state.
+ */
+const stateCopy = async (db: MemDb): Promise<Fields | undefined> => {
+  const snap = await db.doc("users/u1/storyState/story_a").get();
+  const data = snap.data();
+  return data === undefined ?
+    undefined :
+    JSON.parse(JSON.stringify(data)) as Fields;
+};
+
+/**
+ * Drives a run to the ending through the ridge, then stamps a profile-level
+ * `endings` unlock on the story state (reglas-de-juego: endings outlive runs).
+ * @param {MemDb} db Backing store.
+ * @return {Promise<string>} The ended run id.
+ */
+const seedEndedRun = async (db: MemDb): Promise<string> => {
+  await seed(db);
+  const runId = await startAtRoot(db);
+  await commitChoiceWith(db, "u1", {
+    runId,
+    fromNodeId: "node_001",
+    choiceId: "choice_ridge",
+    requestId: "req_1",
+  });
+  await commitChoiceWith(db, "u1", {
+    runId,
+    fromNodeId: "node_003",
+    choiceId: "choice_on",
+    requestId: "req_2",
+  });
+  const run = await runCopy(db, runId);
+  assert.equal(run?.status, "ended");
+  await db.doc("users/u1/storyState/story_a").set(
+    {endings: ["node_002"]},
+    {merge: true}
+  );
+  return runId;
+};
+
+test("rewindRun never deletes endings, visited, or history", async () => {
+  const db = new MemDb();
+  const runId = await seedEndedRun(db);
+  const beforeRun = await runCopy(db, runId);
+  const beforeState = await stateCopy(db);
+  const beforeHistory = JSON.parse(
+    JSON.stringify(beforeRun?.choices ?? [])
+  ) as unknown[];
+  assert.equal(beforeHistory.length, 2);
+  await rewindRunWith(db, "u1", {runId});
+  const afterRun = await runCopy(db, runId);
+  const afterState = await stateCopy(db);
+  // Ended flips back to active, but the trail is append-only.
+  assert.equal(afterRun?.status, "active");
+  assert.deepEqual(afterRun?.choices, beforeHistory);
+  for (const entry of beforeHistory) {
+    assert.ok((afterRun?.choices as unknown[]).some((live) =>
+      JSON.stringify(live) === JSON.stringify(entry)));
+  }
+  // Profile-level unlocks and the visited set survive the rewind.
+  assert.deepEqual(afterState?.endings, beforeState?.endings);
+  assert.deepEqual(afterState?.endings, ["node_002"]);
+  const beforeVisited = new Set(beforeState?.visitedNodeIds as string[]);
+  const afterVisited = new Set(afterState?.visitedNodeIds as string[]);
+  for (const id of beforeVisited) assert.ok(afterVisited.has(id));
+  assert.equal(afterVisited.size, beforeVisited.size);
+});
+
+test("playApproach appends zero history and leaves state alone", async () => {
+  const db = new MemDb();
+  const runId = await seedEndedRun(db);
+  const beforeRun = JSON.stringify(await runCopy(db, runId));
+  const beforeState = JSON.stringify(await stateCopy(db));
+  const playback = await playApproachWith(db, "u1", {
+    runId,
+    nodeId: "node_002",
+  });
+  assert.equal(playback.node.nodeId, "node_003");
+  assert.equal(JSON.stringify(await runCopy(db, runId)), beforeRun);
+  assert.equal(JSON.stringify(await stateCopy(db)), beforeState);
+});
+
+test("restart preserves endings and visited with a clean history", async () => {
+  const db = new MemDb();
+  const firstId = await seedEndedRun(db);
+  const firstBefore = await runCopy(db, firstId);
+  const stateBefore = await stateCopy(db);
+  const visitedBefore = new Set(stateBefore?.visitedNodeIds as string[]);
+  const second = await startRunWith(db, "u1", {
+    storyId: "story_a",
+    restart: true,
+  });
+  assert.notEqual(second.runId, firstId);
+  // Old run untouched: full history intact, still ended.
+  assert.deepEqual(await runCopy(db, firstId), firstBefore);
+  // Fresh run starts clean at the root.
+  const fresh = await runCopy(db, second.runId);
+  assert.equal(fresh?.currentNodeId, "node_001");
+  assert.deepEqual(fresh?.choices, []);
+  // Profile unlocks outlive runs; visited only grows.
+  const stateAfter = await stateCopy(db);
+  assert.deepEqual(stateAfter?.endings, ["node_002"]);
+  const visitedAfter = new Set(stateAfter?.visitedNodeIds as string[]);
+  for (const id of visitedBefore) assert.ok(visitedAfter.has(id));
+  assert.ok(visitedAfter.has("node_001"));
+});
+
+test("rewind, approach, and restart leave other runs alone", async () => {
+  const db = new MemDb();
+  const runA = await seedEndedRun(db);
+  const second = await startRunWith(db, "u1", {
+    storyId: "story_a",
+    restart: true,
+  });
+  const runB = second.runId;
+  await commitChoiceWith(db, "u1", {
+    runId: runB,
+    fromNodeId: "node_001",
+    choiceId: "choice_temple",
+    requestId: "req_b1",
+  });
+  const otherBefore = JSON.stringify(await runCopy(db, runB));
+  const stateBefore = JSON.stringify(await stateCopy(db));
+  // Act on run A only.
+  await rewindRunWith(db, "u1", {runId: runA});
+  await playApproachWith(db, "u1", {runId: runA, nodeId: "node_003"});
+  assert.equal(JSON.stringify(await runCopy(db, runB)), otherBefore);
+  // Act on run B only; run A's append-only history must not shrink.
+  const runABefore = await runCopy(db, runA);
+  const historyBefore = (runABefore?.choices as unknown[]).length;
+  await rewindRunWith(db, "u1", {runId: runB});
+  const runAAfter = await runCopy(db, runA);
+  assert.deepEqual(runAAfter?.choices, runABefore?.choices);
+  assert.equal((runAAfter?.choices as unknown[]).length, historyBefore);
+  assert.deepEqual((await stateCopy(db))?.endings,
+    (JSON.parse(stateBefore) as Fields)?.endings);
+});
