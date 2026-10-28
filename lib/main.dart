@@ -1,3 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -9,10 +12,19 @@ import 'package:ramifica/data/repositories/pending_story_binding.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/firebase_options.dart';
 
+/// Local demo: `flutter run --dart-define=EMULATOR=true -d chrome`.
+const emulator = bool.fromEnvironment('EMULATOR');
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
+  if (emulator) {
+    await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+    FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+    FirebaseFunctions.instanceFor(region: functionsRegion)
+        .useFunctionsEmulator('localhost', 5001);
+  }
   await configureFirebaseAuth();
   runApp(
     RamificaApp(

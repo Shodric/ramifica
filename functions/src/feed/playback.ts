@@ -76,7 +76,9 @@ export async function fetchPlayback(
       videoUrl: reqString(node.videoUrl, "node video"),
       durationSeconds: reqNumber(node.durationSeconds, "node duration"),
       pauseAtSeconds: reqNumber(node.pauseAtSeconds, "node pause"),
-      windowSeconds: reqInt(node.windowSeconds, "node window"),
+      windowSeconds: node.isEnding === true ?
+        windowOrDefault(node.windowSeconds) :
+        reqInt(node.windowSeconds, "node window"),
       ttsText: optString(node.ttsText),
       ttsAudioUrl: optString(node.ttsAudioUrl),
       ttsDurationSeconds: optNumber(node.ttsDurationSeconds),
@@ -155,6 +157,15 @@ const reqInt = (value: unknown, field: string): number => {
     throw new HttpsError("invalid-argument", `Node is missing its ${field}.`);
   }
   return value as number;
+};
+
+/**
+ * Endings carry no window; the client contract still needs the number.
+ * @param {unknown} value Raw window.
+ * @return {number} The window, or the 6 s default.
+ */
+const windowOrDefault = (value: unknown): number => {
+  return Number.isInteger(value) ? (value as number) : 6;
 };
 
 const optString = (value: unknown): string | null => {

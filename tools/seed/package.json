@@ -1,0 +1,26 @@
+{
+  "name": "seed",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint --ext .js,.ts src/",
+    "seed": "npm run build && node lib/seed.js",
+    "verify": "npm run build && node lib/verify.js"
+  },
+  "engines": {
+    "node": "18"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "eslint": "^8.57.1",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-import": "^2.32.0",
+    "typescript": "4.9"
+  }
+}

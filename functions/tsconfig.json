@@ -5,6 +5,7 @@
     "noUnusedLocals": true,
     "outDir": "lib",
     "sourceMap": true,
+    "declaration": true,
     "strict": true,
     "esModuleInterop": true,
     "types": ["node"],

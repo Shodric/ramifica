@@ -1,6 +1,7 @@
 # Compiled JavaScript files
 lib/**/*.js
 lib/**/*.js.map
+lib/**/*.d.ts
 
 # Shell script copied by the build into lib/
 lib/**/*.sh

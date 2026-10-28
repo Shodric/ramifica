@@ -94,6 +94,10 @@ export const commitChoiceWith = async (
       throw new HttpsError("invalid-argument", "Choice points nowhere.");
     }
     const ending = docData(toSnap, "Target node").isEnding === true;
+    const stateRef = db.doc(`users/${uid}/storyState/${storyId}`);
+    const stateSnap = await tx.get(stateRef);
+    const visited: unknown =
+      stateSnap.exists ? stateSnap.data()?.visitedNodeIds : null;
     const now = isoNow();
     const history: unknown[] = Array.isArray(run.choices) ? run.choices : [];
     await tx.update(runRef, {
@@ -118,10 +122,6 @@ export const commitChoiceWith = async (
     const seen = counts[choiceId];
     counts[choiceId] = (typeof seen === "number" ? seen : 0) + 1;
     await tx.update(fromRef, {choiceCounts: counts});
-    const stateRef = db.doc(`users/${uid}/storyState/${storyId}`);
-    const stateSnap = await tx.get(stateRef);
-    const visited: unknown =
-      stateSnap.exists ? stateSnap.data()?.visitedNodeIds : null;
     await tx.set(
       stateRef,
       {

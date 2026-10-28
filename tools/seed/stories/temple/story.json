@@ -1,0 +1,88 @@
+{
+  "storyId": "story_temple",
+  "authorId": "uid_ramifica",
+  "title": "The Secret of the Temple",
+  "synopsis": "An expedition enters ancient ruins. Each clip ends in a decision.",
+  "locale": "en-US",
+  "tags": ["mystery"],
+  "featured": true,
+  "rootNodeId": "node_001",
+  "coverPrompt": "Vertical cinematic still, ancient stone temple gate at dawn in the jungle, mist, no text, no people.",
+  "nodes": [
+    {
+      "nodeId": "node_001",
+      "title": "The Temple Gate",
+      "visibility": "visible",
+      "isEnding": false,
+      "ttsText": "What do you think Jeff should do? Enter the temple, or climb the ridge?",
+      "voiceId": "Kore",
+      "windowSeconds": 6,
+      "startImagePrompt": "Vertical cinematic still, mossy stone temple gate at dawn, jungle mist, no text, no people.",
+      "endImagePrompt": "Vertical cinematic still, dark temple doorway with stairs going down, torch light, no text, no people.",
+      "choices": [
+        {
+          "choiceId": "choice_temple",
+          "label": "Enter the temple",
+          "targetNodeId": "node_002",
+          "isDefault": true,
+          "x": 0.25,
+          "y": 0.65,
+          "radius": 0.15
+        },
+        {
+          "choiceId": "choice_ridge",
+          "label": "Climb the ridge",
+          "targetNodeId": "node_003",
+          "isDefault": false,
+          "x": 0.75,
+          "y": 0.7,
+          "radius": 0.15
+        }
+      ]
+    },
+    {
+      "nodeId": "node_002",
+      "title": "The Guardian",
+      "visibility": "visible",
+      "isEnding": true,
+      "endingName": "Guardian",
+      "endingType": "abierto",
+      "ttsText": "Jeff crosses the gate. The temple was waiting for him.",
+      "voiceId": "Kore",
+      "endImagePrompt": "Vertical cinematic still, giant stone guardian statue inside a dark temple, single torch, no text, no people.",
+      "choices": []
+    },
+    {
+      "nodeId": "node_003",
+      "title": "The Ridge",
+      "visibility": "visible",
+      "isEnding": false,
+      "ttsText": "What do you think Jeff should do? Keep climbing, or head back to the temple?",
+      "voiceId": "Kore",
+      "windowSeconds": 6,
+      "endImagePrompt": "Vertical cinematic still, grassy ridge above jungle ruins at dusk, winding path, no text, no people.",
+      "choices": [
+        {
+          "choiceId": "choice_summit",
+          "label": "Keep climbing",
+          "targetNodeId": "node_004",
+          "isDefault": true,
+          "x": 0.5,
+          "y": 0.4,
+          "radius": 0.15
+        }
+      ]
+    },
+    {
+      "nodeId": "node_004",
+      "title": "The Fall",
+      "visibility": "visible",
+      "isEnding": true,
+      "endingName": "The Fall",
+      "endingType": "tragico",
+      "ttsText": "",
+      "endImagePrompt": "Vertical cinematic still, broken rope bridge over a jungle abyss at night, no text, no people.",
+      "choices": []
+    }
+  ]
+}
