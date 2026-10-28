@@ -6,6 +6,8 @@
     "outDir": "lib",
     "sourceMap": true,
     "strict": true,
+    "esModuleInterop": true,
+    "types": ["node"],
     "target": "es2017"
   },
   "compileOnSave": true,
