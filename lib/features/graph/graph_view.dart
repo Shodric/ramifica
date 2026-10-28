@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
+import 'package:ramifica/app/shell_bloc.dart';
+import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
@@ -155,6 +157,12 @@ class _GraphViewState extends State<GraphView> {
 
   void _continue(BuildContext context) {
     context.read<GraphBloc>().add(const ContinueRequested());
+    try {
+      // Keeps the tab bar on Feed while the route below returns to it.
+      context.read<ShellBloc>().add(const TabSelected(.feed));
+    } on Exception {
+      // Widget tests mount GraphView without the shell.
+    }
     final story = widget.storyId.trim();
     try {
       AppNavigation.read(context).go(

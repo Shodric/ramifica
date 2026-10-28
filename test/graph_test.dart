@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -147,6 +149,102 @@ void main() {
       expect(bloc.state.selectedId, 'node_001');
     });
 
+    test('continue sends no functions call', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(repository: _stubRepo(calls));
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const NodeSelected('node_002'));
+      await bloc.stream.firstWhere((state) => state.selectedId == 'node_002');
+      bloc.add(const ContinueRequested());
+      await bloc.stream.firstWhere((state) => state.selectedId == 'node_001');
+
+      // Back on the current node without touching the network: the run
+      // never moves, so Feed keeps playing it with no StoryOpened reload.
+      expect(calls.map((call) => call.name), ['graphStubs']);
+      expect(bloc.state.currentNodeId, 'node_001');
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('approach touches nothing but playApproach', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'graphStubs') return _stubs();
+          return _playback(nodeId: 'node_001', title: 'The temple door');
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const NodeSelected('node_003'));
+      await bloc.stream.firstWhere((state) => state.selectedId == 'node_003');
+      bloc.add(const ApproachRequested('node_003'));
+      await bloc.stream.firstWhere(
+        (state) => !state.acting && state.selectedId == 'node_001',
+      );
+
+      // One approach playback; no stub reload, no rewind, no history work.
+      expect(calls.map((call) => call.name), ['graphStubs', 'playApproach']);
+      expect(bloc.state.currentNodeId, 'node_001');
+      expect(bloc.state.stubs, hasLength(3));
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('a second approach while acting is dropped', () async {
+      final calls = <_Call>[];
+      final gate = Completer<Map<String, dynamic>>();
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'graphStubs') return _stubs();
+          return gate.future;
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const ApproachRequested('node_003'));
+      bloc.add(const ApproachRequested('node_003'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      gate.complete(_playback(nodeId: 'node_001', title: 'The temple door'));
+      await bloc.stream.firstWhere(
+        (state) => !state.acting && state.selectedId == 'node_001',
+      );
+
+      expect(
+        calls.where((call) => call.name == 'playApproach'),
+        hasLength(1),
+      );
+    });
+
+    test('a root rewind warns and leaves the run untouched', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'rewindRun') throw const AppFailure(.invalid);
+          return _stubs();
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const RewindRequested());
+      await bloc.stream.firstWhere(
+        (state) => !state.acting && state.failure != null,
+      );
+
+      expect(bloc.state.failure, 'That action is not valid');
+      expect(bloc.state.currentNodeId, 'node_001');
+      expect(bloc.state.selectedId, 'node_001');
+      expect(bloc.state.stubs, hasLength(3));
+      expect(calls.map((call) => call.name), ['graphStubs', 'rewindRun']);
+    });
+
     test('approach selects the visited parent', () async {
       final calls = <_Call>[];
       final bloc = GraphBloc(
@@ -287,6 +385,54 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(calls.map((call) => call.name), contains('rewindRun'));
+      expect(find.text('The temple door'), findsOneWidget);
+    });
+
+    testWidgets('continue needs no feed and sends no call', (tester) async {
+      final calls = <_Call>[];
+      await _pumpGraph(tester, calls: calls);
+      await tester.tap(find.text('Enter the room'));
+      await tester.pumpAndSettle();
+      expect(find.text('The inner room'), findsOneWidget);
+
+      // No FeedBloc above and no router or shell: a StoryOpened dispatch
+      // or an unguarded navigation read would throw here.
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(calls.map((call) => call.name), ['graphStubs']);
+      expect(find.text('The temple door'), findsOneWidget);
+    });
+
+    testWidgets('approach sends only playApproach', (tester) async {
+      final calls = <_Call>[];
+      await _pumpGraph(tester, calls: calls);
+      await tester.tap(find.text('Climb the ridge'));
+      await tester.pumpAndSettle();
+
+      expect(calls.map((call) => call.name), ['graphStubs', 'playApproach']);
+      expect(find.text('The temple door'), findsOneWidget);
+    });
+
+    testWidgets('a root rewind warns in the sheet', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GraphView(
+            storyId: 'story_temple',
+            runId: 'run_1',
+            repository: _graphs(<_Call>[], (name, data) async {
+              if (name == 'rewindRun') throw const AppFailure(.invalid);
+              return _stubs();
+            }),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Rewind'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('That action is not valid'), findsOneWidget);
       expect(find.text('The temple door'), findsOneWidget);
     });
 
