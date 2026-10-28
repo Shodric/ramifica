@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
@@ -7,6 +8,7 @@ import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/core/web_audio.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/playback.dart';
+import 'package:ramifica/data/repositories/catalog_repository.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
@@ -15,16 +17,20 @@ import 'package:uuid/uuid.dart';
 class FeedBloc extends Bloc<FeedEvent, FeedState> {
   FeedBloc({
     required this.repository,
+    this.catalog,
     Prefetcher? prefetcher,
     Narrator? narrator,
     CueClock? clock,
     String Function()? newRequestId,
+    Random? random,
   }) : prefetcher = prefetcher ?? Prefetcher(),
        narrator = narrator ?? openNarrator(),
        _clock = clock ?? TimerCueClock(),
        _newRequestId = newRequestId ?? _uuidRequestId,
+       _random = random ?? Random(),
        super(const FeedState()) {
     on<StoryOpened>(_onOpened, transformer: restartable());
+    on<StorySwiped>(_onSwiped, transformer: restartable());
     on<PauseReached>(_onPause);
     on<MuteToggled>(_onMute);
     on<VoiceFinished>(_onVoice);
@@ -37,21 +43,63 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }
 
   final RunRepository repository;
+
+  /// Published ids for the swipe draw. Null in tests that never swipe.
+  final CatalogRepository? catalog;
   final Prefetcher prefetcher;
   final Narrator narrator;
   final CueClock _clock;
   final String Function() _newRequestId;
+  final Random _random;
   var _windowSpent = false;
   var _holdSealed = false;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
+    final raw = event.storyId?.trim();
+    await _loadStory(
+      storyId: raw == null || raw.isEmpty ? null : raw,
+      emit: emit,
+    );
+  }
+
+  /// Draws another published story at random, excluding the current one,
+  /// and opens it with the same resume rule. Only from `playing` or with
+  /// the card visible; without another story, or without a catalog, it is
+  /// ignored. Best-effort: a catalog failure keeps the current clip.
+  Future<void> _onSwiped(StorySwiped event, Emitter<FeedState> emit) async {
+    final current = state;
+    final cardVisible =
+        current.phase == .ending && !current.endingSpeaking;
+    if (current.phase != .playing && !cardVisible) return;
+    final catalog = this.catalog;
+    final storyId = current.storyId;
+    if (catalog == null || storyId == null || storyId.isEmpty) return;
+    late final List<String> ids;
+    try {
+      ids = await catalog.publishedStoryIds();
+    } on AppFailure {
+      return;
+    }
+    final seen = <String>{};
+    final others = <String>[
+      for (final id in ids)
+        if (id.trim().isNotEmpty && id != storyId && seen.add(id)) id,
+    ];
+    if (others.isEmpty || emit.isDone) return;
+    await _loadStory(storyId: others[_random.nextInt(others.length)], emit: emit);
+  }
+
+  /// Opens [storyId] (or lets the server pick when null) and parks on an
+  /// ending or plays otherwise. Shared by [StoryOpened] and [StorySwiped].
+  Future<void> _loadStory({
+    required String? storyId,
+    required Emitter<FeedState> emit,
+  }) async {
     final muted = state.muted;
     final autoMuted = state.autoMuted;
     _windowSpent = false;
     _holdSealed = false;
     _silence();
-    final raw = event.storyId?.trim();
-    final storyId = raw == null || raw.isEmpty ? null : raw;
     emit(FeedState(phase: .loading, storyId: storyId));
     try {
       final started = await repository.startRun(storyId: storyId);

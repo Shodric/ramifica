@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
@@ -45,9 +47,29 @@ class _FeedViewState extends State<FeedView> {
         ),
       );
     }
-    return BlocBuilder<FeedBloc, FeedState>(
+    return BlocListener<FeedBloc, FeedState>(
       bloc: bloc,
-      builder: (context, state) {
+      // A swipe changes the open story. Keep the URL deep-linkable; the
+      // shell picks the new id up from the route (same-story guard skips
+      // any reload). First load and same-story restarts stay silent.
+      listenWhen: (previous, current) =>
+          previous.playback != null &&
+          current.playback != null &&
+          previous.playback!.story.storyId !=
+              current.playback!.story.storyId,
+      listener: (context, state) {
+        final id = state.playback!.story.storyId;
+        try {
+          AppNavigation.read(
+            context,
+          ).go(AppRoutes.storyPath(Uri.encodeComponent(id)));
+        } on FlutterError {
+          // Widget tests mount FeedView without the router.
+        }
+      },
+      child: BlocBuilder<FeedBloc, FeedState>(
+        bloc: bloc,
+        builder: (context, state) {
         final playback = state.playback;
         final showClip =
             playback != null &&
@@ -84,9 +106,19 @@ class _FeedViewState extends State<FeedView> {
                     hasHold = true;
                   }
                 }
-                return Stack(
-                  fit: .expand,
-                  children: [
+                return GestureDetector(
+                  // A hold never moves, so a vertical drag is never a hold.
+                  // The bloc still gates: speaking, window, holding, and
+                  // committing ignore the swipe. Threshold tuning belongs
+                  // to #23 (custom swipe); this only routes the gesture.
+                  onVerticalDragEnd: (details) {
+                    _pointer = null;
+                    if ((details.primaryVelocity ?? 0).abs() < 200) return;
+                    bloc.add(const StorySwiped());
+                  },
+                  child: Stack(
+                    fit: .expand,
+                    children: [
                     if (showClip)
                       NodeVideo(
                         key: ValueKey(playback.node.videoUrl),
@@ -214,13 +246,15 @@ class _FeedViewState extends State<FeedView> {
                               bloc.add(const OtherPathRequested()),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 );
               },
             ),
           ),
         );
       },
+      ),
     );
   }
 }

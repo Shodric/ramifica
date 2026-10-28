@@ -41,6 +41,13 @@ final class HoldCompleted extends FeedEvent {
   const HoldCompleted();
 }
 
+/// A vertical swipe. Draws another published story at random and opens it
+/// with the same resume rule. Ignored unless playing or the ending card
+/// is visible, and when there is no other story.
+final class StorySwiped extends FeedEvent {
+  const StorySwiped();
+}
+
 /// `windowSeconds` ran out. Starts the default portal when nobody is holding.
 final class WindowElapsed extends FeedEvent {
   const WindowElapsed();
