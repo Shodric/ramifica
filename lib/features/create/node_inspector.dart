@@ -4,6 +4,7 @@ import 'package:ramifica/core/widgets/glass_panel.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/frame_compare.dart';
+
 /// Inspector for the open draft node: manual editing fields, the
 /// per-node [StatusPill], and what is missing for publish.
 ///
@@ -33,6 +34,8 @@ class NodeInspector extends StatefulWidget {
     this.onImageApprovalChanged,
     this.onImageGenerate,
     this.onVideoGenerate,
+    this.onUploadVideo,
+    this.uploadProgress,
   });
 
   final DraftNode node;
@@ -72,6 +75,12 @@ class NodeInspector extends StatefulWidget {
 
   final VoidCallback? onVideoGenerate;
 
+  /// Upload tap for a picked mp4/mov. Null when no picker is wired, in
+  /// which case the upload button hides (picking is view-side injected).
+  final VoidCallback? onUploadVideo;
+
+  /// Upload progress 0..1 for this node, or null when not uploading.
+  final double? uploadProgress;
   @override
   State<NodeInspector> createState() => _NodeInspectorState();
 }
@@ -251,10 +260,53 @@ class _NodeInspectorState extends State<NodeInspector> {
                 ? null
                 : widget.onVideoGenerate,
             child: Text(
-              node.videoUrl == null ? 'Generate video' : 'Regenerate video',
+              node.videoUrl == null ? 'Generate video' : 'Another take',
             ),
           ),
-          const SizedBox(height: 12),
+          if (widget.onUploadVideo != null) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: ValueKey('upload-video-${node.nodeId}'),
+              onPressed: widget.busy || widget.uploadProgress != null
+                  ? null
+                  : widget.onUploadVideo,
+              child: const Text('Upload video'),
+            ),
+          ],
+          if (widget.uploadProgress != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: LinearProgressIndicator(
+                    value: widget.uploadProgress!.clamp(0, 1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
+                  style: RamificaText.meta,
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          const Text('Voice', style: RamificaText.label),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _voiceStatusPill(node),
+              if (node.ttsAudioUrl == null) ...[
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'No narrator voice yet.',
+                    style: RamificaText.meta,
+                  ),
+                ),
+              ],
+            ],
+          ),
           Row(
             children: [
               Expanded(
@@ -337,7 +389,7 @@ class _NodeInspectorState extends State<NodeInspector> {
                 onPressed: widget.busy
                     ? null
                     : () => widget.onImageGenerate?.call(which),
-                child: const Text('Generate'),
+                child: Text(hasImage ? 'Another take' : 'Generate'),
               ),
             ],
           ),
@@ -350,6 +402,20 @@ class _NodeInspectorState extends State<NodeInspector> {
   /// failed, idle otherwise (including gated and desynced idles).
   StatusPill _videoStatusPill(DraftNode node) {
     final status = switch (node.videoStatus) {
+      'ready' => StatusPillState.ready,
+      'pending' => StatusPillState.running,
+      'failed' => StatusPillState.failed,
+      _ => StatusPillState.idle,
+    };
+    return StatusPill(status: status);
+  }
+
+  /// Voice pill from the server [ttsStatus]: ready / pending / failed,
+  /// idle otherwise. Display only — there is no voice-take callable yet
+  /// (no `generateNodeVoice` on the backend), so the section shows status
+  /// and never dispatches.
+  StatusPill _voiceStatusPill(DraftNode node) {
+    final status = switch (node.ttsStatus) {
       'ready' => StatusPillState.ready,
       'pending' => StatusPillState.running,
       'failed' => StatusPillState.failed,

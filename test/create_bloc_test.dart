@@ -5,6 +5,8 @@ import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/draft_story.dart';
+import 'package:ramifica/data/models/user.dart';
+import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
@@ -82,10 +84,7 @@ void main() {
       );
 
       expect(calls.single.name, 'generateNodeText');
-      expect(calls.single.data, {
-        'storyId': 'story_1',
-        'nodeId': 'node_1',
-      });
+      expect(calls.single.data, {'storyId': 'story_1', 'nodeId': 'node_1'});
       expect(proposal.title, 'Spark title');
       expect(proposal.ttsText, startsWith('What should'));
       expect(proposal.choiceLabels, ['Enter', 'Climb']);
@@ -101,7 +100,10 @@ void main() {
         callFunction: (name, data) async => {
           'title': null,
           'ttsText': 'A line',
-          'choices': ['Run', {'label': 'Hide'}],
+          'choices': [
+            'Run',
+            {'label': 'Hide'},
+          ],
           'endingName': null,
         },
       );
@@ -200,9 +202,7 @@ void main() {
       calls.clear();
 
       bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
-      await bloc.stream.firstWhere(
-        (state) => state.openNode?.title == 'Typed',
-      );
+      await bloc.stream.firstWhere((state) => state.openNode?.title == 'Typed');
       expect(calls, isEmpty);
 
       bloc.add(const NodeSaved());
@@ -224,9 +224,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
       bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
-      await bloc.stream.firstWhere(
-        (state) => state.openNode?.title == 'Typed',
-      );
+      await bloc.stream.firstWhere((state) => state.openNode?.title == 'Typed');
 
       bloc.add(const TextGenerateRequested());
       final filled = await bloc.stream.firstWhere(
@@ -247,9 +245,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
       bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
-      await bloc.stream.firstWhere(
-        (state) => state.openNode?.title == 'Typed',
-      );
+      await bloc.stream.firstWhere((state) => state.openNode?.title == 'Typed');
 
       bloc.add(const TextGenerateRequested(regenerate: true));
       final filled = await bloc.stream.firstWhere(
@@ -268,8 +264,7 @@ void main() {
               throw const AppFailure(.failed),
           fetchStoryDoc: (_) async => _storyDoc(),
           fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
-          callFunction: (name, data) async =>
-              throw const AppFailure(.offline),
+          callFunction: (name, data) async => throw const AppFailure(.offline),
         ),
       );
       addTearDown(bloc.close);
@@ -359,9 +354,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
       calls.clear();
 
-      bloc.add(
-        const ImageGenerateRequested(nodeId: 'node_1', which: 'end'),
-      );
+      bloc.add(const ImageGenerateRequested(nodeId: 'node_1', which: 'end'));
       await bloc.stream.firstWhere(
         (state) => state.job == CreateJob.none && calls.isNotEmpty,
       );
@@ -390,18 +383,12 @@ void main() {
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(
-        const ImageGenerateRequested(nodeId: 'node_1', which: 'end'),
-      );
-      await bloc.stream.firstWhere(
-        (state) => state.job == CreateJob.imaging,
-      );
+      bloc.add(const ImageGenerateRequested(nodeId: 'node_1', which: 'end'));
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.imaging);
       expect(bloc.state.statusOf('node_1'), StatusPillState.running);
 
       gate.complete(<String, dynamic>{});
-      await bloc.stream.firstWhere(
-        (state) => state.job == CreateJob.none,
-      );
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
     });
 
     test('image approval sends the flag and clears the job', () async {
@@ -436,8 +423,7 @@ void main() {
               throw const AppFailure(.failed),
           fetchStoryDoc: (_) async => _storyDoc(),
           fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
-          callFunction: (name, data) async =>
-              throw const AppFailure(.offline),
+          callFunction: (name, data) async => throw const AppFailure(.offline),
         ),
       );
       addTearDown(bloc.close);
@@ -460,9 +446,7 @@ void main() {
       calls.clear();
 
       bloc
-        ..add(
-          const ImageGenerateRequested(nodeId: 'missing', which: 'end'),
-        )
+        ..add(const ImageGenerateRequested(nodeId: 'missing', which: 'end'))
         ..add(
           const ImageApprovalChanged(
             nodeId: 'missing',
@@ -594,13 +578,553 @@ void main() {
     });
   });
 
+  group('CreateUpload', () {
+    test('validateVideoUpload phrases rejections', () {
+      expect(
+        validateVideoUpload(contentType: 'video/avi', byteLength: 10),
+        'Only mp4 or mov videos can be uploaded.',
+      );
+      expect(
+        validateVideoUpload(contentType: 'video/mp4', byteLength: 0),
+        'Videos must be 100 MB or smaller.',
+      );
+      expect(
+        validateVideoUpload(
+          contentType: 'video/quicktime',
+          byteLength: maxVideoUploadBytes + 1,
+        ),
+        'Videos must be 100 MB or smaller.',
+      );
+      expect(
+        validateVideoUpload(contentType: 'video/mp4', byteLength: 10),
+        isNull,
+      );
+      expect(
+        validateVideoUpload(
+          contentType: 'video/quicktime',
+          byteLength: maxVideoUploadBytes,
+        ),
+        isNull,
+      );
+    });
+
+    test('uploadNodeVideo builds the trigger path per content type', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await repository.uploadNodeVideo(
+        uid: 'uid_1',
+        storyId: 'story_1',
+        nodeId: 'node_2',
+        takeId: 'take_7',
+        contentType: 'video/mp4',
+        bytes: const [1, 2, 3],
+      );
+      await repository.uploadNodeVideo(
+        uid: 'uid_1',
+        storyId: 'story_1',
+        nodeId: 'node_2',
+        takeId: 'take_7',
+        contentType: 'video/quicktime',
+        bytes: const [1, 2, 3],
+      );
+
+      expect(calls, hasLength(2));
+      expect(calls[0].name, 'uploadNodeVideo');
+      expect(calls[0].data['path'], 'uploads/uid_1/story_1_node_2_take_7.mp4');
+      expect(calls[1].data['path'], 'uploads/uid_1/story_1_node_2_take_7.mov');
+    });
+
+    test('uploadNodeVideo rejects blanks without network', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await expectLater(
+        repository.uploadNodeVideo(
+          uid: '  ',
+          storyId: 'story_1',
+          nodeId: 'node_2',
+          takeId: 'take_1',
+          contentType: 'video/mp4',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeVideo(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_2',
+          takeId: 'take_1',
+          contentType: 'video/avi',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeVideo(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_2',
+          takeId: 'take_1',
+          contentType: 'video/mp4',
+          bytes: const [],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeVideo(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_2',
+          takeId: '  ',
+          contentType: 'video/mp4',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeVideo(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_2',
+          takeId: 'take_1_bad',
+          contentType: 'video/mp4',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('fetchUploadError reads the trigger code', () async {
+      final repository = _repo(
+        null,
+        nodes: [
+          MapEntry('node_1', {..._nodeDoc(), 'uploadError': 'encode-failed'}),
+          MapEntry('node_2', _nodeDoc()),
+        ],
+      );
+
+      expect(
+        await repository.fetchUploadError(storyId: 'story_1', nodeId: 'node_1'),
+        'encode-failed',
+      );
+      expect(
+        await repository.fetchUploadError(storyId: 'story_1', nodeId: 'node_2'),
+        isNull,
+      );
+      await expectLater(
+        repository.fetchUploadError(storyId: '  ', nodeId: 'node_1'),
+        throwsA(const AppFailure(.invalid)),
+      );
+    });
+
+    test('fetchUploadMarker reads the take echo', () async {
+      final repository = _repo(
+        null,
+        nodes: [
+          MapEntry('node_1', {
+            ..._nodeDoc(),
+            'uploadError': 'encode-failed',
+            'uploadTakeId': 'take_9',
+          }),
+          MapEntry('node_2', _nodeDoc()),
+        ],
+      );
+
+      final failed = await repository.fetchUploadMarker(
+        storyId: 'story_1',
+        nodeId: 'node_1',
+      );
+      expect(failed.error, 'encode-failed');
+      expect(failed.takeId, 'take_9');
+
+      final echoed = await repository.fetchUploadMarker(
+        storyId: 'story_1',
+        nodeId: 'node_2',
+      );
+      expect(echoed.error, isNull);
+      expect(echoed.takeId, 'take_1');
+
+      final missing = await repository.fetchUploadMarker(
+        storyId: 'story_1',
+        nodeId: 'absent',
+      );
+      expect(missing.error, isNull);
+      expect(missing.takeId, isNull);
+
+      await expectLater(
+        repository.fetchUploadMarker(storyId: '  ', nodeId: 'node_1'),
+        throwsA(const AppFailure(.invalid)),
+      );
+    });
+
+    test('a pre-trigger read never resolves the upload', () async {
+      var reads = 0;
+      final calls = <_Call>[];
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async {
+          reads++;
+          // The trigger lands late: the first reads carry no echo.
+          if (reads < 3) {
+            final pre = Map<String, dynamic>.of(_nodeDoc())
+              ..remove('uploadTakeId');
+            return [MapEntry('node_1', pre)];
+          }
+          return [
+            MapEntry('node_1', {..._nodeDoc(), 'uploadTakeId': 'take_1'}),
+          ];
+        },
+        callFunction: (name, data) async => <String, dynamic>{},
+        uploadVideoFile:
+            ({
+              required path,
+              required contentType,
+              required bytes,
+              onProgress,
+            }) async {
+              calls.add(_Call('uploadNodeVideo', {'path': path}));
+            },
+      );
+      final bloc = CreateBloc(
+        repository: repository,
+        auth: _auth('uid_1'),
+        uploadPollInterval: const Duration(milliseconds: 1),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+
+      // The first read (no echo) did not resolve: polling reached the
+      // trigger-written echo before succeeding.
+      expect(reads, greaterThanOrEqualTo(3));
+      expect(calls, hasLength(1));
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('a silent trigger fails the upload closed', () async {
+      final bloc = CreateBloc(
+        // No echo ever: the trigger never wrote for this take.
+        repository: _repo(null),
+        auth: _auth('uid_1'),
+        uploadPollInterval: const Duration(milliseconds: 1),
+        maxUploadPolls: 2,
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_2',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_silent',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+
+      expect(bloc.state.failure, 'Something failed');
+      expect(bloc.state.statusOf('node_2'), StatusPillState.failed);
+    });
+
+    test('a stale echo never resolves the upload', () async {
+      final bloc = CreateBloc(
+        // A previous take's echo: error-free but not ours.
+        repository: _repo(null),
+        auth: _auth('uid_1'),
+        uploadPollInterval: const Duration(milliseconds: 1),
+        maxUploadPolls: 2,
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_fresh',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+
+      // The stale `take_1` echo is not success: bounded polling gives up
+      // instead of blessing another take's write.
+      expect(bloc.state.failure, 'Something failed');
+    });
+
+    test('upload dispatches bytes then reloads and clears', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+
+      final upload = calls.singleWhere(
+        (call) => call.name == 'uploadNodeVideo',
+      );
+      expect(upload.data['path'], 'uploads/uid_1/story_1_node_1_take_1.mp4');
+      expect(upload.data['contentType'], 'video/mp4');
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('uploading shows running while the bytes go up', () async {
+      final gate = Completer<void>();
+      var progressed = 0.0;
+      final bloc = CreateBloc(
+        repository: _repo(
+          null,
+          upload:
+              ({
+                required path,
+                required contentType,
+                required bytes,
+                onProgress,
+              }) async {
+                onProgress?.call(0.5);
+                await gate.future;
+                onProgress?.call(1);
+              },
+        ),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.uploading);
+      expect(bloc.state.statusOf('node_1'), StatusPillState.running);
+
+      await bloc.stream.firstWhere((state) => state.uploadProgress == 0.5);
+      progressed = bloc.state.uploadProgress!;
+
+      gate.complete();
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+      expect(progressed, 0.5);
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('a bad type is rejected before any network call', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/avi',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(calls, isEmpty);
+      expect(bloc.state.failure, 'Only mp4 or mov videos can be uploaded.');
+      expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+
+    test('a trigger failure surfaces its code as a phrase', () async {
+      for (final entry in {
+        'too-large': 'Videos must be 100 MB or smaller.',
+        'invalid-type': 'Only mp4 or mov videos can be uploaded.',
+        'unknown-target': 'That action is not valid',
+        'not-author': 'Not allowed',
+        'not-draft': 'Not allowed',
+        'encode-failed': 'Something failed',
+        'encode-unavailable': 'Video encoding is unavailable',
+        'whatever-else': 'Something failed',
+      }.entries) {
+        final bloc = CreateBloc(
+          repository: _repo(
+            null,
+            nodes: [
+              MapEntry('node_1', {..._nodeDoc(), 'uploadError': entry.key}),
+              MapEntry('node_2', _nodeDoc()),
+            ],
+          ),
+          auth: _auth('uid_1'),
+        );
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+
+        bloc.add(
+          const VideoUploadRequested(
+            nodeId: 'node_1',
+            contentType: 'video/mp4',
+            bytes: [1, 2, 3],
+            takeId: 'take_1',
+          ),
+        );
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.job == CreateJob.none && state.uploadProgress == null,
+        );
+
+        expect(bloc.state.failure, entry.value);
+        expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+        await bloc.close();
+      }
+    });
+
+    test('a transport failure surfaces its phrase', () async {
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async => <String, dynamic>{},
+          uploadVideoFile:
+              ({
+                required path,
+                required contentType,
+                required bytes,
+                onProgress,
+              }) async {
+                throw const AppFailure(.offline);
+              },
+        ),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.uploadProgress, isNull);
+      expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+
+    test('upload without an identity fails before any network', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const VideoUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'video/mp4',
+          bytes: [1, 2, 3],
+          takeId: 'take_1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(calls, isEmpty);
+      expect(bloc.state.failure, 'That action is not valid');
+    });
+
+    test('upload events on unknown nodes touch nothing', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc
+        ..add(
+          const VideoUploadRequested(
+            nodeId: 'missing',
+            contentType: 'video/mp4',
+            bytes: [1],
+            takeId: 'take_1',
+          ),
+        )
+        ..add(const VideoUploadProgressed(nodeId: 'missing', progress: 0.5));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(calls, isEmpty);
+      expect(bloc.state.job, CreateJob.none);
+      expect(bloc.state.uploadProgress, isNull);
+    });
+
+    test('stray progress ticks are ignored', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VideoUploadProgressed(nodeId: 'node_1', progress: 0.5));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(bloc.state.uploadProgress, isNull);
+    });
+  });
+
   group('CreateState', () {
     test('missing lists the unmet publish conditions', () {
       const node = DraftNode(nodeId: 'node_1');
 
       final missing = missingForNode(node: node);
 
-      expect(missing, contains('Node node_1 needs a title of 1-40 characters.'));
+      expect(
+        missing,
+        contains('Node node_1 needs a title of 1-40 characters.'),
+      );
       expect(missing, contains('Node node_1 needs a ready video.'));
       expect(missing, contains('Node node_1 needs one or two choices.'));
       expect(
@@ -726,6 +1250,7 @@ class _Call {
 CreateRepository _repo(
   List<_Call>? calls, {
   List<MapEntry<String, Map<String, dynamic>>>? nodes,
+  UploadVideoFile? upload,
 }) {
   return CreateRepository(
     createDraftDoc: ({required authorId, required title}) async => 'story_1',
@@ -749,7 +1274,88 @@ CreateRepository _repo(
         _ => <String, dynamic>{},
       };
     },
+    uploadVideoFile:
+        upload ??
+        ({
+          required path,
+          required contentType,
+          required bytes,
+          onProgress,
+        }) async {
+          calls?.add(
+            _Call('uploadNodeVideo', {
+              'path': path,
+              'contentType': contentType,
+              'byteLength': bytes.length,
+            }),
+          );
+          onProgress?.call(1);
+        },
   );
+}
+
+AuthRepository _auth(String? uid) =>
+    AuthRepository(auth: _Gateway(uid), users: _Users());
+
+class _Gateway implements AuthGateway {
+  _Gateway(this.uid);
+
+  final String? uid;
+
+  @override
+  AuthIdentity? get currentIdentity =>
+      uid == null ? null : AuthIdentity(uid: uid!);
+
+  @override
+  Stream<AuthIdentity?> authStateChanges() =>
+      Stream<AuthIdentity?>.value(currentIdentity);
+
+  @override
+  Future<void> completeGoogleRedirect() async {}
+
+  @override
+  Future<void> sendPasswordReset(String email) async {}
+
+  @override
+  Future<void> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> signInWithGooglePopup() async {}
+
+  @override
+  Future<void> signInWithGoogleRedirect() async {}
+
+  @override
+  Future<void> signOut() async {}
+
+  @override
+  Future<void> signUpWithEmail({
+    required String email,
+    required String password,
+  }) async {}
+}
+
+class _Users implements UserDirectory {
+  @override
+  Future<void> create(UserAccount user) async {}
+
+  @override
+  Future<bool> exists(String uid) async => true;
+
+  @override
+  Future<UserAccount?> read(String uid) async => null;
+
+  @override
+  Future<void> updateProfile({
+    required String uid,
+    String? displayName,
+    String? handle,
+    String? photoUrl,
+    required String locale,
+  }) async {}
 }
 
 Map<String, dynamic> _storyDoc() {
@@ -769,6 +1375,7 @@ Map<String, dynamic> _nodeDoc() {
     'isEnding': false,
     'videoStatus': 'idle',
     'windowSeconds': 6,
+    'uploadTakeId': 'take_1',
     'ttsText': '',
     'lineApproved': false,
     'ttsStatus': 'idle',

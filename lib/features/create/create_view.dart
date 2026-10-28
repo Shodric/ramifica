@@ -11,16 +11,33 @@ import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_state.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/create/node_inspector.dart';
+import 'package:uuid/uuid.dart';
 
 /// Create tab: draft canvas plus the inspector. Creates its own bloc
 /// like Explore; tests inject [bloc] and read recorded events instead of
 /// touching Firebase.
 class CreateView extends StatefulWidget {
-  const CreateView({super.key, this.bloc, this.repository, this.authRepository});
+  const CreateView({
+    super.key,
+    this.bloc,
+    this.repository,
+    this.authRepository,
+    this.pickVideo,
+    this.newTakeId = _defaultTakeId,
+  });
 
   final CreateBloc? bloc;
   final CreateRepository? repository;
   final AuthRepository? authRepository;
+
+  /// Picks a video file for upload. Injected for tests; production wires a
+  /// picker plugin. Null hides the upload button (see [NodeInspector]).
+  final PickVideoFile? pickVideo;
+
+  /// Mints the take nonce echoed by the trigger as `uploadTakeId`, so the
+  /// bloc can tell its own trigger write apart from pre-trigger state.
+  /// Injected for tests; defaults to a uuid.
+  final String Function() newTakeId;
 
   @override
   State<CreateView> createState() => _CreateViewState();
@@ -38,8 +55,7 @@ class _CreateViewState extends State<CreateView> {
     }
     try {
       _bloc = CreateBloc(
-        repository:
-            widget.repository ?? createFirebaseCreateRepository(),
+        repository: widget.repository ?? createFirebaseCreateRepository(),
         auth: widget.authRepository ?? createFirebaseAuthRepository(),
       );
     } catch (_) {
@@ -126,19 +142,22 @@ class _CreateViewState extends State<CreateView> {
                     node: state.openNode!,
                     status: state.statusOf(state.openNodeId!),
                     missing: state.missingFor(state.openNode!),
-                    busy: state.job == CreateJob.saving ||
+                    busy:
+                        state.job == CreateJob.saving ||
                         state.job == CreateJob.generating ||
-                        state.job == CreateJob.imaging,
+                        state.job == CreateJob.imaging ||
+                        state.job == CreateJob.uploading,
                     isRoot: state.isRoot(state.openNodeId!),
                     parent: state.parentOf(state.openNode!),
-                    videoGateMessage:
-                        state.videoGateMessage(state.openNode!),
+                    videoGateMessage: state.videoGateMessage(state.openNode!),
                     videoDesynced: state.videoDesynced(state.openNode!),
+                    uploadProgress:
+                        state.job == CreateJob.uploading &&
+                            state.jobNodeId == state.openNodeId
+                        ? state.uploadProgress
+                        : null,
                     onTitleChanged: (value) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        title: value,
-                      ),
+                      NodeFieldChanged(nodeId: state.openNodeId!, title: value),
                     ),
                     onLineChanged: (value) => bloc.add(
                       NodeFieldChanged(
@@ -159,11 +178,9 @@ class _CreateViewState extends State<CreateView> {
                       ),
                     ),
                     onSave: () => bloc.add(const NodeSaved()),
-                    onGenerate: () =>
-                        bloc.add(const TextGenerateRequested()),
-                    onRegenerate: () => bloc.add(
-                      const TextGenerateRequested(regenerate: true),
-                    ),
+                    onGenerate: () => bloc.add(const TextGenerateRequested()),
+                    onRegenerate: () =>
+                        bloc.add(const TextGenerateRequested(regenerate: true)),
                     onImageApprovalChanged: (which, approved) => bloc.add(
                       ImageApprovalChanged(
                         nodeId: state.openNodeId!,
@@ -177,9 +194,23 @@ class _CreateViewState extends State<CreateView> {
                         which: which,
                       ),
                     ),
-                    onVideoGenerate: () => bloc.add(
-                      VideoGenerateRequested(state.openNodeId!),
-                    ),
+                    onVideoGenerate: () =>
+                        bloc.add(VideoGenerateRequested(state.openNodeId!)),
+                    onUploadVideo: widget.pickVideo == null
+                        ? null
+                        : () async {
+                            final picked = await widget.pickVideo!();
+                            if (picked == null) return;
+                            if (!context.mounted) return;
+                            bloc.add(
+                              VideoUploadRequested(
+                                nodeId: state.openNodeId!,
+                                contentType: picked.contentType,
+                                bytes: picked.bytes,
+                                takeId: widget.newTakeId(),
+                              ),
+                            );
+                          },
                   ),
                 ),
               ),
@@ -189,3 +220,5 @@ class _CreateViewState extends State<CreateView> {
     );
   }
 }
+
+String _defaultTakeId() => const Uuid().v4();

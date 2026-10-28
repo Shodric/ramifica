@@ -4,7 +4,7 @@ import 'package:ramifica/data/models/draft_story.dart';
 
 /// Which async job is in flight, if any. One at a time: a new job
 /// replaces the previous description.
-enum CreateJob { none, loading, saving, generating, imaging }
+enum CreateJob { none, loading, saving, generating, imaging, uploading }
 
 /// Create tab state: the draft story, its nodes, the open node, the job
 /// in flight, and what is missing per node.
@@ -15,6 +15,7 @@ class CreateState {
     this.openNodeId,
     this.job = CreateJob.none,
     this.jobNodeId,
+    this.uploadProgress,
     this.failure,
   });
 
@@ -29,6 +30,9 @@ class CreateState {
 
   /// The node the [job] works on, if it targets one node.
   final String? jobNodeId;
+
+  /// Upload progress 0..1 while [job] is [CreateJob.uploading], else null.
+  final double? uploadProgress;
 
   /// The phrase the bloc already emitted, or null. Retry sends the same
   /// event again.
@@ -86,7 +90,8 @@ class CreateState {
   StatusPillState statusOf(String nodeId) {
     if ((job == CreateJob.saving ||
             job == CreateJob.generating ||
-            job == CreateJob.imaging) &&
+            job == CreateJob.imaging ||
+            job == CreateJob.uploading) &&
         jobNodeId == nodeId) {
       return .running;
     }
@@ -139,7 +144,8 @@ class CreateState {
   /// True when [node] carries a stale video: its inherited S no longer
   /// matches the parent E (the parent regenerated E and the backend
   /// forced this video back to `idle` until it re-inherits).
-  bool videoDesynced(DraftNode node) => node.isVideoDesyncedFrom(parentOf(node));
+  bool videoDesynced(DraftNode node) =>
+      node.isVideoDesyncedFrom(parentOf(node));
 
   CreateState copy({
     DraftStory? Function()? story,
@@ -147,6 +153,7 @@ class CreateState {
     String? Function()? openNodeId,
     CreateJob? job,
     String? Function()? jobNodeId,
+    double? Function()? uploadProgress,
     String? Function()? failure,
   }) {
     return CreateState(
@@ -155,6 +162,9 @@ class CreateState {
       openNodeId: openNodeId == null ? this.openNodeId : openNodeId(),
       job: job ?? this.job,
       jobNodeId: jobNodeId == null ? this.jobNodeId : jobNodeId(),
+      uploadProgress: uploadProgress == null
+          ? this.uploadProgress
+          : uploadProgress(),
       failure: failure == null ? this.failure : failure(),
     );
   }
@@ -167,18 +177,20 @@ class CreateState {
         other.openNodeId == openNodeId &&
         other.job == job &&
         other.jobNodeId == jobNodeId &&
+        other.uploadProgress == uploadProgress &&
         other.failure == failure;
   }
 
   @override
   int get hashCode => Object.hash(
-        story,
-        Object.hashAll(nodes),
-        openNodeId,
-        job,
-        jobNodeId,
-        failure,
-      );
+    story,
+    Object.hashAll(nodes),
+    openNodeId,
+    job,
+    jobNodeId,
+    uploadProgress,
+    failure,
+  );
 }
 
 /// The publish checklist for one node, shared by the state and the tests.
@@ -197,7 +209,9 @@ List<String> missingForNode({required DraftNode node}) {
     missing.add('Node $id needs a ready video.');
   }
   if (node.isEnding) {
-    if (node.choices.isNotEmpty) missing.add('Ending $id must not have choices.');
+    if (node.choices.isNotEmpty) {
+      missing.add('Ending $id must not have choices.');
+    }
     if (node.windowSeconds != null) {
       missing.add('Ending $id must not have windowSeconds.');
     }
@@ -220,10 +234,10 @@ List<String> missingForNode({required DraftNode node}) {
       if (choice.targetNodeId.trim().isEmpty) {
         missing.add('Choice ${choice.choiceId} points to a missing node.');
       }
-      if (!_isUnit(choice.x) ||
-          !_isUnit(choice.y) ||
-          !_isUnit(choice.radius)) {
-        missing.add('Choice ${choice.choiceId} needs a zone inside the 0-1 frame.');
+      if (!_isUnit(choice.x) || !_isUnit(choice.y) || !_isUnit(choice.radius)) {
+        missing.add(
+          'Choice ${choice.choiceId} needs a zone inside the 0-1 frame.',
+        );
       }
     }
     if (node.choices.where((choice) => choice.isDefault).length != 1) {

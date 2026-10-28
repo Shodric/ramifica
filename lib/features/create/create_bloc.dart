@@ -6,6 +6,7 @@ import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_state.dart';
+import 'package:uuid/uuid.dart';
 
 /// Draft, nodes, and Spark proposals for the Create tab.
 ///
@@ -14,8 +15,12 @@ import 'package:ramifica/features/create/create_state.dart';
 /// cannot draft on a stale id. Tests pass the author id in the event and
 /// leave [auth] null.
 class CreateBloc extends Bloc<CreateEvent, CreateState> {
-  CreateBloc({required this.repository, this.auth})
-    : super(const CreateState()) {
+  CreateBloc({
+    required this.repository,
+    this.auth,
+    this.uploadPollInterval = const Duration(seconds: 2),
+    this.maxUploadPolls = 30,
+  }) : super(const CreateState()) {
     on<DraftRequested>(_onDraftRequested, transformer: restartable());
     on<DraftOpened>(_onDraftOpened, transformer: restartable());
     on<NodeSelected>(_onNodeSelected);
@@ -26,10 +31,18 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<ImageGenerateRequested>(_onImageGenerate, transformer: restartable());
     on<ImageApprovalChanged>(_onImageApproval, transformer: droppable());
     on<VideoGenerateRequested>(_onVideoGenerate, transformer: restartable());
+    on<VideoUploadRequested>(_onVideoUpload, transformer: restartable());
+    on<VideoUploadProgressed>(_onVideoUploadProgressed);
   }
-
   final CreateRepository repository;
   final AuthRepository? auth;
+
+  /// Delay between trigger-observation polls after an upload.
+  final Duration uploadPollInterval;
+
+  /// How many trigger-observation polls run before the upload fails
+  /// closed. Bounds the `uploading` job when the trigger is slow.
+  final int maxUploadPolls;
 
   Future<void> _onDraftRequested(
     DraftRequested event,
@@ -95,13 +108,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final open = nodes.any((node) => node.nodeId == root)
           ? root
           : (nodes.isEmpty ? null : nodes.first.nodeId);
-      emit(
-        CreateState(
-          story: story,
-          nodes: nodes,
-          openNodeId: open,
-        ),
-      );
+      emit(CreateState(story: story, nodes: nodes, openNodeId: open));
     } on AppFailure catch (error) {
       emit(
         state.copy(
@@ -121,10 +128,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     }
   }
 
-  Future<void> _onNodeAdded(
-    NodeAdded event,
-    Emitter<CreateState> emit,
-  ) async {
+  Future<void> _onNodeAdded(NodeAdded event, Emitter<CreateState> emit) async {
     final story = state.story;
     final parent = state.openNode;
     if (story == null || parent == null) return;
@@ -167,17 +171,17 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       state.copy(
         nodes: [
           for (final node in state.nodes)
-            if (node.nodeId == event.nodeId) _applyFields(node, event) else node,
+            if (node.nodeId == event.nodeId)
+              _applyFields(node, event)
+            else
+              node,
         ],
         failure: () => null,
       ),
     );
   }
 
-  Future<void> _onNodeSaved(
-    NodeSaved event,
-    Emitter<CreateState> emit,
-  ) async {
+  Future<void> _onNodeSaved(NodeSaved event, Emitter<CreateState> emit) async {
     final story = state.story;
     final node = state.openNode;
     if (story == null || node == null) return;
@@ -346,6 +350,133 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       );
     }
   }
+
+  /// Uploads a picked video, then holds `uploading` until the trigger's
+  /// own write is observed. Unknown nodes and missing drafts are ignored;
+  /// a blank uid fails without touching the network. The client-side
+  /// pre-check ([validateVideoUpload]) rejects bad types and oversize
+  /// files before any byte goes up. After the put, the bloc polls the
+  /// trigger-written marker until its `uploadTakeId` echo matches this
+  /// take — the trigger lands seconds later, so resolving on the first
+  /// read would bless pre-trigger state. Only the echoed take resolves:
+  /// its `uploadError` becomes the failure phrase (null means the node
+  /// video is the trigger's). The poll is bounded ([maxUploadPolls] ×
+  /// [uploadPollInterval]); exhaustion fails closed. Node fields stay
+  /// exactly what the backend wrote throughout.
+  Future<void> _onVideoUpload(
+    VideoUploadRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    if (!state.nodes.any((node) => node.nodeId == event.nodeId)) return;
+    final uid = auth?.auth.currentIdentity?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      emit(state.copy(failure: () => const AppFailure(.invalid).phrase));
+      return;
+    }
+    final rejected = validateVideoUpload(
+      contentType: event.contentType,
+      byteLength: event.bytes.length,
+    );
+    if (rejected != null) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          failure: () => rejected,
+        ),
+      );
+      return;
+    }
+    final takeId = event.takeId?.trim().isNotEmpty == true
+        ? event.takeId!.trim()
+        : const Uuid().v4();
+    emit(
+      state.copy(
+        job: CreateJob.uploading,
+        jobNodeId: () => event.nodeId,
+        uploadProgress: () => 0,
+        failure: () => null,
+      ),
+    );
+    try {
+      await repository.uploadNodeVideo(
+        uid: uid,
+        storyId: story.storyId,
+        nodeId: event.nodeId,
+        takeId: takeId,
+        contentType: event.contentType,
+        bytes: event.bytes,
+        onProgress: (progress) => add(
+          VideoUploadProgressed(nodeId: event.nodeId, progress: progress),
+        ),
+      );
+      // Bytes are up; the trigger has not run yet. Bytes done, outcome
+      // unknown: pin progress at full while the job keeps running.
+      emit(state.copy(uploadProgress: () => 1));
+      var nodes = await repository.fetchNodes(story.storyId);
+      var marker = await repository.fetchUploadMarker(
+        storyId: story.storyId,
+        nodeId: event.nodeId,
+      );
+      var polls = 0;
+      while (marker.takeId != takeId && polls < maxUploadPolls) {
+        polls++;
+        await Future<void>.delayed(uploadPollInterval);
+        if (isClosed) return;
+        nodes = await repository.fetchNodes(story.storyId);
+        marker = await repository.fetchUploadMarker(
+          storyId: story.storyId,
+          nodeId: event.nodeId,
+        );
+        // Live nodes while waiting: a trigger-written `pending` shows
+        // through the running pill once the echo is close.
+        emit(state.copy(nodes: nodes));
+      }
+      if (marker.takeId != takeId) {
+        emit(
+          state.copy(
+            nodes: nodes,
+            job: CreateJob.none,
+            jobNodeId: () => event.nodeId,
+            uploadProgress: () => null,
+            failure: () => const AppFailure(.failed).phrase,
+          ),
+        );
+        return;
+      }
+      emit(
+        state.copy(
+          nodes: nodes,
+          job: CreateJob.none,
+          jobNodeId: () => marker.error == null ? null : event.nodeId,
+          uploadProgress: () => null,
+          failure: () =>
+              marker.error == null ? null : _uploadErrorPhrase(marker.error!),
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          uploadProgress: () => null,
+          failure: () => error.phrase,
+        ),
+      );
+    }
+  }
+
+  /// Applies an upload progress tick while that node's upload runs.
+  void _onVideoUploadProgressed(
+    VideoUploadProgressed event,
+    Emitter<CreateState> emit,
+  ) {
+    if (state.job != CreateJob.uploading) return;
+    if (state.jobNodeId != event.nodeId) return;
+    emit(state.copy(uploadProgress: () => event.progress.clamp(0, 1)));
+  }
 }
 
 /// Manual edits win: the proposal fills a field only when it is empty,
@@ -408,4 +539,19 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
     );
   }
   return next;
+}
+
+/// The phrase for a trigger-recorded `uploadError` code (backend contract:
+/// `invalid-type` | `too-large` | `unknown-target` | `not-author` |
+/// `not-draft` | `encode-failed`, plus `encode-unavailable` while the node
+/// sits at `pending` without an encoder). Unknown codes fail closed.
+String _uploadErrorPhrase(String code) {
+  return switch (code) {
+    'invalid-type' => 'Only mp4 or mov videos can be uploaded.',
+    'too-large' => 'Videos must be 100 MB or smaller.',
+    'unknown-target' => const AppFailure(.invalid).phrase,
+    'not-author' || 'not-draft' => const AppFailure(.denied).phrase,
+    'encode-unavailable' => 'Video encoding is unavailable',
+    _ => const AppFailure(.failed).phrase,
+  };
 }

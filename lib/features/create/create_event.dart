@@ -120,3 +120,38 @@ final class VideoGenerateRequested extends CreateEvent {
 
   final String nodeId;
 }
+
+/// Uploads a picked video for one node to `uploads/{uid}/`. The bloc
+/// validates type (mp4/mov) and size (<=100MB) before any network call,
+/// then streams [VideoUploadProgressed] ticks while the bytes go up.
+/// `restartable`: picking again cancels the in-flight upload.
+final class VideoUploadRequested extends CreateEvent {
+  const VideoUploadRequested({
+    required this.nodeId,
+    required this.contentType,
+    required this.bytes,
+    this.takeId,
+  });
+
+  final String nodeId;
+
+  /// The picker-reported content type (`video/mp4` or `video/quicktime`).
+  final String contentType;
+
+  /// The picked file bytes. Carried through the event so the bloc stays
+  /// the only caller of the repository.
+  final List<int> bytes;
+
+  /// Client take nonce echoed by the trigger as `uploadTakeId`. Null lets
+  /// the bloc mint one (production); tests pass a fixed id.
+  final String? takeId;
+}
+
+/// Upload progress tick (0..1) for [nodeId]. Applied only while that
+/// node's upload is in flight; stray ticks are ignored.
+final class VideoUploadProgressed extends CreateEvent {
+  const VideoUploadProgressed({required this.nodeId, required this.progress});
+
+  final String nodeId;
+  final double progress;
+}

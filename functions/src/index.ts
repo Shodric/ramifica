@@ -14,6 +14,7 @@ import {graphStubs} from "./graph/graphStubs";
 import {playApproach} from "./graph/playApproach";
 import {rewindRun} from "./graph/rewindRun";
 import {storyPage} from "./storyPage";
+import {onUploadFinalized} from "./media/onUploadFinalized";
 
 setGlobalOptions({region: "us-central1"});
 export {
@@ -24,6 +25,7 @@ export {
   generateNodeText,
   generateNodeVideo,
   loadPlayback,
+  onUploadFinalized,
   saveNode,
   startRun,
   storyPage,

@@ -68,6 +68,73 @@ List<String> _optionalLabels(Object? value) {
   return labels;
 }
 
+/// Max creator upload: storage.rules allows under 100 MB.
+const maxVideoUploadBytes = 100 * 1024 * 1024;
+
+/// Content types the upload trigger accepts (storage.rules mirrors this).
+const videoUploadContentTypes = {'video/mp4', 'video/quicktime'};
+
+/// One picked video file: bytes plus the content type the picker reported.
+/// Picking is view-side and injected; the repository never touches a picker
+/// plugin — it only validates and uploads what it gets.
+class PickedVideoFile {
+  const PickedVideoFile({required this.contentType, required this.bytes});
+
+  final String contentType;
+  final List<int> bytes;
+}
+
+/// Picks a video file, or returns null when the author cancels. Wired by
+/// the view; tests inject a fake. Production needs a picker plugin
+/// (file_picker or image_picker — not a dependency yet); until Main wires
+/// one, the upload button stays hidden.
+typedef PickVideoFile = Future<PickedVideoFile?> Function();
+
+/// Raw upload transport: bytes to an exact Storage path. Tests inject a
+/// fake; production needs firebase_storage (putData/putFile with the given
+/// content type — not a dependency yet, so the factory default throws
+/// [AppFailure.failed] instead of pretending to upload).
+typedef UploadVideoFile = Future<void> Function({
+  required String path,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
+});
+
+/// Client-side upload pre-check. Returns the phrase to show, or null when
+/// the file may be sent. Runs before any network call, so rejections never
+/// touch Storage. Mirrors storage.rules (`video/(mp4|quicktime)`, <100MB).
+String? validateVideoUpload({
+  required String contentType,
+  required int byteLength,
+}) {
+  if (!videoUploadContentTypes.contains(contentType.trim())) {
+    return 'Only mp4 or mov videos can be uploaded.';
+  }
+  if (byteLength <= 0 || byteLength > maxVideoUploadBytes) {
+    return 'Videos must be 100 MB or smaller.';
+  }
+  return null;
+}
+
+/// Trigger-written upload outcome for one node: the `uploadError` code (if
+/// the take failed) and the `uploadTakeId` echo of the take that wrote it.
+/// The bloc polls the marker until the echo matches its own take before
+/// trusting the error — a pre-trigger read carries the previous take's
+/// echo (or none) and never resolves the upload.
+typedef UploadMarker = ({String? error, String? takeId});
+
+/// Fail-closed upload default: used when no transport is wired (no
+/// firebase_storage dependency yet). Throws instead of pretending to work.
+Future<void> _unwiredUpload({
+  required String path,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
+}) async {
+  throw const AppFailure(.failed);
+}
+
 /// Draft reads and writes for Create. The view never calls this directly;
 /// [CreateBloc] does.
 ///
@@ -88,14 +155,16 @@ class CreateRepository {
     required this.fetchStoryDoc,
     required this.fetchNodeDocs,
     required this.callFunction,
-  });
+    UploadVideoFile? uploadVideoFile,
+  }) : uploadVideoFile = uploadVideoFile ?? _unwiredUpload;
 
   /// Creates `stories/{id}` with `status: 'draft'` owned by [authorId].
   /// Returns the new story id.
   final Future<String> Function({
     required String authorId,
     required String title,
-  }) createDraftDoc;
+  })
+  createDraftDoc;
 
   /// Reads one story doc. Returns null when it does not exist.
   final Future<Map<String, dynamic>?> Function(String storyId) fetchStoryDoc;
@@ -103,13 +172,20 @@ class CreateRepository {
   /// Reads every node doc of [storyId]: `(nodeId, data)` entries.
   final Future<List<MapEntry<String, Map<String, dynamic>>>> Function(
     String storyId,
-  ) fetchNodeDocs;
+  )
+  fetchNodeDocs;
 
   /// Calls a Create callable by name with the given payload.
   final Future<Map<String, dynamic>> Function(
     String name,
     Map<String, dynamic> data,
-  ) callFunction;
+  )
+  callFunction;
+
+  /// Raw upload transport (see [UploadVideoFile]). The client never
+  /// re-encodes: it puts the picked bytes at the exact trigger path and
+  /// the backend does the rest.
+  final UploadVideoFile uploadVideoFile;
 
   /// Creates a draft plus its root node and returns the parsed pair.
   ///
@@ -283,6 +359,101 @@ class CreateRepository {
     if (hint != null && hint.isNotEmpty) data['prompt'] = hint;
     await callFunction('generateNodeVideo', data);
   }
+
+  /// Uploads a picked video for one node to the trigger path
+  /// `uploads/{uid}/{storyId}_{nodeId}_{takeId}.mp4|.mov` (backend
+  /// contract: `onUploadFinalized` parses the filename — Firestore
+  /// auto-ids and the client take id never contain `_`, so the split is
+  /// unambiguous). Extension follows the content type. [takeId] is the
+  /// client take nonce the trigger echoes as `uploadTakeId` on every
+  /// terminal path, so the bloc can tell its own trigger write apart from
+  /// pre-trigger state. The trigger re-encodes, saves the node video,
+  /// extracts E as the last frame, and deletes the upload. Failures leave
+  /// the node untouched and set only `uploadError` (see
+  /// [fetchUploadMarker]).
+  ///
+  /// Blank ids, a blank take id, an unsupported content type, or empty
+  /// bytes throw [AppFailure.invalid] without touching the network — the
+  /// bloc runs [validateVideoUpload] first, so this is a second gate, not
+  /// the UX. [onProgress] reports 0..1 (transport-dependent granularity).
+  Future<void> uploadNodeVideo({
+    required String uid,
+    required String storyId,
+    required String nodeId,
+    required String takeId,
+    required String contentType,
+    required List<int> bytes,
+    void Function(double progress)? onProgress,
+  }) async {
+    final user = uid.trim();
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    final take = takeId.trim();
+    final type = contentType.trim();
+    if (user.isEmpty ||
+        story.isEmpty ||
+        node.isEmpty ||
+        take.isEmpty ||
+        take.contains('_') ||
+        !videoUploadContentTypes.contains(type) ||
+        bytes.isEmpty) {
+      throw const AppFailure(.invalid);
+    }
+    final extension = type == 'video/quicktime' ? 'mov' : 'mp4';
+    try {
+      await uploadVideoFile(
+        path: 'uploads/$user/${story}_${node}_$take.$extension',
+        contentType: type,
+        bytes: bytes,
+        onProgress: onProgress,
+      );
+    } on AppFailure {
+      rethrow;
+    } catch (error) {
+      throw AppFailure(.failed, cause: error);
+    }
+  }
+
+  /// Trigger-written upload outcome for one node, read from the raw doc —
+  /// never the model — so upload-only fields never leak into [DraftNode].
+  /// [UploadMarker.takeId] is the `uploadTakeId` echo of the take that
+  /// wrote it; the bloc polls until it matches its own take before
+  /// trusting [UploadMarker.error], so a pre-trigger read never resolves
+  /// the upload.
+  Future<UploadMarker> fetchUploadMarker({
+    required String storyId,
+    required String nodeId,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    final docs = await fetchNodeDocs(story);
+    for (final doc in docs) {
+      if (doc.key == node) {
+        final error = doc.value['uploadError'];
+        final take = doc.value['uploadTakeId'];
+        return (
+          error: error is String && error.trim().isNotEmpty
+              ? error.trim()
+              : null,
+          takeId: take is String && take.trim().isNotEmpty ? take.trim() : null,
+        );
+      }
+    }
+    return (error: null, takeId: null);
+  }
+
+  /// Reads the trigger-recorded upload error for one node (`uploadError`
+  /// on the node doc), or null when the last upload did not fail. The
+  /// bloc reads the full [fetchUploadMarker] after its own upload, so a
+  /// stale error from an older attempt never surfaces on open.
+  Future<String?> fetchUploadError({
+    required String storyId,
+    required String nodeId,
+  }) async {
+    final marker = await fetchUploadMarker(storyId: storyId, nodeId: nodeId);
+    return marker.error;
+  }
 }
 
 /// Production source:
@@ -295,6 +466,7 @@ class CreateRepository {
 CreateRepository createFirebaseCreateRepository([
   FirebaseFirestore? firestore,
   FunctionsClient? functions,
+  UploadVideoFile? uploadVideoFile,
 ]) {
   final db = firestore ?? FirebaseFirestore.instance;
   final calls = functions ?? FunctionsClient();
@@ -335,9 +507,7 @@ CreateRepository createFirebaseCreateRepository([
             .doc(storyId)
             .collection('nodes')
             .get();
-        return [
-          for (final doc in snap.docs) MapEntry(doc.id, doc.data()),
-        ];
+        return [for (final doc in snap.docs) MapEntry(doc.id, doc.data())];
       } on FirebaseException catch (error) {
         throw AppFailure(appFailureCodeFor(error.code), cause: error);
       } catch (error) {
@@ -345,5 +515,10 @@ CreateRepository createFirebaseCreateRepository([
       }
     },
     callFunction: (name, data) => calls(name, data),
+    // No firebase_storage dependency yet: production upload transport is
+    // Main's wiring (putData/putFile with the content type, single-shot —
+    // storage.rules allows create only, so chunked resumption needs care).
+    // Omitted here so the constructor default fails closed.
+    uploadVideoFile: uploadVideoFile,
   );
 }
