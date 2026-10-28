@@ -4,6 +4,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   isoNow,
   optionalId,
   optString,
@@ -51,7 +52,7 @@ const endingTypes = ["abierto", "tragico", "secreto"];
  * stories, runs, or published docs.
  */
 export const createNode = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return createNodeWith(
@@ -76,7 +77,7 @@ export const createNode = onCall(
  * targets. This never touches other stories, runs, or published docs.
  */
 export const saveNode = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return saveNodeWith(
@@ -506,7 +507,7 @@ export interface DeleteNodeResult {
  * other stories, runs, or published docs.
  */
 export const deleteNode = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return deleteNodeWith(

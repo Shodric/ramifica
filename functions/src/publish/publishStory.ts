@@ -4,6 +4,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   isoNow,
   requireUid,
   toRecord,
@@ -34,7 +35,7 @@ export interface PublishStoryResult {
  * is the single writer. This never touches other stories or runs.
  */
 export const publishStory = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return publishStoryWith(

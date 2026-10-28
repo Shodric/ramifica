@@ -7,6 +7,7 @@ import {
   Db,
   docData,
   findSagaUnlock,
+  isEmulator,
   isoNow,
   optString,
   parseSagaDoc,
@@ -55,7 +56,7 @@ export interface CommitResult {
  * idempotent, so replays, restarts, and re-commits never duplicate.
  */
 export const commitChoice = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return commitChoiceWith(

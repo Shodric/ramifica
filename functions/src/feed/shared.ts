@@ -18,6 +18,16 @@ export function requireUid(auth: unknown): string {
 }
 
 /**
+ * True inside the Functions emulator (FUNCTIONS_EMULATOR is set
+ * automatically there; never true in prod). Callables skip App Check
+ * enforcement locally so emulator testing works without tokens.
+ * @return {boolean} Whether running in the emulator.
+ */
+export function isEmulator(): boolean {
+  return process.env.FUNCTIONS_EMULATOR === "true";
+}
+
+/**
  * Required id field: trims, rejects blanks as invalid, not unauthenticated.
  * @param {unknown} value Raw field value.
  * @param {string} field Field name for the error.

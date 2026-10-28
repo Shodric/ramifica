@@ -8,6 +8,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   optString,
   requireUid,
   toRecord,
@@ -62,7 +63,7 @@ const defaultInstructions =
  * approval, so the author previews before the take counts.
  */
 export const generateNodeVoice = onCall(
-  {enforceAppCheck: true, maxInstances: 10},
+  {enforceAppCheck: !isEmulator(), maxInstances: 10},
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeVoiceWith(

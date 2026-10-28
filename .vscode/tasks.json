@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Compila functions y levanta solo los emuladores que usa la app en
+      // modo EMULATOR (ver lib/main.dart). Sin hosting: flutter run ya sirve
+      // la app en :5000 y chocaría con el hosting emulator.
+      "label": "firebase-emulators",
+      "type": "shell",
+      "command": "npm --prefix functions run build && npx --yes firebase-tools@15 emulators:start --only auth,firestore,functions,storage",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "JAVA_HOME": "/opt/homebrew/opt/openjdk@21"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "firebase-emulators",
+        "pattern": {
+          "regexp": "."
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "All emulators ready"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

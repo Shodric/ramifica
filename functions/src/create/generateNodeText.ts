@@ -4,6 +4,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   optionalId,
   optString,
   requireUid,
@@ -82,7 +83,7 @@ const systemPrompt = [
  */
 export const generateNodeText = onCall(
   // Lower ceiling than the player paths: text calls bill per token.
-  {enforceAppCheck: true, maxInstances: 10},
+  {enforceAppCheck: !isEmulator(), maxInstances: 10},
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeTextWith(

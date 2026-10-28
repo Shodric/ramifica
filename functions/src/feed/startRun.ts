@@ -5,6 +5,7 @@ import {
   Db,
   DbRef,
   docData,
+  isEmulator,
   isoNow,
   optionalId,
   readPlayableStory,
@@ -18,7 +19,7 @@ import {
  * and marks it active; the old run stays `active` but stops being the one.
  */
 export const startRun = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return startRunWith(

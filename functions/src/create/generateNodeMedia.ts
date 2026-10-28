@@ -5,6 +5,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   optString,
   requireUid,
   toRecord,
@@ -96,7 +97,7 @@ const stillHeight = 854;
  * @param {unknown} _req Unused callable wrapper slot.
  */
 export const generateNodeImage = onCall(
-  {enforceAppCheck: true, maxInstances: 10},
+  {enforceAppCheck: !isEmulator(), maxInstances: 10},
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeImageWith(
@@ -115,7 +116,7 @@ export const generateNodeImage = onCall(
  * cascade, since the bytes (and hashes) are unchanged.
  */
 export const approveNodeImage = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return approveNodeImageWith(
@@ -133,7 +134,7 @@ export const approveNodeImage = onCall(
  * records the job as `pending`; it never keeps a stale video quietly.
  */
 export const generateNodeVideo = onCall(
-  {enforceAppCheck: true, maxInstances: 10},
+  {enforceAppCheck: !isEmulator(), maxInstances: 10},
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeVideoWith(

@@ -11,6 +11,24 @@
         "--web-hostname=localhost",
         "--web-port=5000"
       ]
+    },
+    {
+      // App local (flutter run :5000) + emuladores (task firebase-emulators).
+      // Requiere `--dart-define=EMULATOR=true` para que lib/main.dart use
+      // auth :9099, firestore :8080 y functions :5001 locales.
+      "name": "Ramifica (emuladores)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "args": [
+        "--dart-define=EMULATOR=true"
+      ],
+      "toolArgs": [
+        "--web-hostname=localhost",
+        "--web-port=5000"
+      ],
+      "preLaunchTask": "firebase-emulators"
     }
   ]
 }

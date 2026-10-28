@@ -6,6 +6,7 @@ import {
   cleanId,
   Db,
   docData,
+  isEmulator,
   isoNow,
   readPlayableStory,
   requireUid,
@@ -19,7 +20,7 @@ import {newestParent, readRunView} from "./shared";
  * flips back to `active`; a run already at the root cannot rewind.
  */
 export const rewindRun = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return rewindRunWith(

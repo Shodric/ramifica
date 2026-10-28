@@ -4,6 +4,7 @@ import {fetchPlayback, PlaybackView} from "../feed/playback";
 import {
   cleanId,
   Db,
+  isEmulator,
   readPlayableStory,
   requireUid,
   toRecord,
@@ -16,7 +17,7 @@ import {findParentNodeId, readRunView, visitedNodeIds} from "./shared";
  * parent. Pure reads: history and status stay untouched.
  */
 export const playApproach = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return playApproachWith(

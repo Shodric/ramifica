@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {fetchPlayback, PlaybackView} from "./playback";
-import {cleanId, Db, docData, requireUid, toRecord} from "./shared";
+import {cleanId, Db, docData, isEmulator, requireUid, toRecord} from "./shared";
 
 /**
  * Reads the caller's run, the current node, and its destinations. Secret
@@ -9,7 +9,7 @@ import {cleanId, Db, docData, requireUid, toRecord} from "./shared";
  * reward code travels with the playback, read from their reward doc.
  */
 export const loadPlayback = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return loadPlaybackWith(

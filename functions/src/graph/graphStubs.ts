@@ -4,6 +4,7 @@ import {
   asRecord,
   cleanId,
   Db,
+  isEmulator,
   readPlayableStory,
   requireUid,
   toRecord,
@@ -46,7 +47,7 @@ export interface GraphStubsResult {
  * id-only stubs so the map cannot leak them. Pure reads, no writes.
  */
 export const graphStubs = onCall(
-  {enforceAppCheck: true, maxInstances: 20},
+  {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
     return graphStubsWith(
