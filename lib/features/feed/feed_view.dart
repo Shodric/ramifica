@@ -241,13 +241,27 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                         bottom: 88,
                         child: Align(
                           alignment: .centerRight,
-                          child: MuteButton(
-                            muted: state.muted,
-                            autoMuted: state.autoMuted,
-                            onPressed: () {
-                              if (state.muted) bloc.narrator.unlock();
-                              bloc.add(const MuteToggled());
-                            },
+                          child: Column(
+                            mainAxisSize: .min,
+                            children: [
+                              MuteButton(
+                                muted: state.muted,
+                                autoMuted: state.autoMuted,
+                                onPressed: () {
+                                  if (state.muted) bloc.narrator.unlock();
+                                  bloc.add(const MuteToggled());
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              IconButton(
+                                tooltip: 'See map',
+                                onPressed: () {
+                                  bloc.add(const MapRequested());
+                                  _openMap(context, state.storyId);
+                                },
+                                icon: const Icon(Icons.map_outlined),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -343,8 +357,9 @@ FeedBloc? _feedOf(BuildContext context, {bool listen = false}) {
 void _openMap(BuildContext context, String? storyId) {
   try {
     context.read<ShellBloc>().add(TabSelected(.graph, storyId: storyId));
-  } on FlutterError {
-    // Widget tests mount FeedView without the shell. The MapRequested event
-    // above keeps the contract; navigation needs the real app.
+  } on Exception {
+    // Widget tests mount FeedView without the shell. ProviderNotFoundException
+    // implements Exception, not FlutterError. The MapRequested event above
+    // keeps the contract; navigation needs the real app.
   }
 }
