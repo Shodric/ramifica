@@ -171,6 +171,7 @@ const stubFetch = (content: unknown): TextFetch => {
     ok: true,
     status: 200,
     json: async () => ({choices: [{message: {content}}]}),
+    arrayBuffer: async () => new ArrayBuffer(0),
   });
 };
 
@@ -184,6 +185,7 @@ const failingFetch = (status: number): TextFetch => {
     ok: false,
     status,
     json: async () => ({}),
+    arrayBuffer: async () => new ArrayBuffer(0),
   });
 };
 

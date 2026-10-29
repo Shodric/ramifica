@@ -32,6 +32,8 @@ AppLocation parseLocation(String? name) {
       return const AccessLocation();
     case AppRoutes.create:
       return const CreateLocation();
+    case AppRoutes.createNew:
+      return const CreateCanvasLocation();
   }
 
   final storyId = _oneSegment(path, '${AppRoutes.story}/');
@@ -57,9 +59,10 @@ String pathOf(AppLocation location) {
     GraphLocation(:final storyId) => AppRoutes.graphPath(
       Uri.encodeComponent(storyId),
     ),
-    ProfileLocation() => AppRoutes.profile,
-    AccessLocation() => AppRoutes.access,
     CreateLocation() => AppRoutes.create,
+    CreateCanvasLocation() => AppRoutes.createNew,
+    AccessLocation() => AppRoutes.access,
+    ProfileLocation() => AppRoutes.profile,
     UnknownLocation(:final path) => path.isEmpty ? '/' : path,
   };
 }
@@ -97,8 +100,9 @@ abstract final class AppRoutes {
   static const explore = '/explore';
   static const graph = '/graph';
   static const profile = '/profile';
-  static const access = '/access';
   static const create = '/create';
+  static const createNew = '/create/new-creation';
+  static const access = '/access';
 
   static String storyPath(String storyId) => '$story/$storyId';
 
@@ -107,6 +111,12 @@ abstract final class AppRoutes {
 
 final class CreateLocation extends AppLocation {
   const CreateLocation();
+}
+
+/// Fullscreen canvas at `/create/new-creation`: same create tab, but the
+/// shell hides the bottom bar and the view skips the entry screen.
+final class CreateCanvasLocation extends AppLocation {
+  const CreateCanvasLocation();
 }
 
 final class ExploreLocation extends AppLocation {

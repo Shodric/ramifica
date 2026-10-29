@@ -20,6 +20,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     this.auth,
     this.uploadPollInterval = const Duration(seconds: 2),
     this.maxUploadPolls = 30,
+    this.videoPollInterval = const Duration(seconds: 10),
+    this.maxVideoPolls = 40,
   }) : super(const CreateState()) {
     on<DraftRequested>(_onDraftRequested, transformer: restartable());
     on<DraftOpened>(_onDraftOpened, transformer: restartable());
@@ -30,7 +32,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<NodeDeleted>(_onNodeDeleted, transformer: droppable());
     on<StoryPublished>(_onStoryPublished, transformer: droppable());
     on<ZonesSaved>(_onZonesSaved, transformer: droppable());
-    on<WindowSaved>(_onWindowSaved, transformer: droppable());
     on<ZoneMoved>(_onZoneMoved);
     on<ChoiceAdded>(_onChoiceAdded);
     on<ChoiceRemoved>(_onChoiceRemoved);
@@ -51,6 +52,13 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   /// How many trigger-observation polls run before the upload fails
   /// closed. Bounds the `uploading` job when the trigger is slow.
   final int maxUploadPolls;
+
+  /// Delay between video-job polls after a generate tap.
+  final Duration videoPollInterval;
+
+  /// How many video-job polls run before generation fails closed. Bounds
+  /// the `imaging` job; a later tap resumes the same backend job.
+  final int maxVideoPolls;
 
   Future<void> _onDraftRequested(
     DraftRequested event,
@@ -138,20 +146,40 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
 
   Future<void> _onNodeAdded(NodeAdded event, Emitter<CreateState> emit) async {
     final story = state.story;
-    final parent = state.openNode;
+    final requested = event.parentNodeId?.trim() ?? '';
+    DraftNode? parent = state.openNode;
+    if (requested.isNotEmpty &&
+        state.nodes.any((node) => node.nodeId == requested)) {
+      parent = state.nodes.firstWhere((node) => node.nodeId == requested);
+    }
     if (story == null || parent == null) return;
+    final target = parent;
     emit(
       state.copy(
         job: CreateJob.saving,
-        jobNodeId: () => parent.nodeId,
+        jobNodeId: () => target.nodeId,
         failure: () => null,
       ),
     );
     try {
       final nodeId = await repository.createNode(
         storyId: story.storyId,
-        parentNodeId: parent.nodeId,
+        parentNodeId: target.nodeId,
       );
+      // Auto-link: `createNode` only records the parent on the child, so
+      // point a blank choice at the new id here. Without this the child
+      // stays unreachable and the canvas drops it at the bottom. The
+      // parent is re-read fresh so concurrent edits are never clobbered.
+      DraftNode? fresh;
+      for (final node in state.nodes) {
+        if (node.nodeId == target.nodeId) fresh = node;
+      }
+      final linked = fresh == null
+          ? null
+          : _linkChoice(fresh, nodeId, event.slot);
+      if (linked != null) {
+        await repository.saveNode(storyId: story.storyId, node: linked);
+      }
       final nodes = await repository.fetchNodes(story.storyId);
       emit(
         state.copy(
@@ -166,7 +194,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       emit(
         state.copy(
           job: CreateJob.none,
-          jobNodeId: () => parent.nodeId,
+          jobNodeId: () => target.nodeId,
           failure: () => error.phrase,
         ),
       );
@@ -225,44 +253,73 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   void _onChoiceAdded(ChoiceAdded event, Emitter<CreateState> emit) {
     final target = event.targetNodeId.trim();
     if (target.isEmpty) return;
-    final index = state.nodes.indexWhere(
-      (node) => node.nodeId == event.nodeId,
-    );
+    final index = state.nodes.indexWhere((node) => node.nodeId == event.nodeId);
     if (index < 0) return;
-    final node = state.nodes[index];
-    if (node.isEnding || node.choices.length >= 2) return;
-    final choices = [
-      ...node.choices,
-      DraftChoice(
-        choiceId: const Uuid().v4(),
-        label: '',
-        targetNodeId: target,
-        // The sole choice carries the hold; a second one waits for the
-        // author to pick the default explicitly.
-        isDefault: node.choices.isEmpty,
-      ),
-    ];
+    final linked = _linkChoice(state.nodes[index], target, null);
+    if (linked == null) return;
     emit(
       state.copy(
         nodes: [
           for (final current in state.nodes)
-            if (current.nodeId == event.nodeId)
-              current.copy(choices: choices)
-            else
-              current,
+            if (current.nodeId == event.nodeId) linked else current,
         ],
         failure: () => null,
       ),
     );
   }
 
+  /// Slot rank: unslotted legacy choices first (old drafts keep append
+  /// order), then `A`, then `B`.
+  int _slotRank(String? slot) => slot == 'A'
+      ? 0
+      : slot == 'B'
+      ? 1
+      : -1;
+
+  /// Adds a blank choice pointing at [target] on [slot] (or the first free
+  /// slot when null, taken, or invalid), inserted in slot order so the
+  /// canvas puts the child exactly on the tapped mini. The sole choice
+  /// carries the hold. Null on endings, past two choices, or with no
+  /// free slot.
+  DraftNode? _linkChoice(DraftNode node, String target, String? slot) {
+    if (node.isEnding || node.choices.length >= 2) return null;
+    final used = {for (final choice in node.choices) choice.slot};
+    String? at;
+    if ((slot == 'A' || slot == 'B') && !used.contains(slot)) {
+      at = slot;
+    } else {
+      for (final candidate in const ['A', 'B']) {
+        if (!used.contains(candidate)) {
+          at = candidate;
+          break;
+        }
+      }
+    }
+    if (at == null) return null;
+    final choice = DraftChoice(
+      choiceId: const Uuid().v4(),
+      label: '',
+      targetNodeId: target,
+      isDefault: node.choices.isEmpty,
+      slot: at,
+    );
+    final next = [...node.choices];
+    var index = next.length;
+    for (var i = 0; i < next.length; i++) {
+      if (_slotRank(next[i].slot) > _slotRank(at)) {
+        index = i;
+        break;
+      }
+    }
+    next.insert(index, choice);
+    return node.copy(choices: next);
+  }
+
   /// Removes a choice and its zone. When the default goes and choices
   /// remain, the first survivor inherits the default so the checklist can
   /// still pass. Unknown nodes and choices are ignored.
   void _onChoiceRemoved(ChoiceRemoved event, Emitter<CreateState> emit) {
-    final index = state.nodes.indexWhere(
-      (node) => node.nodeId == event.nodeId,
-    );
+    final index = state.nodes.indexWhere((node) => node.nodeId == event.nodeId);
     if (index < 0) return;
     final node = state.nodes[index];
     if (!node.choices.any((choice) => choice.choiceId == event.choiceId)) {
@@ -274,10 +331,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     ];
     if (survivors.isNotEmpty &&
         survivors.every((choice) => !choice.isDefault)) {
-      survivors = [
-        survivors.first.copy(isDefault: true),
-        ...survivors.skip(1),
-      ];
+      survivors = [survivors.first.copy(isDefault: true), ...survivors.skip(1)];
     }
     emit(
       state.copy(
@@ -300,12 +354,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   /// Zones ride the `choices` whitelist inside the full node doc, so
   /// saving zones is saving the open node.
   Future<void> _onZonesSaved(ZonesSaved event, Emitter<CreateState> emit) {
-    return _saveOpenNode(emit);
-  }
-
-  /// The window rides `windowSeconds` inside the full node doc, so
-  /// saving the window is saving the open node.
-  Future<void> _onWindowSaved(WindowSaved event, Emitter<CreateState> emit) {
     return _saveOpenNode(emit);
   }
 
@@ -339,7 +387,12 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
-      await repository.saveNode(storyId: story.storyId, node: node);
+      // The choice window is fixed product-wide (6s): endings carry no
+      // window, decisions always save 6. No UI edits this value.
+      final fixed = node.isEnding
+          ? node.copy(windowSeconds: () => null)
+          : node.copy(windowSeconds: () => 6);
+      await repository.saveNode(storyId: story.storyId, node: fixed);
       emit(
         state.copy(
           job: CreateJob.none,
@@ -539,19 +592,73 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
 
   /// Asks for the node video (inheriting the approved parent E as S),
   /// then reloads the nodes so the job status shows up. The backend
-  /// enforces the approval gate; a rejection lands as [failure].
+  /// enforces the approval gate; a rejection lands as [failure]. When the
+  /// backend reports the job still running, this re-asks until it reports
+  /// done or [maxVideoPolls] is hit: the backend resumes the same stored
+  /// job, so polls never bill a duplicate. Unknown nodes and missing
+  /// drafts are ignored, exactly like [_runImaging].
   Future<void> _onVideoGenerate(
     VideoGenerateRequested event,
     Emitter<CreateState> emit,
   ) async {
-    await _runImaging(
-      emit,
-      event.nodeId,
-      () => repository.generateNodeVideo(
-        storyId: state.story!.storyId,
-        nodeId: event.nodeId,
+    final story = state.story;
+    if (story == null) return;
+    if (!state.nodes.any((node) => node.nodeId == event.nodeId)) return;
+    emit(
+      state.copy(
+        job: CreateJob.imaging,
+        jobNodeId: () => event.nodeId,
+        failure: () => null,
       ),
     );
+    try {
+      var poll = await repository.generateNodeVideo(
+        storyId: story.storyId,
+        nodeId: event.nodeId,
+      );
+      var nodes = await repository.fetchNodes(story.storyId);
+      var polls = 0;
+      while (poll && polls < maxVideoPolls) {
+        polls++;
+        // Live nodes while waiting: a backend-written `ready` shows
+        // through once the poll that observed it lands.
+        emit(state.copy(nodes: nodes));
+        await Future<void>.delayed(videoPollInterval);
+        if (isClosed) return;
+        poll = await repository.generateNodeVideo(
+          storyId: story.storyId,
+          nodeId: event.nodeId,
+        );
+        nodes = await repository.fetchNodes(story.storyId);
+      }
+      if (poll) {
+        emit(
+          state.copy(
+            nodes: nodes,
+            job: CreateJob.none,
+            jobNodeId: () => event.nodeId,
+            failure: () => const AppFailure(.failed).phrase,
+          ),
+        );
+        return;
+      }
+      emit(
+        state.copy(
+          nodes: nodes,
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          failure: () => error.phrase,
+        ),
+      );
+    }
   }
 
   /// Shared imaging runner: unknown nodes and missing drafts are ignored,

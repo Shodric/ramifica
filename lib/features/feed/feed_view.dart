@@ -89,14 +89,12 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
       listenWhen: (previous, current) =>
           previous.playback != null &&
           current.playback != null &&
-          previous.playback!.story.storyId !=
-              current.playback!.story.storyId,
+          previous.playback!.story.storyId != current.playback!.story.storyId,
       listener: (context, state) {
         final id = state.playback!.story.storyId;
         try {
-          AppNavigation.read(
-            context,
-          ).go(AppRoutes.storyPath(Uri.encodeComponent(id)));
+          AppNavigation.read(context)
+              .go(AppRoutes.storyPath(Uri.encodeComponent(id)));
         } on FlutterError {
           // Widget tests mount FeedView without the router.
         }
@@ -104,223 +102,300 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
       child: BlocBuilder<FeedBloc, FeedState>(
         bloc: bloc,
         builder: (context, state) {
-        final playback = state.playback;
-        final showClip =
-            playback != null &&
-            state.phase != .loading &&
-            state.phase != .failed;
-        final line = playback?.node.ttsText?.trim();
-        final speakingCue =
-            state.phase == .speaking ||
-            (state.phase == .ending && state.endingSpeaking);
-        final showLine =
-            speakingCue && state.muted && line != null && line.isNotEmpty;
-        final showCard =
-            showClip &&
-            state.phase == .ending &&
-            !state.endingSpeaking &&
-            playback.node.isEnding;
-        return Listener(
-          // The first pointerdown anywhere clears the browser auto-mute and
-          // resumes the audio context. The bloc ignores repeats and never
-          // overrides a manual mute. Also resumes a hidden-parked clip.
-          onPointerDown: (_) {
-            bloc.narrator.unlock();
-            bloc.add(const UserGestured());
-          },
-          child: Scaffold(
-          body: Semantics(
-            label: widget.storyId == null ? 'Feed' : 'Feed ${widget.storyId}',
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final video = VideoFrame(constraints.biggest);
-                final heldId = state.holdChoiceId;
-                var holdX = 0.0;
-                var holdY = 0.0;
-                var holdRadius = 0.0;
-                var hasHold = false;
-                if (playback != null && heldId != null) {
-                  for (final choice in playback.choices) {
-                    if (choice.choiceId != heldId) continue;
-                    holdX = choice.x;
-                    holdY = choice.y;
-                    holdRadius = choice.radius;
-                    hasHold = true;
-                  }
-                }
-                return GestureDetector(
-                  // A hold never moves, so a vertical drag is never a hold.
-                  // The bloc still gates: speaking, window, holding,
-                  // committing, and the closing line ignore the swipe.
-                  onVerticalDragStart: (_) => _dragDy = 0,
-                  onVerticalDragUpdate: (details) =>
-                      _dragDy += details.primaryDelta ?? 0,
-                  onVerticalDragEnd: (details) {
-                    _pointer = null;
-                    final fling =
-                        (details.primaryVelocity ?? 0).abs() >= 200;
-                    final drag = _dragDy.abs() >= 64;
-                    _dragDy = 0;
-                    if (!fling && !drag) return;
-                    bloc.add(const StorySwiped());
-                  },
-                  child: Stack(
-                    fit: .expand,
-                    children: [
-                    if (showClip)
-                      NodeVideo(
-                        key: ValueKey(playback.node.videoUrl),
-                        url: playback.node.videoUrl,
-                        muted: state.muted,
-                        play:
-                            state.phase == .playing &&
-                            !state.hiddenPaused,
-                        player: widget.clipPlayer,
-                        onFirstFrame: () {},
-                        onEnded: () => bloc.add(const PauseReached()),
-                      ),
-                    if (playback != null)
-                      Positioned(
-                        left: 16,
-                        top: MediaQuery.paddingOf(context).top + 16,
-                        right: 88,
-                        child: Align(
-                          alignment: .centerLeft,
-                          child: AnimatedOpacity(
-                            opacity: state.phase == .playing ? 1 : 0,
-                            duration: const Duration(milliseconds: 200),
-                            child: IgnorePointer(
-                              ignoring: state.phase != .playing,
-                              child: StoryChip(
-                                title: playback.story.title,
-                                author: playback.story.authorName,
+          final playback = state.playback;
+          final showClip =
+              playback != null &&
+              state.phase != .loading &&
+              state.phase != .failed;
+          final line = playback?.node.ttsText?.trim();
+          final speakingCue =
+              state.phase == .speaking ||
+              (state.phase == .ending && state.endingSpeaking);
+          final showLine =
+              speakingCue && state.muted && line != null && line.isNotEmpty;
+          final showCard =
+              showClip &&
+              state.phase == .ending &&
+              !state.endingSpeaking &&
+              playback.node.isEnding;
+          return Listener(
+            // The first pointerdown anywhere clears the browser auto-mute and
+            // resumes the audio context. The bloc ignores repeats and never
+            // overrides a manual mute. Also resumes a hidden-parked clip.
+            onPointerDown: (_) {
+              bloc.narrator.unlock();
+              bloc.add(const UserGestured());
+            },
+            child: Scaffold(
+              body: Semantics(
+                label: widget.storyId == null
+                    ? 'Feed'
+                    : 'Feed ${widget.storyId}',
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final video = VideoFrame(constraints.biggest);
+                    final heldId = state.holdChoiceId;
+                    var holdX = 0.0;
+                    var holdY = 0.0;
+                    var holdRadius = 0.0;
+                    var hasHold = false;
+                    if (playback != null && heldId != null) {
+                      for (final choice in playback.choices) {
+                        if (choice.choiceId != heldId) continue;
+                        holdX = choice.x;
+                        holdY = choice.y;
+                        holdRadius = choice.radius;
+                        hasHold = true;
+                      }
+                    }
+                    return GestureDetector(
+                      // A hold never moves, so a vertical drag is never a hold.
+                      // The bloc still gates: speaking, window, holding,
+                      // committing, and the closing line ignore the swipe.
+                      onVerticalDragStart: (_) => _dragDy = 0,
+                      onVerticalDragUpdate: (details) =>
+                          _dragDy += details.primaryDelta ?? 0,
+                      onVerticalDragEnd: (details) {
+                        _pointer = null;
+                        final fling =
+                            (details.primaryVelocity ?? 0).abs() >= 200;
+                        final drag = _dragDy.abs() >= 64;
+                        _dragDy = 0;
+                        if (!fling && !drag) return;
+                        bloc.add(const StorySwiped());
+                      },
+                      child: Stack(
+                        fit: .expand,
+                        children: [
+                          if (showClip)
+                            NodeVideo(
+                              key: ValueKey(playback.node.videoUrl),
+                              url: playback.node.videoUrl,
+                              muted: state.muted,
+                              play:
+                                  state.phase == .playing &&
+                                  !state.hiddenPaused,
+                              player: widget.clipPlayer,
+                              onFirstFrame: () {},
+                              onEnded: () => bloc.add(const PauseReached()),
+                            ),
+                          // Stitch top scrim: static readability gradient. No tabs,
+                          // no countdown, no timing UI live here.
+                          if (showClip)
+                            const Positioned(
+                              left: 0,
+                              top: 0,
+                              right: 0,
+                              height: 120,
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Color(0xB3141318),
+                                        Color(0x00141318),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      ),
-                    if (playback != null &&
-                        !playback.node.isEnding &&
-                        (state.phase == .window || state.phase == .holding))
-                      for (final choice in playback.choices)
-                        ChoiceZone(
-                          key: ValueKey(choice.choiceId),
-                          choiceId: choice.choiceId,
-                          label: choice.label,
-                          x: choice.x,
-                          y: choice.y,
-                          radius: choice.radius,
-                          video: video,
-                          enabled: state.phase == .window,
-                          onHoldStart: (pointer) {
-                            _pointer = pointer;
-                            bloc.add(HoldStarted(choice.choiceId));
-                          },
-                        ),
-                    if (showClip)
-                      Positioned.fill(
-                        child: HoldPortal(
-                          open:
-                              state.phase == .holding ||
-                              state.phase == .committing,
-                          serial: state.holdSerial,
-                          center: hasHold
-                              ? video.point(holdX, holdY)
-                              : null,
-                          startRadius: hasHold
-                              ? video.radius(holdRadius)
-                              : 0,
-                          blurData: playback.node.videoFrameLastBlurData,
-                          onCompleted: () => bloc.add(const HoldCompleted()),
-                        ),
-                      ),
-                    if (showClip)
-                      Positioned(
-                        right: 8,
-                        top: MediaQuery.paddingOf(context).top,
-                        bottom: 88,
-                        child: Align(
-                          alignment: .centerRight,
-                          child: Column(
-                            mainAxisSize: .min,
-                            children: [
-                              MuteButton(
-                                muted: state.muted,
-                                autoMuted: state.autoMuted,
-                                onPressed: () {
-                                  if (state.muted) bloc.narrator.unlock();
-                                  bloc.add(const MuteToggled());
+                          // Stitch bottom scrim under the metadata column.
+                          if (showClip)
+                            const Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              height: 220,
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.bottomCenter,
+                                      end: Alignment.topCenter,
+                                      colors: [
+                                        Color(0xE6141318),
+                                        Color(0x00141318),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // Stitch bottom-left metadata column: story title + author.
+                          // No description or hashtags exist in playback state, so
+                          // none render here. Visibility gate unchanged (playing).
+                          if (playback != null)
+                            Positioned(
+                              left: 16,
+                              right: 88,
+                              bottom: MediaQuery.paddingOf(context).bottom + 24,
+                              child: Align(
+                                alignment: .centerLeft,
+                                child: AnimatedOpacity(
+                                  opacity: state.phase == .playing ? 1 : 0,
+                                  duration: const Duration(milliseconds: 200),
+                                  child: IgnorePointer(
+                                    ignoring: state.phase != .playing,
+                                    child: StoryChip(
+                                      title: playback.story.title,
+                                      author: playback.story.authorName,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (playback != null &&
+                              !playback.node.isEnding &&
+                              (state.phase == .window ||
+                                  state.phase == .holding))
+                            for (final choice in playback.choices)
+                              ChoiceZone(
+                                key: ValueKey(choice.choiceId),
+                                choiceId: choice.choiceId,
+                                label: choice.label,
+                                x: choice.x,
+                                y: choice.y,
+                                radius: choice.radius,
+                                video: video,
+                                enabled: state.phase == .window,
+                                onHoldStart: (pointer) {
+                                  _pointer = pointer;
+                                  bloc.add(HoldStarted(choice.choiceId));
                                 },
                               ),
-                              const SizedBox(height: 8),
-                              IconButton(
-                                tooltip: 'See map',
-                                onPressed: () {
+                          if (showClip)
+                            Positioned.fill(
+                              child: HoldPortal(
+                                open:
+                                    state.phase == .holding ||
+                                    state.phase == .committing,
+                                serial: state.holdSerial,
+                                center: hasHold
+                                    ? video.point(holdX, holdY)
+                                    : null,
+                                startRadius: hasHold
+                                    ? video.radius(holdRadius)
+                                    : 0,
+                                blurData: playback.node.videoFrameLastBlurData,
+                                onCompleted: () =>
+                                    bloc.add(const HoldCompleted()),
+                              ),
+                            ),
+                          if (showClip)
+                            Positioned(
+                              right: 8,
+                              top: MediaQuery.paddingOf(context).top,
+                              bottom: 88,
+                              child: Align(
+                                alignment: .centerRight,
+                                child: Column(
+                                  mainAxisSize: .min,
+                                  children: [
+                                    MuteButton(
+                                      muted: state.muted,
+                                      autoMuted: state.autoMuted,
+                                      onPressed: () {
+                                        if (state.muted) bloc.narrator.unlock();
+                                        bloc.add(const MuteToggled());
+                                      },
+                                    ),
+                                    const SizedBox(height: 12),
+                                    // Stitch right-rail map entry: icon-only glass
+                                    // pill. No counts, no drawer; opens the map.
+                                    Tooltip(
+                                      message: 'See map',
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          bloc.add(const MapRequested());
+                                          _openMap(context, state.storyId);
+                                        },
+                                        child: Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: const Color(0xD82A292F),
+                                            border: Border.all(
+                                              color: const Color(0x4D00F2FE),
+                                            ),
+                                            boxShadow: const [
+                                              BoxShadow(
+                                                color: Color(0x6600F2FE),
+                                                blurRadius: 14,
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Icon(
+                                            Icons.map_outlined,
+                                            color: Color(0xFFE0FDFF),
+                                            size: 22,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          if (showLine)
+                            Positioned(
+                              left: 24,
+                              right: 24,
+                              bottom: MediaQuery.paddingOf(context).bottom + 96,
+                              child: SubtitleLine(text: line),
+                            ),
+                          if (state.phase == .failed && state.failure != null)
+                            Center(
+                              child: FailureText(
+                                message: state.failure!,
+                                onRetry: () => bloc.add(
+                                  StoryOpened(storyId: state.storyId),
+                                ),
+                              ),
+                            ),
+                          if (showClip)
+                            Positioned.fill(
+                              child: _ReleaseCatcher(
+                                onRelease: (pointer) {
+                                  if (pointer != _pointer) return;
+                                  _pointer = null;
+                                  bloc.add(const HoldCancelled());
+                                },
+                              ),
+                            ),
+                          if (showCard)
+                            Positioned(
+                              left: 24,
+                              right: 24,
+                              bottom: MediaQuery.paddingOf(context).bottom + 96,
+                              child: EndingCard(
+                                key: const ValueKey('ending-card'),
+                                name:
+                                    playback.node.endingName ??
+                                    playback.node.title,
+                                type: playback.node.endingType,
+                                rewardCode: playback.node.rewardCode,
+                                unlockedTitle: state.sagaUnlocked?.title,
+                                onSeeMap: () {
                                   bloc.add(const MapRequested());
                                   _openMap(context, state.storyId);
                                 },
-                                icon: const Icon(Icons.map_outlined),
+                                onTryAnotherPath: () =>
+                                    bloc.add(const OtherPathRequested()),
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                        ],
                       ),
-                    if (showLine)
-                      Positioned(
-                        left: 24,
-                        right: 24,
-                        bottom: MediaQuery.paddingOf(context).bottom + 96,
-                        child: SubtitleLine(text: line),
-                      ),
-                    if (state.phase == .failed && state.failure != null)
-                      Center(
-                        child: FailureText(
-                          message: state.failure!,
-                          onRetry: () =>
-                              bloc.add(StoryOpened(storyId: state.storyId)),
-                        ),
-                      ),
-                    if (showClip)
-                      Positioned.fill(
-                        child: _ReleaseCatcher(
-                          onRelease: (pointer) {
-                            if (pointer != _pointer) return;
-                            _pointer = null;
-                            bloc.add(const HoldCancelled());
-                          },
-                        ),
-                      ),
-                    if (showCard)
-                      Positioned(
-                        left: 24,
-                        right: 24,
-                        bottom:
-                            MediaQuery.paddingOf(context).bottom + 96,
-                        child: EndingCard(
-                          key: const ValueKey('ending-card'),
-                          name:
-                              playback.node.endingName ??
-                              playback.node.title,
-                          type: playback.node.endingType,
-                          rewardCode: playback.node.rewardCode,
-                          unlockedTitle: state.sagaUnlocked?.title,
-                          onSeeMap: () {
-                            bloc.add(const MapRequested());
-                            _openMap(context, state.storyId);
-                          },
-                          onTryAnotherPath: () =>
-                              bloc.add(const OtherPathRequested()),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+              ),
             ),
-          ),
-          ),
-        );
-      },
+          );
+        },
       ),
     );
   }

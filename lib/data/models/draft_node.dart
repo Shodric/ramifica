@@ -10,6 +10,7 @@ class DraftChoice {
     required this.label,
     required this.targetNodeId,
     required this.isDefault,
+    this.slot,
     this.x = 0.5,
     this.y = 0.5,
     this.radius = 0.15,
@@ -21,6 +22,7 @@ class DraftChoice {
       label: _optionalString(json['label']) ?? '',
       targetNodeId: _requiredString(json['targetNodeId']),
       isDefault: json['isDefault'] == true,
+      slot: _optionalString(json['slot']),
       x: _optionalDouble(json['x']) ?? 0.5,
       y: _optionalDouble(json['y']) ?? 0.5,
       radius: _optionalDouble(json['radius']) ?? 0.15,
@@ -31,6 +33,11 @@ class DraftChoice {
   final String label;
   final String targetNodeId;
   final bool isDefault;
+
+  /// Branch slot: `A` (left) or `B` (right). Tells the canvas exactly
+  /// where the child lands. Null on legacy choices, which keep
+  /// append-order placement.
+  final String? slot;
   final double x;
   final double y;
   final double radius;
@@ -41,6 +48,7 @@ class DraftChoice {
       'label': label,
       'targetNodeId': targetNodeId,
       'isDefault': isDefault,
+      if (slot != null) 'slot': slot,
       'x': x,
       'y': y,
       'radius': radius,
@@ -51,6 +59,7 @@ class DraftChoice {
     String? label,
     String? targetNodeId,
     bool? isDefault,
+    String? slot,
     double? x,
     double? y,
     double? radius,
@@ -60,6 +69,7 @@ class DraftChoice {
       label: label ?? this.label,
       targetNodeId: targetNodeId ?? this.targetNodeId,
       isDefault: isDefault ?? this.isDefault,
+      slot: slot ?? this.slot,
       x: x ?? this.x,
       y: y ?? this.y,
       radius: radius ?? this.radius,
@@ -73,6 +83,7 @@ class DraftChoice {
         other.label == label &&
         other.targetNodeId == targetNodeId &&
         other.isDefault == isDefault &&
+        other.slot == slot &&
         other.x == x &&
         other.y == y &&
         other.radius == radius;
@@ -80,7 +91,7 @@ class DraftChoice {
 
   @override
   int get hashCode =>
-      Object.hash(choiceId, label, targetNodeId, isDefault, x, y, radius);
+      Object.hash(choiceId, label, targetNodeId, isDefault, slot, x, y, radius);
 }
 
 /// A draft node: `stories/{storyId}/nodes/{nodeId}`. Secrets included —
@@ -229,6 +240,7 @@ class DraftNode {
   final String? ttsAudioUrl;
   final String? ttsStatus;
   final double? ttsDurationSeconds;
+
   /// The narrator take approval. Set when the author approves the
   /// generated voice (`generateNodeVoice` always lands unapproved);
   /// editing the line idles the voice and clears this server-side.
@@ -239,8 +251,9 @@ class DraftNode {
   bool get secret => visibility == 'secret';
 
   /// Destination ids, in choice order. Drives canvas edges and orphans.
-  List<String> get childIds =>
-      [for (final choice in choices) choice.targetNodeId];
+  List<String> get childIds => [
+    for (final choice in choices) choice.targetNodeId,
+  ];
 
   /// True when this non-root node's video is stale: it inherited S from
   /// its parent E, the parent regenerated E since, and the backend forced
@@ -341,25 +354,30 @@ class DraftNode {
       videoUrl: videoUrl == null ? this.videoUrl : videoUrl(),
       videoStatus: videoStatus ?? this.videoStatus,
       videoSource: videoSource == null ? this.videoSource : videoSource(),
-      videoFromHash:
-          videoFromHash == null ? this.videoFromHash : videoFromHash(),
+      videoFromHash: videoFromHash == null
+          ? this.videoFromHash
+          : videoFromHash(),
       videoToHash: videoToHash == null ? this.videoToHash : videoToHash(),
       videoJobId: videoJobId == null ? this.videoJobId : videoJobId(),
       videoPrompt: videoPrompt == null ? this.videoPrompt : videoPrompt(),
-      pauseAtSeconds:
-          pauseAtSeconds == null ? this.pauseAtSeconds : pauseAtSeconds(),
-      windowSeconds:
-          windowSeconds == null ? this.windowSeconds : windowSeconds(),
+      pauseAtSeconds: pauseAtSeconds == null
+          ? this.pauseAtSeconds
+          : pauseAtSeconds(),
+      windowSeconds: windowSeconds == null
+          ? this.windowSeconds
+          : windowSeconds(),
       startImageSourceUrl: startImageSourceUrl == null
           ? this.startImageSourceUrl
           : startImageSourceUrl(),
       startImageStatus: startImageStatus ?? this.startImageStatus,
       startHash: startHash == null ? this.startHash : startHash(),
-      startImagePrompt:
-          startImagePrompt == null ? this.startImagePrompt : startImagePrompt(),
+      startImagePrompt: startImagePrompt == null
+          ? this.startImagePrompt
+          : startImagePrompt(),
       startImageApproved: startImageApproved ?? this.startImageApproved,
-      startFromNodeId:
-          startFromNodeId == null ? this.startFromNodeId : startFromNodeId(),
+      startFromNodeId: startFromNodeId == null
+          ? this.startFromNodeId
+          : startFromNodeId(),
       startParentEndHash: startParentEndHash == null
           ? this.startParentEndHash
           : startParentEndHash(),
@@ -368,10 +386,12 @@ class DraftNode {
           : endImageSourceUrl(),
       endImageStatus: endImageStatus ?? this.endImageStatus,
       endHash: endHash == null ? this.endHash : endHash(),
-      endImagePrompt:
-          endImagePrompt == null ? this.endImagePrompt : endImagePrompt(),
-      endImageSource:
-          endImageSource == null ? this.endImageSource : endImageSource(),
+      endImagePrompt: endImagePrompt == null
+          ? this.endImagePrompt
+          : endImagePrompt(),
+      endImageSource: endImageSource == null
+          ? this.endImageSource
+          : endImageSource(),
       endImageApproved: endImageApproved ?? this.endImageApproved,
       ttsText: ttsText ?? this.ttsText,
       lineApproved: lineApproved ?? this.lineApproved,
@@ -427,42 +447,42 @@ class DraftNode {
 
   @override
   int get hashCode => Object.hashAll([
-        nodeId,
-        title,
-        visibility,
-        isEnding,
-        endingName,
-        endingType,
-        videoUrl,
-        videoStatus,
-        videoSource,
-        videoFromHash,
-        videoToHash,
-        videoJobId,
-        videoPrompt,
-        pauseAtSeconds,
-        windowSeconds,
-        startImageSourceUrl,
-        startImageStatus,
-        startHash,
-        startImagePrompt,
-        startImageApproved,
-        startFromNodeId,
-        startParentEndHash,
-        endImageSourceUrl,
-        endImageStatus,
-        endHash,
-        endImagePrompt,
-        endImageSource,
-        endImageApproved,
-        ttsText,
-        lineApproved,
-        ttsAudioUrl,
-        ttsStatus,
-        ttsDurationSeconds,
-        ttsApproved,
-        Object.hashAll(choices),
-      ]);
+    nodeId,
+    title,
+    visibility,
+    isEnding,
+    endingName,
+    endingType,
+    videoUrl,
+    videoStatus,
+    videoSource,
+    videoFromHash,
+    videoToHash,
+    videoJobId,
+    videoPrompt,
+    pauseAtSeconds,
+    windowSeconds,
+    startImageSourceUrl,
+    startImageStatus,
+    startHash,
+    startImagePrompt,
+    startImageApproved,
+    startFromNodeId,
+    startParentEndHash,
+    endImageSourceUrl,
+    endImageStatus,
+    endHash,
+    endImagePrompt,
+    endImageSource,
+    endImageApproved,
+    ttsText,
+    lineApproved,
+    ttsAudioUrl,
+    ttsStatus,
+    ttsDurationSeconds,
+    ttsApproved,
+    Object.hashAll(choices),
+  ]);
 }
 
 String _requiredString(Object? value) {

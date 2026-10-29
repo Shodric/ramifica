@@ -11,6 +11,23 @@ import {
   toRecord,
 } from "../feed/shared";
 import {ComfyClient} from "../media/comfy";
+import {mkdtemp, rm, writeFile} from "fs/promises";
+import {tmpdir} from "os";
+import {join} from "path";
+import {
+  checkVideo,
+  defaultImageModel,
+  defaultVideoModel,
+  defaultVideoResolution,
+  downloadBytes,
+  generateImageBytes,
+  OpenRouterHttpError,
+  stillSize,
+  submitVideo,
+  videoAspectRatio,
+  videoDurationSeconds,
+} from "../media/openrouter";
+import {probeDuration} from "../media/processVideo";
 
 /** Which frame a still belongs to: `start` (root only) or `end`. */
 export type FrameWhich = "start" | "end";
@@ -45,11 +62,43 @@ export interface VideoRequestFn {
   }): Promise<{jobId: string; videoUrl?: string}>;
 }
 
-/** Injectable seams so tests run without GPU, Storage, or Seedance. */
+/**
+ * Injectable video status poll: provider job id in, status plus the
+ * download URL once the clip is ready out.
+ */
+export interface VideoCheckFn {
+  (jobId: string): Promise<{status: string; videoUrl?: string}>;
+}
+
+/** Injectable clip downloader: content URL in, bytes out. */
+export interface VideoDownloadFn {
+  (url: string): Promise<Buffer>;
+}
+
+/** Injectable clip reviewer: bytes in, playable seconds out. */
+export interface VideoProbeFn {
+  (bytes: Buffer): Promise<number>;
+}
+
+/** Injectable clip uploader: bytes in, Storage URL out. */
+export interface VideoStoreFn {
+  (args: {
+    storyId: string;
+    nodeId: string;
+    hash: string;
+    bytes: Buffer;
+  }): Promise<string>;
+}
+
+/** Injectable seams so tests run without GPU, Storage, or OpenRouter. */
 export interface NodeMediaDeps {
   imageGen?: ImageGenFn;
   uploadStill?: StillUploadFn;
   requestVideo?: VideoRequestFn;
+  checkVideo?: VideoCheckFn;
+  downloadVideo?: VideoDownloadFn;
+  probeVideo?: VideoProbeFn;
+  uploadVideo?: VideoStoreFn;
   now?: () => number;
 }
 
@@ -78,6 +127,7 @@ export interface GenerateNodeVideoResult {
   videoToHash: string;
   videoJobId: string;
   videoUrl: string | null;
+  poll: boolean;
 }
 
 /** Cost guard: one still prompt cannot smuggle a novel into the bill. */
@@ -362,7 +412,23 @@ export const generateNodeVideoWith = async (
     promptOverride ??
     optString(node.videoPrompt) ??
     `Slow morph from S to E, ${titleOf(node)}, vertical video.`;
-  const request = deps.requestVideo;
+  const storedJob = optString(node.videoJobId);
+  if (
+    storedJob !== null &&
+    storedJob.startsWith(openRouterJobPrefix) &&
+    optString(node.videoStatus) === "pending"
+  ) {
+    return resumeVideoJob(
+      db,
+      storyId,
+      nodeId,
+      storedJob,
+      fromHash,
+      endHash,
+      deps
+    );
+  }
+  const request = deps.requestVideo ?? defaultRequestVideo();
   const now = deps.now ?? (() => Date.now());
   let jobId = `pending_${nodeId}_${now()}`;
   let videoUrl: string | null = null;
@@ -375,7 +441,8 @@ export const generateNodeVideoWith = async (
       videoStatus = "ready";
     }
   }
-
+  const poll =
+    jobId.startsWith(openRouterJobPrefix) && videoStatus === "pending";
   const update: Record<string, unknown> = {
     videoStatus,
     videoSource: "generated",
@@ -399,6 +466,7 @@ export const generateNodeVideoWith = async (
     videoToHash: endHash,
     videoJobId: jobId,
     videoUrl,
+    poll,
   };
 };
 
@@ -493,21 +561,48 @@ const sha8 = (bytes: Buffer): string => {
 };
 
 /**
- * Default still provider: ComfyUI when configured, else null so the
- * caller records `pending` instead of burning a GPU it cannot reach.
+ * Still provider preference: an OpenRouter key wins (no GPU to reach),
+ * ComfyUI is the fallback, else null so the caller records `pending`.
+ * Pure env read so tests pin the ordering without billing a provider.
+ * @return {string | null} The provider kind, or null.
+ */
+export const imageProviderKind = (): "openrouter" | "comfy" | null => {
+  if (process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (process.env.COMFYUI_URL) return "comfy";
+  return null;
+};
+
+/**
+ * Default still provider: OpenRouter first, ComfyUI fallback, else null
+ * so the caller records `pending` instead of billing what it cannot reach.
  * @return {ImageGenFn | null} The provider, or null.
  */
 const defaultImageGen = (): ImageGenFn | null => {
-  if (!process.env.COMFYUI_URL) return null;
-  const client = new ComfyClient({});
-  return async (prompt: string) => {
-    const image = await client.textToImage({
-      prompt,
-      width: stillWidth,
-      height: stillHeight,
+  const kind = imageProviderKind();
+  if (kind === "openrouter") {
+    const apiKey = process.env.OPENROUTER_API_KEY ?? "";
+    const model = process.env.OPENROUTER_IMAGE_MODEL ?? defaultImageModel;
+    return async (prompt: string) => ({
+      bytes: await generateImageBytes({
+        apiKey,
+        model,
+        prompt,
+        size: stillSize,
+      }),
     });
-    return {bytes: image.bytes};
-  };
+  }
+  if (kind === "comfy") {
+    const client = new ComfyClient({});
+    return async (prompt: string) => {
+      const image = await client.textToImage({
+        prompt,
+        width: stillWidth,
+        height: stillHeight,
+      });
+      return {bytes: image.bytes};
+    };
+  }
+  return null;
 };
 
 /**
@@ -528,6 +623,216 @@ const defaultStillUpload = (): StillUploadFn => {
       expires: "2100-01-01",
     });
     return url;
+  };
+};
+
+/**
+ * Stored video jobs from OpenRouter carry this prefix, so a later tap
+ * resumes the same job instead of billing a duplicate submit.
+ */
+const openRouterJobPrefix = "or_";
+
+/**
+ * Default video submitter: OpenRouter Veo when keyed, else null so the
+ * caller records `pending` instead of throwing without credentials.
+ * @return {VideoRequestFn | null} The submitter, or null.
+ */
+const defaultRequestVideo = (): VideoRequestFn | null => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return null;
+  const model = process.env.OPENROUTER_VIDEO_MODEL ?? defaultVideoModel;
+  return async ({startUrl, endUrl, prompt}) => {
+    try {
+      const {jobId} = await submitVideo({
+        apiKey,
+        model,
+        prompt,
+        startUrl,
+        endUrl,
+        resolution: defaultVideoResolution,
+        aspectRatio: videoAspectRatio,
+        duration: videoDurationSeconds,
+      });
+      return {jobId: `${openRouterJobPrefix}${jobId}`};
+    } catch (error) {
+      if (error instanceof OpenRouterHttpError) {
+        throw new HttpsError(
+          "unavailable",
+          `Video request failed: ${error.status}.`
+        );
+      }
+      throw error;
+    }
+  };
+};
+
+/**
+ * Default job poll: OpenRouter status with the download URL on completion.
+ * Null credentials cannot happen for a stored job (submit needed the key),
+ * so a missing key reads as still pending and the client cap bounds it.
+ * @return {VideoCheckFn} The poller.
+ */
+const defaultCheckVideo = (): VideoCheckFn => {
+  return async (jobId: string) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) return {status: "pending"};
+    return checkVideo({apiKey, jobId});
+  };
+};
+
+/**
+ * Default clip downloader: content URL with auth, same as polling.
+ * @return {VideoDownloadFn} The downloader.
+ */
+const defaultDownloadVideo = (): VideoDownloadFn => {
+  return async (url: string) => {
+    const apiKey = process.env.OPENROUTER_API_KEY ?? "";
+    return downloadBytes(url, {apiKey});
+  };
+};
+
+/**
+ * Default clip reviewer: probes the playable seconds through a temp file.
+ * @return {VideoProbeFn} The reviewer.
+ */
+const defaultProbeVideo = (): VideoProbeFn => {
+  return async (bytes: Buffer) => {
+    const dir = await mkdtemp(join(tmpdir(), "ramifica-video-"));
+    try {
+      const path = join(dir, "clip.mp4");
+      await writeFile(path, bytes);
+      return await probeDuration(path);
+    } finally {
+      await rm(dir, {recursive: true, force: true});
+    }
+  };
+};
+
+/**
+ * Default clip uploader: versioned Storage path keyed by the hash, so
+ * repolls never collide and URLs stay stable per bytes.
+ * @return {VideoStoreFn} The uploader.
+ */
+const defaultUploadVideo = (): VideoStoreFn => {
+  return async (args) => {
+    const path =
+      `stories/${args.storyId}/${args.nodeId}-video-` + `${args.hash}.mp4`;
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(path);
+    await file.save(args.bytes, {metadata: {contentType: "video/mp4"}});
+    const [url] = await file.getSignedUrl({
+      action: "read",
+      expires: "2100-01-01",
+    });
+    return url;
+  };
+};
+
+/**
+ * Follows one stored OpenRouter job: checks status once; on completion
+ * downloads the clip, probes its length, stores it, and marks the node
+ * ready (the client picks the URL up on its next poll). Pending stays
+ * pending for the client to re-poll; terminal states clear the job and
+ * fail so the next tap starts fresh instead of re-checking a dead job.
+ * @param {Db} db Firestore.
+ * @param {string} storyId Story id.
+ * @param {string} nodeId Node id.
+ * @param {string} storedJob Stored `or_`-prefixed job id.
+ * @param {string} fromHash Verified S hash for the result echo.
+ * @param {string} endHash Verified E hash for the result echo.
+ * @param {NodeMediaDeps} deps Injectable provider seams.
+ * @return {Promise<GenerateNodeVideoResult>} The job state plus poll flag.
+ */
+const resumeVideoJob = async (
+  db: Db,
+  storyId: string,
+  nodeId: string,
+  storedJob: string,
+  fromHash: string,
+  endHash: string,
+  deps: NodeMediaDeps
+): Promise<GenerateNodeVideoResult> => {
+  const rawId = storedJob.slice(openRouterJobPrefix.length);
+  const check = deps.checkVideo ?? defaultCheckVideo();
+  let outcome: {status: string; videoUrl?: string};
+  try {
+    outcome = await check(rawId);
+  } catch (error) {
+    if (error instanceof OpenRouterHttpError && error.status === 404) {
+      await db
+        .doc(`stories/${storyId}/nodes/${nodeId}`)
+        .set({videoJobId: null}, {merge: true});
+      throw new HttpsError(
+        "internal",
+        "The video job expired before finishing."
+      );
+    }
+    if (error instanceof OpenRouterHttpError) {
+      throw new HttpsError(
+        "unavailable",
+        `Video status check failed: ${error.status}.`
+      );
+    }
+    throw error;
+  }
+  if (outcome.status === "pending" || outcome.status === "in_progress") {
+    return {
+      nodeId,
+      videoStatus: "pending",
+      videoFromHash: fromHash,
+      videoToHash: endHash,
+      videoJobId: storedJob,
+      videoUrl: null,
+      poll: true,
+    };
+  }
+  if (outcome.status !== "completed" || !outcome.videoUrl) {
+    await db
+      .doc(`stories/${storyId}/nodes/${nodeId}`)
+      .set({videoJobId: null}, {merge: true});
+    throw new HttpsError("internal", "Video generation failed.");
+  }
+  const download = deps.downloadVideo ?? defaultDownloadVideo();
+  const probe = deps.probeVideo ?? defaultProbeVideo();
+  const store = deps.uploadVideo ?? defaultUploadVideo();
+  let bytes: Buffer;
+  try {
+    bytes = await download(outcome.videoUrl);
+  } catch (error) {
+    if (error instanceof OpenRouterHttpError) {
+      throw new HttpsError(
+        "unavailable",
+        `Video download failed: ${error.status}.`
+      );
+    }
+    throw error;
+  }
+  const durationSeconds = await probe(bytes);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    throw new HttpsError("internal", "Video has no playable length.");
+  }
+  const hash = sha8(bytes);
+  const videoUrl = await store({storyId, nodeId, hash, bytes});
+  await db
+    .doc(`stories/${storyId}/nodes/${nodeId}`)
+    .set(
+      {
+        videoStatus: "ready",
+        videoUrl,
+        videoJobId: storedJob,
+        durationSeconds,
+        pauseAtSeconds: durationSeconds - 1 / 30,
+      },
+      {merge: true}
+    );
+  return {
+    nodeId,
+    videoStatus: "ready",
+    videoFromHash: fromHash,
+    videoToHash: endHash,
+    videoJobId: storedJob,
+    videoUrl,
+    poll: false,
   };
 };
 

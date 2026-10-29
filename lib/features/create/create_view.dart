@@ -12,8 +12,9 @@ import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_state.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
-import 'package:ramifica/features/create/node_inspector.dart';
-import 'package:ramifica/features/create/publish_bar.dart';
+import 'package:ramifica/features/create/create_node_screen.dart';
+import 'package:ramifica/features/create/create_preview.dart';
+import 'package:ramifica/features/create/create_ribbon.dart';
 import 'package:uuid/uuid.dart';
 
 /// Create tab: draft canvas plus the inspector. Creates its own bloc
@@ -54,10 +55,16 @@ class CreateView extends StatefulWidget {
 
 class _CreateViewState extends State<CreateView> {
   CreateBloc? _bloc;
+  late final TransformationController _canvasController;
+  double _zoom = 1;
+  var _rootMode = false;
+  var _pendingPush = false;
+  final _canvasKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    _canvasController = TransformationController()..addListener(_syncZoom);
     if (widget.bloc != null) {
       _bloc = widget.bloc;
       return;
@@ -70,6 +77,88 @@ class _CreateViewState extends State<CreateView> {
     } catch (_) {
       _bloc = null;
     }
+  }
+
+  @override
+  void dispose() {
+    _canvasController.dispose();
+    super.dispose();
+  }
+
+  void _syncZoom() {
+    final zoom = _canvasController.value.getMaxScaleOnAxis().clamp(0.25, 1.0);
+    if (zoom != _zoom) setState(() => _zoom = zoom);
+  }
+
+  void _zoomBy(double factor) {
+    final current = _canvasController.value.getMaxScaleOnAxis();
+    final zoom = (current * factor).clamp(0.25, 1.0);
+    final actual = zoom / current;
+    if (actual == 1) return;
+    _canvasController.value = Matrix4.copy(_canvasController.value)
+      ..multiply(Matrix4.diagonal3Values(actual, actual, 1));
+  }
+
+  /// Pans (at 1x) so the root node lands centered in the viewport — the
+  /// focus button always returns to the story root, never to a corner.
+  void _recenter(BuildContext context, CreateState state) {
+    final story = state.story;
+    final viewport = _canvasKey.currentContext?.size;
+    Offset? center;
+    if (story != null) {
+      final layout = layoutDraft(state.nodes, rootNodeId: story.rootNodeId);
+      center = layout.positions[story.rootNodeId];
+    }
+    _canvasController.value = recenterTransform(viewport, center);
+  }
+
+  /// True on the fullscreen canvas route — or on bare mounts: widget tests
+  /// run CreateView without a router and exercise the canvas directly.
+  bool _isCanvasRoute(BuildContext context) {
+    // Subscribe so route pushes rebuild the view; the read below tolerates
+    // bare mounts (widget tests run CreateView without a router).
+    context.dependOnInheritedWidgetOfExactType<AppNavigation>();
+    try {
+      return AppNavigation.read(context).location is CreateCanvasLocation;
+    } on FlutterError {
+      return true;
+    }
+  }
+
+  /// Router navigation that tolerates bare mounts (widget tests run the
+  /// view without AppNavigation, like the published-story redirect above).
+  void _go(BuildContext context, String path) {
+    try {
+      AppNavigation.read(context).go(path);
+    } on FlutterError {
+      // Widget tests mount CreateView without the router.
+    }
+  }
+
+  /// Selects the node and enters its fullscreen editor.
+  void _openNode(BuildContext context, CreateBloc bloc, String nodeId) {
+    bloc.add(NodeSelected(nodeId));
+    _pushNode(context, bloc, nodeId);
+  }
+
+  /// Adds a child under [parentId] on [slot], then enters it once the save
+  /// lands.
+  void _addAndOpen(CreateBloc bloc, String parentId, String slot) {
+    _pendingPush = true;
+    bloc.add(NodeAdded(parentNodeId: parentId, slot: slot));
+  }
+
+  void _pushNode(BuildContext context, CreateBloc bloc, String nodeId) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CreateNodeScreen(
+          bloc: bloc,
+          nodeId: nodeId,
+          pickVideo: widget.pickVideo,
+          newTakeId: widget.newTakeId,
+        ),
+      ),
+    );
   }
 
   @override
@@ -106,8 +195,22 @@ class _CreateViewState extends State<CreateView> {
                 // Widget tests mount CreateView without the router.
               }
             },
-            child: BlocBuilder<CreateBloc, CreateState>(
-              builder: (context, state) => _body(context, state),
+            child: BlocListener<CreateBloc, CreateState>(
+              listenWhen: (previous, next) =>
+                  _pendingPush &&
+                  previous.job != CreateJob.none &&
+                  next.job == CreateJob.none,
+              listener: (context, state) {
+                _pendingPush = false;
+                if (state.failure != null) return;
+                final openId = state.openNodeId;
+                if (openId == null) return;
+                final bloc = context.read<CreateBloc>();
+                _pushNode(context, bloc, openId);
+              },
+              child: BlocBuilder<CreateBloc, CreateState>(
+                builder: (context, state) => _body(context, state),
+              ),
             ),
           ),
         ),
@@ -117,246 +220,105 @@ class _CreateViewState extends State<CreateView> {
 
   Widget _body(BuildContext context, CreateState state) {
     final bloc = context.read<CreateBloc>();
-    final openIndex = state.openNodeId == null
-        ? -1
-        : state.nodes.indexWhere((node) => node.nodeId == state.openNodeId);
-    final sceneLabel = openIndex >= 0
-        ? 'Scene ${openIndex + 1} editing'
-        : 'Draft editing';
-    return Padding(
-      padding: const .all(16),
-      child: Column(
-        crossAxisAlignment: .stretch,
-        children: [
-          Row(
-            children: [
-              const Text('Create', style: RamificaText.screenTitle),
-              const Spacer(),
-              if (state.hasDraft && state.openNode != null)
-                OutlinedButton(
-                  onPressed: state.job == CreateJob.none
-                      ? () => bloc.add(const NodeAdded())
-                      : null,
-                  child: const Text('Add node'),
-                ),
-            ],
-          ),
-          if (state.hasDraft) ...[
-            const SizedBox(height: 8),
-            // Status HUD: static glow dot (no AnimationController here, so
-            // no pulse) plus a StatusPill-style Draft pill.
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    shape: .circle,
-                    color: RamificaColors.hotspot,
-                    boxShadow: [
-                      BoxShadow(
-                        color: RamificaColors.glowCyan,
-                        blurRadius: 8,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  sceneLabel,
-                  style: RamificaText.labelSM.copyWith(
-                    color: RamificaColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: RamificaColors.glass,
-                    borderRadius: .circular(999),
-                    border: .all(color: RamificaColors.glassBorder),
-                  ),
-                  child: Padding(
-                    padding: const .symmetric(horizontal: 10, vertical: 4),
-                    child: Text(
-                      'Draft',
-                      style: RamificaText.meta.copyWith(
-                        color: RamificaColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 12),
-          if (state.failure != null) ...[
-            FailureText(message: state.failure!),
-            const SizedBox(height: 12),
-          ],
-          if (!state.hasDraft)
+    final canvas = _isCanvasRoute(context);
+    if (!state.hasDraft) {
+      return Padding(
+        padding: const .all(16),
+        child: Column(
+          crossAxisAlignment: .stretch,
+          children: [
+            const Text('Create', style: RamificaText.screenTitle),
             Expanded(
               child: Center(
                 child: EmptyState(
                   message: 'Your drafts live here.',
                   actionLabel: 'Start a draft',
-                  onAction: () => bloc.add(const DraftRequested()),
+                  onAction: () {
+                    bloc.add(const DraftRequested());
+                    if (!canvas) _go(context, AppRoutes.createNew);
+                  },
                 ),
-              ),
-            )
-          else ...[
-            Expanded(
-              flex: 2,
-              child: DraftCanvas(
-                nodes: state.nodes,
-                orphans: state.orphanNodeIds,
-                openNodeId: state.openNodeId,
-                rootNodeId: state.story?.rootNodeId,
-                onSelect: (id) => bloc.add(NodeSelected(id)),
               ),
             ),
-            const SizedBox(height: 12),
-            if (state.openNode != null)
-              Flexible(
-                flex: 3,
-                child: SingleChildScrollView(
-                  child: NodeInspector(
-                    node: state.openNode!,
-                    status: state.statusOf(state.openNodeId!),
-                    missing: state.missingFor(state.openNode!),
-                    busy:
-                        state.job == CreateJob.saving ||
-                        state.job == CreateJob.generating ||
-                        state.job == CreateJob.imaging ||
-                        state.job == CreateJob.uploading,
-                    isRoot: state.isRoot(state.openNodeId!),
-                    parent: state.parentOf(state.openNode!),
-                    targets: [
-                      for (final node in state.nodes)
-                        if (node.nodeId != state.openNodeId) node,
-                    ],
-                    videoGateMessage: state.videoGateMessage(state.openNode!),
-                    videoDesynced: state.videoDesynced(state.openNode!),
-                    uploadProgress:
-                        state.job == CreateJob.uploading &&
-                            state.jobNodeId == state.openNodeId
-                        ? state.uploadProgress
-                        : null,
-                    onTitleChanged: (value) => bloc.add(
-                      NodeFieldChanged(nodeId: state.openNodeId!, title: value),
-                    ),
-                    onLineChanged: (value) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        ttsText: value,
-                      ),
-                    ),
-                    onChoiceLabelChanged: (choiceId, label) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        choiceLabels: {choiceId: label},
-                      ),
-                    ),
-                    onVisibilityChanged: (visibility) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        visibility: visibility,
-                      ),
-                    ),
-                    onWindowChanged: (window) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        windowSeconds: window,
-                      ),
-                    ),
-                    onZoneMoved: (choiceId, x, y) => bloc.add(
-                      ZoneMoved(
-                        nodeId: state.openNodeId!,
-                        choiceId: choiceId,
-                        x: x,
-                        y: y,
-                      ),
-                    ),
-                    onZoneAdded: (targetNodeId) => bloc.add(
-                      ChoiceAdded(
-                        nodeId: state.openNodeId!,
-                        targetNodeId: targetNodeId,
-                      ),
-                    ),
-                    onZoneRemoved: (choiceId) => bloc.add(
-                      ChoiceRemoved(
-                        nodeId: state.openNodeId!,
-                        choiceId: choiceId,
-                      ),
-                    ),
-                    onZonesSaved: () => bloc.add(const ZonesSaved()),
-                    onWindowSaved: () => bloc.add(const WindowSaved()),
-                    onSave: () => bloc.add(const NodeSaved()),
-                    onDelete: () => bloc.add(const NodeDeleted()),
-                    deleteBlockedReason: state.deleteBlockReason(
-                      state.openNodeId!,
-                    ),
-                    onGenerate: () => bloc.add(const TextGenerateRequested()),
-                    onRegenerate: () =>
-                        bloc.add(const TextGenerateRequested(regenerate: true)),
-                    onImageApprovalChanged: (which, approved) => bloc.add(
-                      ImageApprovalChanged(
-                        nodeId: state.openNodeId!,
-                        which: which,
-                        approved: approved,
-                      ),
-                    ),
-                    onImageGenerate: (which) => bloc.add(
-                      ImageGenerateRequested(
-                        nodeId: state.openNodeId!,
-                        which: which,
-                      ),
-                    ),
-                    onVideoGenerate: () =>
-                        bloc.add(VideoGenerateRequested(state.openNodeId!)),
-                    onLineApprovalChanged: (approved) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        lineApproved: approved,
-                      ),
-                    ),
-                    onVoiceGenerate: () =>
-                        bloc.add(VoiceGenerateRequested(state.openNodeId!)),
-                    onVoiceApprovalChanged: (approved) => bloc.add(
-                      NodeFieldChanged(
-                        nodeId: state.openNodeId!,
-                        ttsApproved: approved,
-                      ),
-                    ),
-                    onUploadVideo: widget.pickVideo == null
-                        ? null
-                        : () async {
-                            final picked = await widget.pickVideo!();
-                            if (picked == null) return;
-                            if (!context.mounted) return;
-                            bloc.add(
-                              VideoUploadRequested(
-                                nodeId: state.openNodeId!,
-                                contentType: picked.contentType,
-                                bytes: picked.bytes,
-                                takeId: widget.newTakeId(),
-                              ),
-                            );
-                          },
-                  ),
+          ],
+        ),
+      );
+    }
+    if (!canvas) {
+      return Padding(
+        padding: const .all(16),
+        child: Column(
+          crossAxisAlignment: .stretch,
+          children: [
+            const Text('Create', style: RamificaText.screenTitle),
+            Expanded(
+              child: Center(
+                child: EmptyState(
+                  message: 'Draft in progress.',
+                  actionLabel: 'Continue draft',
+                  onAction: () => _go(context, AppRoutes.createNew),
                 ),
               ),
-            if (state.hasDraft) ...[
-              const SizedBox(height: 12),
-              PublishBar(
-                problems: state.publishProblems(),
-                // Disabled while a job runs; the bar itself disables the
-                // CTA until the missing list is empty.
-                onPublish: state.job == CreateJob.none
-                    ? () => bloc.add(const StoryPublished())
-                    : null,
-              ),
-            ],
+            ),
           ],
+        ),
+      );
+    }
+    final problems = state.publishProblems();
+    return Padding(
+      padding: const .all(16),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        children: [
+          CreateRibbon(
+            title: state.story?.title ?? '',
+            rootMode: _rootMode,
+            onModeChanged: (mode) => setState(() => _rootMode = mode),
+            zoom: _zoom,
+            onZoomIn: () => _zoomBy(1.2),
+            onZoomOut: () => _zoomBy(1 / 1.2),
+            onRecenter: () => _recenter(context, state),
+            onSimulate: () => showCreatePreview(context, node: state.openNode),
+            onPublish: state.job == CreateJob.none
+                ? () => bloc.add(const StoryPublished())
+                : null,
+            canPublish: state.job == CreateJob.none && problems.isEmpty,
+            problems: problems,
+            onClose: () => _go(context, AppRoutes.create),
+          ),
+          const SizedBox(height: 12),
+          if (state.failure != null) ...[
+            FailureText(message: state.failure!),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: Container(
+              key: _canvasKey,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: RamificaLayout.cardBorderRadius,
+                border: Border.all(color: RamificaColors.outlineVariant),
+              ),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: CanvasViewportGrid(controller: _canvasController),
+                  ),
+                  DraftCanvas(
+                    nodes: state.nodes,
+                    orphans: state.orphanNodeIds,
+                    openNodeId: state.openNodeId,
+                    rootNodeId: state.story?.rootNodeId,
+                    onSelect: (id) => _openNode(context, bloc, id),
+                    onAdd: (parentId, slot) =>
+                        _addAndOpen(bloc, parentId, slot),
+                    transformationController: _canvasController,
+                    rootMode: _rootMode,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

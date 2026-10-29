@@ -6,7 +6,6 @@ import 'package:ramifica/core/widgets/ramifica_isotipo.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/frame_compare.dart';
-import 'package:ramifica/features/create/window_picker.dart';
 import 'package:ramifica/features/create/zone_marker.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
 
@@ -24,6 +23,8 @@ class NodeInspector extends StatefulWidget {
     required this.node,
     required this.status,
     required this.missing,
+    required this.headline,
+    this.choiceTargets = const {},
     this.busy = false,
     this.isRoot = false,
     this.parent,
@@ -34,12 +35,10 @@ class NodeInspector extends StatefulWidget {
     this.onLineChanged,
     this.onChoiceLabelChanged,
     this.onVisibilityChanged,
-    this.onWindowChanged,
     this.onZoneMoved,
     this.onZoneAdded,
     this.onZoneRemoved,
     this.onZonesSaved,
-    this.onWindowSaved,
     this.onSave,
     this.onDelete,
     this.deleteBlockedReason,
@@ -57,6 +56,12 @@ class NodeInspector extends StatefulWidget {
   final DraftNode node;
   final StatusPillState status;
   final List<String> missing;
+
+  /// `Scene 3 - ABA` style headline for the breadcrumb row.
+  final String headline;
+
+  /// `Scene M` label per choice id for the decision cards.
+  final Map<String, String> choiceTargets;
 
   /// A save or generation is in flight: fields and buttons disable.
   final bool busy;
@@ -82,12 +87,10 @@ class NodeInspector extends StatefulWidget {
   final ValueChanged<String>? onLineChanged;
   final void Function(String choiceId, String label)? onChoiceLabelChanged;
   final ValueChanged<String>? onVisibilityChanged;
-  final ValueChanged<int>? onWindowChanged;
   final void Function(String choiceId, double x, double y)? onZoneMoved;
   final ValueChanged<String>? onZoneAdded;
   final ValueChanged<String>? onZoneRemoved;
   final VoidCallback? onZonesSaved;
-  final VoidCallback? onWindowSaved;
   final VoidCallback? onSave;
 
   /// Deletes the open node. Null while no draft guards apply — always set
@@ -168,14 +171,55 @@ class _NodeInspectorState extends State<NodeInspector> {
         children: [
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  node.title.trim().isEmpty ? '(untitled)' : node.title,
-                  style: RamificaText.label,
-                  maxLines: 1,
-                  overflow: .ellipsis,
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: RamificaColors.hotspot,
+                  boxShadow: [
+                    BoxShadow(color: RamificaColors.glowCyan, blurRadius: 8),
+                  ],
                 ),
               ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.headline,
+                      style: RamificaText.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      'Editing · Draft',
+                      style: RamificaText.caption.copyWith(
+                        color: RamificaColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: RamificaColors.glass,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: RamificaColors.glassBorder),
+                ),
+                child: Text(
+                  'Draft',
+                  style: RamificaText.caption.copyWith(
+                    color: RamificaColors.textSecondary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               StatusPill(status: widget.status),
             ],
           ),
@@ -203,19 +247,19 @@ class _NodeInspectorState extends State<NodeInspector> {
             ),
             onChanged: widget.onLineChanged,
           ),
-          for (final choice in node.choices) ...[
+          for (var i = 0; i < node.choices.length; i++) ...[
             const SizedBox(height: 8),
-            TextField(
-              key: ValueKey('choice-${choice.choiceId}'),
-              controller: _labels[choice.choiceId],
-              enabled: !widget.busy,
-              maxLength: 24,
-              decoration: _inspectorInputDecoration(
-                labelText: 'Choice',
-                hintText: 'Enter the temple',
+            _DecisionCard(
+              choice: node.choices[i],
+              slot: node.choices[i].slot ?? String.fromCharCode(65 + i),
+              targetLabel:
+                  widget.choiceTargets[node.choices[i].choiceId] ?? 'Scene —',
+              busy: widget.busy,
+              labelController: _labels[node.choices[i].choiceId],
+              onLabelChanged: (label) => widget.onChoiceLabelChanged?.call(
+                node.choices[i].choiceId,
+                label,
               ),
-              onChanged: (label) =>
-                  widget.onChoiceLabelChanged?.call(choice.choiceId, label),
             ),
           ],
           const SizedBox(height: 8),
@@ -356,30 +400,6 @@ class _NodeInspectorState extends State<NodeInspector> {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('Window', style: RamificaText.label),
-          const SizedBox(height: 8),
-          if (node.isEnding)
-            const Text(
-              'Endings decide nothing, so there is no window.',
-              style: RamificaText.meta,
-            )
-          else
-            WindowPicker(
-              nodeId: node.nodeId,
-              value: node.windowSeconds ?? WindowPicker.defaultSeconds,
-              busy: widget.busy,
-              onChanged: widget.onWindowChanged,
-            ),
-          if (!node.isEnding)
-            Align(
-              alignment: .centerRight,
-              child: TextButton(
-                key: ValueKey('save-window-${node.nodeId}'),
-                onPressed: widget.busy ? null : widget.onWindowSaved,
-                child: const Text('Save window'),
-              ),
-            ),
-          const SizedBox(height: 16),
           const Text('Voice', style: RamificaText.label),
           const SizedBox(height: 8),
           _lineApprovalRow(node),
@@ -435,16 +455,14 @@ class _NodeInspectorState extends State<NodeInspector> {
                   key: ValueKey('approve-voice-${node.nodeId}'),
                   onPressed: widget.busy || node.ttsApproved
                       ? null
-                      : () =>
-                          widget.onVoiceApprovalChanged?.call(true),
+                      : () => widget.onVoiceApprovalChanged?.call(true),
                   child: const Text('Approve'),
                 ),
                 TextButton(
                   key: ValueKey('reject-voice-${node.nodeId}'),
                   onPressed: widget.busy || !node.ttsApproved
                       ? null
-                      : () =>
-                          widget.onVoiceApprovalChanged?.call(false),
+                      : () => widget.onVoiceApprovalChanged?.call(false),
                   child: const Text('Reject'),
                 ),
               ],
@@ -704,9 +722,7 @@ class _GradientCta extends StatelessWidget {
         color: enabled ? null : RamificaColors.glass,
         borderRadius: const BorderRadius.all(Radius.circular(12)),
         boxShadow: enabled
-            ? const [
-                BoxShadow(color: Color(0x8000F2FE), blurRadius: 16),
-              ]
+            ? const [BoxShadow(color: Color(0x8000F2FE), blurRadius: 16)]
             : null,
       ),
       child: TextButton(
@@ -718,6 +734,87 @@ class _GradientCta extends StatelessWidget {
           ),
         ),
         child: Text(label, style: RamificaText.labelSM),
+      ),
+    );
+  }
+}
+
+/// Stitch-style decision card: slot badge, editable label, and the target
+/// scene it leads to. Same fields and callbacks as the flat rows it
+/// replaces — only the layout mirrors the reference hotspot cards.
+class _DecisionCard extends StatelessWidget {
+  const _DecisionCard({
+    required this.choice,
+    required this.slot,
+    required this.targetLabel,
+    required this.busy,
+    required this.labelController,
+    required this.onLabelChanged,
+  });
+
+  final DraftChoice choice;
+  final String slot;
+  final String targetLabel;
+  final bool busy;
+  final TextEditingController? labelController;
+  final ValueChanged<String> onLabelChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('choice-card-${choice.choiceId}'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RamificaColors.containerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RamificaColors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: RamificaColors.hotspot, width: 1.5),
+                ),
+                child: Center(
+                  child: Text(
+                    slot,
+                    style: RamificaText.labelSM.copyWith(
+                      color: RamificaColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  key: ValueKey('choice-${choice.choiceId}'),
+                  controller: labelController,
+                  enabled: !busy,
+                  maxLength: 24,
+                  decoration: _inspectorInputDecoration(
+                    labelText: 'Choice',
+                    hintText: 'Enter the temple',
+                  ),
+                  onChanged: onLabelChanged,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '→ $targetLabel',
+            style: RamificaText.caption.copyWith(
+              color: RamificaColors.textSecondary,
+            ),
+          ),
+        ],
       ),
     );
   }

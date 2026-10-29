@@ -4,8 +4,10 @@ import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
+import 'package:ramifica/data/models/graph_stub.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/graph/graph_bloc.dart';
@@ -101,15 +103,31 @@ class _GraphViewState extends State<GraphView> {
     return Stack(
       fit: .expand,
       children: [
-        Semantics(
-          label: 'Graph canvas',
-          child: GraphCanvas(
-            stubs: state.stubs,
-            currentNodeId: state.currentNodeId,
-            selectedId: state.selectedId,
-            onSelected: (id) =>
-                context.read<GraphBloc>().add(NodeSelected(id)),
-          ),
+        Column(
+          crossAxisAlignment: .stretch,
+          children: [
+            _MapHeader(
+              storyId: state.storyId ?? widget.storyId,
+              busy: state.acting,
+              onRewind: () =>
+                  context.read<GraphBloc>().add(const RewindRequested()),
+            ),
+            _MapStats(stubs: state.stubs),
+            Expanded(
+              child: Semantics(
+                label: 'Graph canvas',
+                child: GraphCanvas(
+                  stubs: state.stubs,
+                  currentNodeId: state.currentNodeId,
+                  selectedId: state.selectedId,
+                  onSelected: (id) =>
+                      context.read<GraphBloc>().add(NodeSelected(id)),
+                  onApproach: (id) =>
+                      context.read<GraphBloc>().add(ApproachRequested(id)),
+                ),
+              ),
+            ),
+          ],
         ),
         if (selected != null)
           Positioned(
@@ -137,9 +155,7 @@ class _GraphViewState extends State<GraphView> {
                   for (final stub in state.stubs) {
                     if (stub.nodeId == id && stub.locked) locked = true;
                   }
-                  bloc.add(
-                    locked ? ApproachRequested(id) : NodeSelected(id),
-                  );
+                  bloc.add(locked ? ApproachRequested(id) : NodeSelected(id));
                 },
               ),
             ),
@@ -166,9 +182,9 @@ class _GraphViewState extends State<GraphView> {
     final story = widget.storyId.trim();
     try {
       AppNavigation.read(context).go(
-        story.isEmpty ? AppRoutes.feed : AppRoutes.storyPath(
-          Uri.encodeComponent(story),
-        ),
+        story.isEmpty
+            ? AppRoutes.feed
+            : AppRoutes.storyPath(Uri.encodeComponent(story)),
       );
     } on FlutterError {
       // Widget tests mount GraphView without the router.
@@ -195,4 +211,253 @@ String? _feedRunId(BuildContext context) {
   } on FlutterError {
     return null;
   }
+}
+
+/// Stitch summary header: story-map eyebrow plus the story id and a
+/// rewind action. No back button: tab navigation owns it.
+class _MapHeader extends StatelessWidget {
+  const _MapHeader({
+    required this.storyId,
+    required this.busy,
+    required this.onRewind,
+  });
+
+  final String storyId;
+  final bool busy;
+  final VoidCallback onRewind;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Row(
+        crossAxisAlignment: .start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: .start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.schema,
+                      size: 14,
+                      color: RamificaColors.onPrimaryContainer,
+                      semanticLabel: 'Story map',
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'STORY MAP',
+                      style: TextStyle(
+                        fontFamily: RamificaText.sans,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10,
+                        height: 14 / 10,
+                        letterSpacing: 0.8,
+                        color: RamificaColors.onPrimaryContainer,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  storyId,
+                  maxLines: 1,
+                  overflow: .ellipsis,
+                  style: RamificaText.headlineSM,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _RewindPill(busy: busy, onRewind: onRewind),
+        ],
+      ),
+    );
+  }
+}
+
+class _RewindPill extends StatelessWidget {
+  const _RewindPill({required this.busy, required this.onRewind});
+
+  final bool busy;
+  final VoidCallback onRewind;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: busy ? 0.5 : 1,
+      child: InkWell(
+        onTap: busy ? null : onRewind,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          decoration: BoxDecoration(
+            color: RamificaColors.containerHigh,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: const Row(
+            mainAxisSize: .min,
+            children: [
+              Icon(
+                Icons.restart_alt,
+                size: 16,
+                color: RamificaColors.textSecondary,
+                semanticLabel: 'Rewind',
+              ),
+              SizedBox(width: 4),
+              Text('Rewind', style: RamificaText.labelSM),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Stitch HUD strip, derived from stubs only: visited scenes, endings
+/// found, and total progress with a static bar.
+class _MapStats extends StatelessWidget {
+  const _MapStats({required this.stubs});
+
+  final List<GraphStub> stubs;
+
+  @override
+  Widget build(BuildContext context) {
+    var visited = 0;
+    var endings = 0;
+    var foundEndings = 0;
+    for (final stub in stubs) {
+      if (stub.visited) visited++;
+      if (stub.isEnding) {
+        endings++;
+        if (stub.visited) foundEndings++;
+      }
+    }
+    final percent = stubs.isEmpty ? 0 : (visited / stubs.length * 100).round();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: RamificaColors.containerLowest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              Expanded(
+                child: _StatCell(
+                  value: '$visited/${stubs.length}',
+                  valueColor: RamificaColors.onPrimaryContainer,
+                  label: 'Scenes discovered',
+                ),
+              ),
+              Expanded(
+                child: _StatCell(
+                  value: '$foundEndings/$endings',
+                  valueColor: RamificaColors.rewardGold,
+                  label: 'Endings found',
+                  icon: Icons.emoji_events,
+                ),
+              ),
+              Expanded(
+                child: _StatCell(
+                  value: '$percent%',
+                  valueColor: RamificaColors.nodeActive,
+                  label: 'Total progress',
+                  progress: stubs.isEmpty ? 0 : visited / stubs.length,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  const _StatCell({
+    required this.value,
+    required this.valueColor,
+    required this.label,
+    this.icon,
+    this.progress,
+  });
+
+  final String value;
+  final Color valueColor;
+  final String label;
+  final IconData? icon;
+  final double? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: RamificaColors.containerLow,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: .center,
+            children: [
+              Text(
+                value,
+                style: RamificaText.headlineSM.copyWith(color: valueColor),
+              ),
+              if (icon != null) ...[
+                const SizedBox(width: 4),
+                Icon(icon, size: 16, color: valueColor),
+              ],
+            ],
+          ),
+          if (progress != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: SizedBox(
+                  height: 4,
+                  width: double.infinity,
+                  child: CustomPaint(painter: _ProgressBar(progress!)),
+                ),
+              ),
+            ),
+          Padding(
+            padding: EdgeInsets.only(top: progress != null ? 4 : 2),
+            child: Text(label, textAlign: .center, style: RamificaText.meta),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressBar extends CustomPainter {
+  const _ProgressBar(this.progress);
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = RamificaColors.containerHighest,
+    );
+    if (progress <= 0) return;
+    canvas.drawRect(
+      Offset.zero & Size(size.width * progress.clamp(0.0, 1.0), size.height),
+      Paint()
+        ..shader = const LinearGradient(
+          colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+        ).createShader(Offset.zero & size),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ProgressBar old) => old.progress != progress;
 }

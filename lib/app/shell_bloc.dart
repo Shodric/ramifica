@@ -9,7 +9,8 @@ ShellState shellStateFor(AppLocation location) {
       storyId: storyId == null || storyId.isEmpty ? null : storyId,
     ),
     ExploreLocation() => const ShellState(tab: .explore),
-    CreateLocation() => const ShellState(tab: .create),
+    CreateLocation() ||
+    CreateCanvasLocation() => const ShellState(tab: .create),
     GraphLocation(:final storyId) => ShellState(tab: .graph, storyId: storyId),
     ProfileLocation() => const ShellState(tab: .profile),
     AccessLocation() || UnknownLocation() => const ShellState(),

@@ -6,8 +6,10 @@ import {
   approveNodeImageWith,
   generateNodeImageWith,
   generateNodeVideoWith,
+  imageProviderKind,
   NodeMediaDeps,
 } from "./generateNodeMedia";
+import {OpenRouterHttpError} from "../media/openrouter";
 
 type Fields = {[field: string]: unknown};
 
@@ -488,6 +490,7 @@ test("video inherits the parent E as S and records a pending job", async () => {
   assert.equal(result.videoFromHash, "hash-e1");
   assert.equal(result.videoToHash, "hash-e2");
   assert.equal(result.videoJobId, "pending_node_002_1234");
+  assert.equal(result.poll, false);
   assert.equal(result.videoUrl, null);
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.startParentEndHash, "hash-e1");
@@ -516,6 +519,7 @@ test("video marks ready when the provider returns a URL", async () => {
   assert.equal(result.videoFromHash, "hash-s1");
   assert.equal(result.videoToHash, "hash-e1");
   assert.equal(result.videoUrl, "https://cdn.example/v-new.mp4");
+  assert.equal(result.poll, false);
 });
 
 test("video needs the node E generated first", async () => {
@@ -563,4 +567,159 @@ test("re-inheriting after a regen re-links the child", async () => {
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.startParentEndHash, regen.endHash);
   assert.equal(child.data()?.videoStatus, "pending");
+});
+
+test("image prefers OpenRouter over Comfy when the key is set", async () => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const comfyUrl = process.env.COMFYUI_URL;
+  try {
+    process.env.OPENROUTER_API_KEY = "key-1";
+    process.env.COMFYUI_URL = "http://comfy.example";
+    assert.equal(imageProviderKind(), "openrouter");
+    delete process.env.OPENROUTER_API_KEY;
+    assert.equal(imageProviderKind(), "comfy");
+    delete process.env.COMFYUI_URL;
+    assert.equal(imageProviderKind(), null);
+  } finally {
+    if (apiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = apiKey;
+    if (comfyUrl === undefined) delete process.env.COMFYUI_URL;
+    else process.env.COMFYUI_URL = comfyUrl;
+  }
+});
+
+test("video provider submit asks the client to poll", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeVideoWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_002"},
+    mockDeps({
+      requestVideo: async () => ({jobId: "or_job-9"}),
+    })
+  );
+  assert.equal(result.videoStatus, "pending");
+  assert.equal(result.videoJobId, "or_job-9");
+  assert.equal(result.videoUrl, null);
+  assert.equal(result.poll, true);
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoJobId, "or_job-9");
+});
+
+test("video resumes a stored job without resubmitting", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_002").set(
+    {videoJobId: "or_job-9", videoStatus: "pending"},
+    {merge: true}
+  );
+  let submitted = false;
+  const result = await generateNodeVideoWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_002"},
+    mockDeps({
+      requestVideo: async () => {
+        submitted = true;
+        return {jobId: "or_job-10"};
+      },
+      checkVideo: async (jobId: string) => {
+        assert.equal(jobId, "job-9");
+        return {status: "pending"};
+      },
+    })
+  );
+  assert.equal(submitted, false);
+  assert.equal(result.videoStatus, "pending");
+  assert.equal(result.videoJobId, "or_job-9");
+  assert.equal(result.poll, true);
+});
+
+test("video completion stores the finished clip", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_002").set(
+    {videoJobId: "or_job-9", videoStatus: "pending"},
+    {merge: true}
+  );
+  const seen: string[] = [];
+  const result = await generateNodeVideoWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_002"},
+    mockDeps({
+      checkVideo: async () => ({
+        status: "completed",
+        videoUrl: "https://openrouter.example/content",
+      }),
+      downloadVideo: async (url: string) => {
+        seen.push(url);
+        return Buffer.from("fake-clip");
+      },
+      probeVideo: async () => 6,
+      uploadVideo: async (args) => {
+        assert.equal(args.storyId, "story_draft");
+        assert.equal(args.nodeId, "node_002");
+        return `https://cdn.example/${args.hash}.mp4`;
+      },
+    })
+  );
+  assert.deepEqual(seen, ["https://openrouter.example/content"]);
+  const hash = createHash("sha256")
+    .update("fake-clip")
+    .digest("hex")
+    .slice(0, 8);
+  assert.equal(result.videoStatus, "ready");
+  assert.equal(result.videoUrl, `https://cdn.example/${hash}.mp4`);
+  assert.equal(result.videoJobId, "or_job-9");
+  assert.equal(result.poll, false);
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoStatus, "ready");
+  assert.equal(child.data()?.durationSeconds, 6);
+  assert.equal(child.data()?.pauseAtSeconds, 6 - 1 / 30);
+});
+
+test("video failure clears the job and fails", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_002").set(
+    {videoJobId: "or_job-9", videoStatus: "pending"},
+    {merge: true}
+  );
+  await rejectsWith(
+    generateNodeVideoWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_002"},
+      mockDeps({checkVideo: async () => ({status: "failed"})})
+    ),
+    "internal"
+  );
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoJobId, null);
+});
+
+test("an expired video job clears and fails", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_002").set(
+    {videoJobId: "or_job-9", videoStatus: "pending"},
+    {merge: true}
+  );
+  await rejectsWith(
+    generateNodeVideoWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_002"},
+      mockDeps({
+        checkVideo: async () => {
+          throw new OpenRouterHttpError(404, "gone");
+        },
+      })
+    ),
+    "internal"
+  );
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoJobId, null);
 });

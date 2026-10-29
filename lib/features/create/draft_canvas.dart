@@ -1,11 +1,16 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_node_card.dart';
+import 'package:ramifica/features/create/create_plus_node.dart';
 
-const _hGap = 120.0;
-const _vGap = 150.0;
-const _pad = 72.0;
-const _nodeRadius = 24.0;
+/// Horizontal sibling gap and vertical row pitch. Gaps fit 170px cards
+/// plus connector room, and the pad clears card halves, so nothing clips.
+const _hGap = 200.0;
+const _vGap = 240.0;
+const _pad = 120.0;
 
 /// One drawn edge. [returns] marks a cycle: the child sits on the same or
 /// a higher layer, so the edge curves back instead of dropping down.
@@ -33,99 +38,264 @@ class DraftLayout {
   final Size size;
 }
 
-/// Tree layout from [DraftNode.childIds]. Same algorithm as the map's
-/// `layoutGraph`: the root is the node no other node points at (falling
-/// back to the story root, then list order); depth comes from breadth
-/// first search, so a node reached twice keeps its shallowest layer and
-/// the second edge draws as a return curve. Nodes unreachable from the
-/// root land on layer zero — the view passes them as [orphans] to draw
-/// them distinctly.
-DraftLayout layoutDraft(
-  List<DraftNode> nodes, {
-  String? rootNodeId,
-}) {
+/// Tree layout from [DraftNode.childIds]: a top-down pyramid. Leaves run left
+/// to right; each parent centers over its children. Children order by slot:
+/// unslotted legacy choices first (append order), then slot `A`, then `B`;
+/// empty slots become `+` minis in place, so tapping a mini is always
+/// replaced by its child on the same spot. Merged nodes keep their
+/// shallowest depth and repeat edges draw as return curves; unreachable
+/// nodes lay out as their own trees after the main one.
+DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
   if (nodes.isEmpty) {
     return const DraftLayout(positions: {}, edges: [], size: Size(240, 240));
   }
   final byId = {for (final node in nodes) node.nodeId: node};
-  final pointed = <String>{};
-  for (final node in nodes) {
-    for (final child in node.childIds) {
-      if (byId.containsKey(child)) pointed.add(child);
-    }
-  }
-  var root = nodes.first.nodeId;
-  if (rootNodeId != null && byId.containsKey(rootNodeId)) {
-    root = rootNodeId;
-  } else {
-    for (final node in nodes) {
-      if (!pointed.contains(node.nodeId)) {
-        root = node.nodeId;
-        break;
+  final root = _resolveRootId(nodes, rootNodeId);
+  // Forest DFS from the root, then any unreachable nodes: first visit
+  // wins the tree edge, so merges and cycles never double-place.
+  final depth = <String, int>{};
+  final treeKids = <String, List<String>>{};
+  void visit(String id, int d) {
+    depth[id] = d;
+    final kids = <String>[];
+    final node = byId[id];
+    if (node != null) {
+      // Slot-ordered children: unslotted legacy choices keep append order
+      // first, then A, then B. Each free slot renders its own `+` mini in
+      // place (up to the two-choice cap), so a tapped mini is always
+      // replaced by its child on the same spot.
+      final bySlot = <String, String>{};
+      final unslotted = <String>[];
+      for (final link in _orderedLinks(node)) {
+        if (!byId.containsKey(link.target) || depth.containsKey(link.target)) {
+          continue;
+        }
+        final raw = link.slot;
+        final String? slot = (raw == 'A' || raw == 'B') ? raw : null;
+        if (slot == null || bySlot.containsKey(slot)) {
+          unslotted.add(link.target);
+        } else {
+          bySlot[slot] = link.target;
+        }
+      }
+      kids.addAll(unslotted);
+      if (!node.isEnding) {
+        var remaining = 2 - node.choices.length;
+        for (final s in const ['A', 'B']) {
+          final real = bySlot[s];
+          if (real != null) {
+            kids.add(real);
+          } else if (remaining > 0) {
+            final virtual = 'mini:$id:$s';
+            if (!byId.containsKey(virtual)) {
+              kids.add(virtual);
+              remaining--;
+            }
+          }
+        }
       }
     }
-  }
-  final depth = <String, int>{root: 0};
-  final queue = [root];
-  while (queue.isNotEmpty) {
-    final next = queue.removeAt(0);
-    final parent = byId[next];
-    if (parent == null) continue;
-    for (final child in parent.childIds) {
-      if (!byId.containsKey(child) || depth.containsKey(child)) continue;
-      depth[child] = depth[next]! + 1;
-      queue.add(child);
+    treeKids[id] = kids;
+    for (final kid in kids) {
+      if (!depth.containsKey(kid)) visit(kid, d + 1);
     }
   }
+
+  visit(root, 0);
   for (final node in nodes) {
-    depth.putIfAbsent(node.nodeId, () => 0);
+    if (!depth.containsKey(node.nodeId)) visit(node.nodeId, 0);
   }
-  final layers = <int, List<String>>{};
-  for (final node in nodes) {
-    layers.putIfAbsent(depth[node.nodeId]!, () => []).add(node.nodeId);
-  }
-  var widest = 1;
-  var deepest = 0;
-  for (final entry in layers.entries) {
-    if (entry.value.length > widest) widest = entry.value.length;
-    if (entry.key > deepest) deepest = entry.key;
-  }
-  final positions = <String, Offset>{};
-  for (final entry in layers.entries) {
-    final ids = entry.value;
-    for (var i = 0; i < ids.length; i++) {
-      positions[ids[i]] = Offset(
-        _pad + (i - (ids.length - 1) / 2) * _hGap + (widest * _hGap) / 2,
-        _pad + entry.key * _vGap,
-      );
+  // Leaves run left to right; each parent centers over first/last child.
+  final left = <String, double>{};
+  var leaf = 0.0;
+  void place(String id) {
+    final kids = treeKids[id] ?? const <String>[];
+    if (kids.isEmpty) {
+      left[id] = leaf;
+      leaf += _hGap;
+      return;
     }
+    for (final kid in kids) {
+      if (!left.containsKey(kid)) place(kid);
+    }
+    left[id] = (left[kids.first]! + left[kids.last]!) / 2;
   }
+
+  place(root);
+  for (final node in nodes) {
+    if (!left.containsKey(node.nodeId)) place(node.nodeId);
+  }
+  final positions = <String, Offset>{
+    for (final entry in left.entries)
+      entry.key: Offset(
+        _pad + entry.value,
+        _pad + (depth[entry.key] ?? 0) * _vGap,
+      ),
+  };
   final edges = <DraftEdge>[];
   for (final node in nodes) {
-    final from = positions[node.nodeId];
-    if (from == null) continue;
     for (final child in node.childIds) {
-      final to = positions[child];
-      if (to == null) continue;
+      if (!positions.containsKey(child)) continue;
       edges.add(
         DraftEdge(
           from: node.nodeId,
           to: child,
-          returns: depth[child]! <= depth[node.nodeId]!,
+          returns: (depth[child] ?? 0) <= (depth[node.nodeId] ?? 0),
         ),
       );
     }
   }
+  for (final entry in treeKids.entries) {
+    for (final kid in entry.value) {
+      if (!kid.startsWith('mini:') || byId.containsKey(kid)) continue;
+      edges.add(DraftEdge(from: entry.key, to: kid, returns: false));
+    }
+  }
+  var deepest = 0;
+  var maxX = 0.0;
+  for (final entry in positions.entries) {
+    final d = depth[entry.key] ?? 0;
+    if (d > deepest) deepest = d;
+    if (entry.value.dx > maxX) maxX = entry.value.dx;
+  }
   return DraftLayout(
     positions: positions,
     edges: edges,
-    size: Size(widest * _hGap + _pad * 2, deepest * _vGap + _pad * 2 + 40),
+    size: Size(maxX + _pad + 120, deepest * _vGap + _pad * 2 + 200),
   );
 }
 
-/// Draft canvas: every node with its title, secrets included. Secrets get
-/// a lock; orphans (unreachable from the root) draw dashed and dimmed so
-/// the author sees what players would never reach. Taps select a node.
+/// Ids the canvas shows in root mode: the root plus its direct children.
+/// Null means show everything.
+Set<String>? rootModeVisibleIds(
+  List<DraftNode> nodes,
+  String? rootNodeId,
+  bool rootMode,
+) {
+  if (!rootMode || rootNodeId == null) return null;
+  DraftNode? root;
+  for (final node in nodes) {
+    if (node.nodeId == rootNodeId) root = node;
+  }
+  if (root == null) return null;
+  return {root.nodeId, ...root.childIds};
+}
+
+/// Root resolution shared by layout, paths, and numbering: explicit
+/// [rootNodeId] when it exists, else the node nobody points at, else
+/// list order. Empty string when there are no nodes.
+String _resolveRootId(List<DraftNode> nodes, String? rootNodeId) {
+  if (nodes.isEmpty) return '';
+  final byId = {for (final node in nodes) node.nodeId: node};
+  if (rootNodeId != null && byId.containsKey(rootNodeId)) return rootNodeId;
+  final pointed = <String>{
+    for (final node in nodes)
+      for (final child in node.childIds)
+        if (byId.containsKey(child)) child,
+  };
+  for (final node in nodes) {
+    if (!pointed.contains(node.nodeId)) return node.nodeId;
+  }
+  return nodes.first.nodeId;
+}
+
+/// Child links in canvas order: unslotted legacy choices first (append
+/// order), then slot `A`, then slot `B`. Targets repeat-safe: callers
+/// dedupe by visit.
+Iterable<({String target, String? slot})> _orderedLinks(DraftNode node) sync* {
+  final seen = <String>{};
+  for (final choice in node.choices) {
+    if (choice.slot != 'A' &&
+        choice.slot != 'B' &&
+        seen.add(choice.targetNodeId)) {
+      yield (target: choice.targetNodeId, slot: null);
+    }
+  }
+  for (final s in const ['A', 'B']) {
+    for (final choice in node.choices) {
+      if (choice.slot == s && seen.add(choice.targetNodeId)) {
+        yield (target: choice.targetNodeId, slot: s);
+      }
+    }
+  }
+}
+
+/// Scene numbers in story order: depth-first from the root following
+/// canvas order, then any unreachable nodes. The root is always 1, so a
+/// chain reads 1, 2, 3… instead of fetch order.
+Map<String, int> sceneIndexes(List<DraftNode> nodes, String? rootNodeId) {
+  final byId = {for (final node in nodes) node.nodeId: node};
+  final root = _resolveRootId(nodes, rootNodeId);
+  final seen = <String>{};
+  final order = <String>[];
+  void walk(String id) {
+    final node = byId[id];
+    if (node == null || !seen.add(id)) return;
+    order.add(id);
+    for (final link in _orderedLinks(node)) {
+      walk(link.target);
+    }
+  }
+
+  if (root.isNotEmpty) walk(root);
+  for (final node in nodes) {
+    walk(node.nodeId);
+  }
+  return {for (var i = 0; i < order.length; i++) order[i]: i + 1};
+}
+
+/// Branch path per node from the root (`''` for the root itself, `'A'`
+/// for the A child, `'ABA'` for the B child of the A child of A...).
+/// Empty means the plain `Scene N` label; shown next to it otherwise.
+/// Unreachable nodes keep an empty path. Cycles resolve to the first
+/// visit, mirroring [layoutDraft].
+Map<String, String> slotPaths(List<DraftNode> nodes, String? rootNodeId) {
+  final byId = {for (final node in nodes) node.nodeId: node};
+  final root = _resolveRootId(nodes, rootNodeId);
+  final paths = <String, String>{};
+  void walk(String id, String path) {
+    if (paths.containsKey(id)) return;
+    paths[id] = path;
+    final node = byId[id];
+    if (node == null) return;
+    for (final link in _orderedLinks(node)) {
+      if (link.target.isEmpty || !byId.containsKey(link.target)) continue;
+      walk(link.target, path + (link.slot ?? ''));
+    }
+  }
+
+  if (root.isNotEmpty) walk(root, '');
+  for (final node in nodes) {
+    paths.putIfAbsent(node.nodeId, () => '');
+  }
+  return paths;
+}
+
+/// Pan transform (at 1x) landing [center] in the middle of a [viewport].
+/// The focus button uses it to return to the root node; a missing
+/// viewport or target falls back to identity.
+Matrix4 recenterTransform(Size? viewport, Offset? center) {
+  if (viewport == null || center == null) return Matrix4.identity();
+  return Matrix4.identity()..setTranslationRaw(
+    viewport.width / 2 - center.dx,
+    viewport.height / 2 - center.dy,
+    0,
+  );
+}
+
+class _Mini {
+  const _Mini({required this.id, required this.parentId, required this.slot});
+
+  final String id;
+  final String parentId;
+  final String slot;
+}
+
+/// Draft canvas: Stitch-style node cards plus `+` minis for missing choice
+/// slots. Secrets show a lock; orphans (unreachable from the root) draw
+/// dimmed so the author sees what players would never reach. Card taps
+/// select a node; mini taps add a child under that parent. No hold
+/// gestures, no timers, no animations.
 class DraftCanvas extends StatelessWidget {
   const DraftCanvas({
     super.key,
@@ -134,6 +304,9 @@ class DraftCanvas extends StatelessWidget {
     this.openNodeId,
     this.rootNodeId,
     required this.onSelect,
+    required this.onAdd,
+    required this.transformationController,
+    this.rootMode = false,
   });
 
   final List<DraftNode> nodes;
@@ -142,197 +315,239 @@ class DraftCanvas extends StatelessWidget {
   final String? rootNodeId;
   final ValueChanged<String> onSelect;
 
+  /// Parent id and slot for the new child. Both travel with the tap so the
+  /// auto-link lands exactly on the tapped mini — never the open node by
+  /// accident, never the wrong slot.
+  final void Function(String parentId, String slot) onAdd;
+  final TransformationController transformationController;
+
+  /// When true, only the root and its direct children render.
+  final bool rootMode;
+
   @override
   Widget build(BuildContext context) {
     if (nodes.isEmpty) return const SizedBox.shrink();
+    // Free slots join the layout as virtual children in place, so each
+    // mini sits exactly where its child will land.
     final layout = layoutDraft(nodes, rootNodeId: rootNodeId);
-    // 24 px Stitch card on the opaque ramp. DecoratedBox only: no padding,
-    // so the CustomPaint origin (and tap mapping) stays exact.
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: RamificaColors.containerBase,
-        borderRadius: RamificaLayout.cardBorderRadius,
-        border: Border.all(color: RamificaColors.outlineVariant),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: .horizontal,
-        child: SingleChildScrollView(
-          scrollDirection: .vertical,
-          child: GestureDetector(
-            onTapUp: (details) => _tap(details, layout),
-            child: CustomPaint(
-              size: layout.size,
-              painter: _DraftPainter(
+    final visible = rootModeVisibleIds(nodes, rootNodeId, rootMode);
+    bool shown(String id) => visible == null || visible.contains(id);
+
+    final scene = sceneIndexes(nodes, rootNodeId);
+    final paths = slotPaths(nodes, rootNodeId);
+    final minis = <_Mini>[];
+    for (final node in nodes) {
+      if (!shown(node.nodeId)) continue;
+      if (rootMode && node.nodeId != rootNodeId) continue;
+      for (final s in const ['A', 'B']) {
+        final id = 'mini:${node.nodeId}:$s';
+        if (!layout.positions.containsKey(id)) continue;
+        minis.add(_Mini(id: id, parentId: node.nodeId, slot: s));
+      }
+    }
+    final virtualIds = {for (final mini in minis) mini.id};
+    final positions = <String, Offset>{
+      for (final node in nodes)
+        if (shown(node.nodeId) && layout.positions.containsKey(node.nodeId))
+          node.nodeId: layout.positions[node.nodeId]!,
+      for (final mini in minis) mini.id: layout.positions[mini.id]!,
+    };
+    final size = layout.size;
+    return InteractiveViewer(
+      transformationController: transformationController,
+      minScale: 0.25,
+      maxScale: 1.0,
+      boundaryMargin: const EdgeInsets.all(double.infinity),
+      constrained: false,
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: Stack(
+          children: [
+            CustomPaint(
+              size: size,
+              painter: _CanvasPainter(
+                positions: positions,
+                edges: layout.edges,
+                virtualIds: virtualIds,
                 nodes: nodes,
-                layout: layout,
-                orphans: orphans,
-                openNodeId: openNodeId,
               ),
             ),
-          ),
+            for (final node in nodes)
+              if (positions.containsKey(node.nodeId))
+                Positioned(
+                  left: positions[node.nodeId]!.dx - createCardWidth / 2,
+                  top: positions[node.nodeId]!.dy - createCardHeight / 2,
+                  child: CreateNodeCard(
+                    key: ValueKey('canvas-node-${node.nodeId}'),
+                    node: node,
+                    sceneIndex: scene[node.nodeId] ?? 0,
+                    slotPath: paths[node.nodeId] ?? '',
+                    isRoot: node.nodeId == rootNodeId,
+                    isOpen: node.nodeId == openNodeId,
+                    isOrphan: orphans.contains(node.nodeId),
+                    onTap: () => onSelect(node.nodeId),
+                  ),
+                ),
+            for (final mini in minis)
+              Positioned(
+                left: positions[mini.id]!.dx - createMiniWidth / 2,
+                top: positions[mini.id]!.dy - createMiniHeight / 2,
+                child: CreatePlusNode(
+                  key: ValueKey('canvas-add-${mini.parentId}-${mini.slot}'),
+                  parentId: mini.parentId,
+                  slot: mini.slot,
+                  onAdd: (_) => onAdd(mini.parentId, mini.slot),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
-
-  void _tap(TapUpDetails details, DraftLayout layout) {
-    double? best;
-    String? bestId;
-    for (final entry in layout.positions.entries) {
-      final distance = (entry.value - details.localPosition).distance;
-      if (distance <= _nodeRadius + 16 && (best == null || distance < best)) {
-        best = distance;
-        bestId = entry.key;
-      }
-    }
-    if (bestId != null) onSelect(bestId);
-  }
 }
 
-class _DraftPainter extends CustomPainter {
-  const _DraftPainter({
+class _CanvasPainter extends CustomPainter {
+  const _CanvasPainter({
+    required this.positions,
+    required this.edges,
+    required this.virtualIds,
     required this.nodes,
-    required this.layout,
-    required this.orphans,
-    required this.openNodeId,
   });
 
+  final Map<String, Offset> positions;
+  final List<DraftEdge> edges;
+  final Set<String> virtualIds;
   final List<DraftNode> nodes;
-  final DraftLayout layout;
-  final Set<String> orphans;
-  final String? openNodeId;
 
   @override
   void paint(Canvas canvas, Size size) {
     final edgePaint = Paint()
-      ..color = RamificaColors.nodeActive.withValues(alpha: 0.55)
+      ..shader = LinearGradient(
+        colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
       ..strokeWidth = 2
       ..style = .stroke;
-    for (final edge in layout.edges) {
-      final from = layout.positions[edge.from];
-      final to = layout.positions[edge.to];
+    final returnPaint = Paint()
+      ..color = RamificaColors.textSecondary.withValues(alpha: 0.6)
+      ..strokeWidth = 2
+      ..style = .stroke;
+    final miniPaint = Paint()
+      ..color = RamificaColors.textSecondary.withValues(alpha: 0.55)
+      ..strokeWidth = 1.5
+      ..style = .stroke;
+    for (final edge in edges) {
+      final from = positions[edge.from];
+      final to = positions[edge.to];
       if (from == null || to == null) continue;
+      // Empty slots hang off their parent on a dashed line; they take no
+      // arrowhead because nothing flows yet.
+      if (virtualIds.contains(edge.to)) {
+        _dashed(canvas, from, to, miniPaint);
+        continue;
+      }
       if (edge.returns) {
         final mid = Offset((from.dx + to.dx) / 2, from.dy - 64);
         canvas.drawPath(
           Path()
             ..moveTo(from.dx, from.dy)
             ..quadraticBezierTo(mid.dx, mid.dy, to.dx, to.dy),
-          edgePaint,
+          returnPaint,
         );
       } else {
-        canvas.drawLine(from, to, edgePaint);
+        canvas.drawPath(
+          Path()
+            ..moveTo(from.dx, from.dy)
+            ..cubicTo(from.dx, from.dy + 60, to.dx, to.dy - 60, to.dx, to.dy),
+          edgePaint,
+        );
+        _arrow(canvas, from, to, Paint()..color = RamificaColors.nodeActive);
       }
     }
-    final byId = {for (final node in nodes) node.nodeId: node};
-    for (final entry in layout.positions.entries) {
-      final node = byId[entry.key];
-      if (node == null) continue;
-      _paintNode(canvas, node, entry.value);
-    }
   }
 
-  void _paintNode(Canvas canvas, DraftNode node, Offset center) {
-    final orphan = orphans.contains(node.nodeId);
-    final open = node.nodeId == openNodeId;
-    final base = node.secret
-        ? RamificaColors.nodeLocked
-        : RamificaColors.nodeActive;
-    canvas.drawCircle(
-      center,
-      _nodeRadius,
-      Paint()..color = orphan ? base.withValues(alpha: 0.35) : base,
-    );
-    if (node.isEnding) {
-      canvas.drawCircle(
-        center,
-        _nodeRadius - 6,
-        Paint()
-          ..color = RamificaColors.surface
-          ..style = .stroke
-          ..strokeWidth = 2,
-      );
-    }
-    if (orphan) {
-      canvas.drawCircle(
-        center,
-        _nodeRadius + 5,
-        Paint()
-          ..color = RamificaColors.textSecondary.withValues(alpha: 0.7)
-          ..style = .stroke
-          ..strokeWidth = 2,
-      );
-    }
-    if (node.secret) {
-      _paintLock(canvas, center);
-    }
-    if (open) {
-      // Static ping halo: the zone-ring shape in a glow wash. No animation.
-      canvas.drawCircle(
-        center,
-        _nodeRadius + 11,
-        Paint()
-          ..color = RamificaColors.glowCyan
-          ..style = .stroke
-          ..strokeWidth = 2,
-      );
-      canvas.drawCircle(
-        center,
-        _nodeRadius + 5,
-        Paint()
-          ..color = RamificaColors.hotspot
-          ..style = .stroke
-          ..strokeWidth = 3,
-      );
-    }
-    final caption = node.title.trim().isEmpty ? '(untitled)' : node.title;
-    final suffix = orphan ? ' • orphan' : (node.secret ? ' • secret' : '');
-    final line = TextPainter(
-      text: TextSpan(
-        text: '$caption$suffix',
-        style: RamificaText.caption.copyWith(
-          color: orphan
-              ? RamificaColors.textSecondary
-              : RamificaColors.textPrimary,
-        ),
-      ),
-      textAlign: .center,
-      textDirection: .ltr,
-      maxLines: 2,
-    )..layout(maxWidth: 110);
-    line.paint(canvas, center + Offset(-55, _nodeRadius + 8));
-  }
-
-  void _paintLock(Canvas canvas, Offset center) {
-    final paint = Paint()
-      ..color = RamificaColors.textSecondary
-      ..style = .stroke
-      ..strokeWidth = 2.5;
-    canvas.drawRect(
-      Rect.fromCenter(
-        center: center + const Offset(0, 4),
-        width: 16,
-        height: 12,
-      ),
+  void _arrow(Canvas canvas, Offset from, Offset to, Paint paint) {
+    final angle = (to - from).direction;
+    const len = 10.0;
+    const half = 4.5;
+    final back = to - Offset(math.cos(angle), math.sin(angle)) * len;
+    final perp = Offset(-math.sin(angle), math.cos(angle)) * half;
+    canvas.drawPath(
+      Path()
+        ..moveTo(to.dx, to.dy)
+        ..lineTo(back.dx + perp.dx, back.dy + perp.dy)
+        ..lineTo(back.dx - perp.dx, back.dy - perp.dy)
+        ..close(),
       paint..style = .fill,
     );
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: center + const Offset(0, 1),
-        width: 10,
-        height: 10,
-      ),
-      3.14,
-      3.14,
-      false,
-      paint..style = .stroke,
-    );
+  }
+
+  void _dashed(Canvas canvas, Offset from, Offset to, Paint paint) {
+    const dash = 6.0;
+    const gap = 4.0;
+    final total = (to - from).distance;
+    if (total <= 0) return;
+    var d = 0.0;
+    while (d < total) {
+      final a = from + (to - from) * (d / total);
+      final b = from + (to - from) * (math.min(d + dash, total) / total);
+      canvas.drawLine(a, b, paint);
+      d += dash + gap;
+    }
   }
 
   @override
-  bool shouldRepaint(_DraftPainter old) {
-    return old.nodes != nodes ||
-        old.openNodeId != openNodeId ||
-        old.orphans != orphans;
+  bool shouldRepaint(_CanvasPainter old) {
+    return !identical(old.nodes, nodes) ||
+        old.positions.length != positions.length;
   }
+}
+
+/// Viewport-space dot grid behind the canvas. It paints in screen space
+/// (repainting on every [controller] change) so the dots cover the whole
+/// viewport at any pan or zoom, no matter how small the content box is.
+class CanvasViewportGrid extends StatelessWidget {
+  const CanvasViewportGrid({super.key, required this.controller});
+
+  final TransformationController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _ViewportGridPainter(controller),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _ViewportGridPainter extends CustomPainter {
+  _ViewportGridPainter(this.controller) : super(repaint: controller);
+
+  final TransformationController controller;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final forward = controller.value;
+    if (forward.determinant() == 0) return;
+    final inverse = Matrix4.inverted(forward);
+    final topLeft = MatrixUtils.transformPoint(inverse, Offset.zero);
+    final bottomRight = MatrixUtils.transformPoint(
+      inverse,
+      size.bottomRight(Offset.zero),
+    );
+    final dot = Paint()..color = RamificaColors.hotspot.withValues(alpha: 0.16);
+    for (var x = (topLeft.dx ~/ 32) * 32.0; x <= bottomRight.dx; x += 32) {
+      for (var y = (topLeft.dy ~/ 32) * 32.0; y <= bottomRight.dy; y += 32) {
+        canvas.drawCircle(
+          MatrixUtils.transformPoint(forward, Offset(x, y)),
+          0.75,
+          dot,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ViewportGridPainter old) =>
+      !identical(old.controller, controller);
 }

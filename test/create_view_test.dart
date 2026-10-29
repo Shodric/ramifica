@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/user.dart';
@@ -10,8 +12,7 @@ import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_view.dart';
-import 'package:ramifica/features/create/draft_canvas.dart';
-import 'package:ramifica/features/create/publish_bar.dart';
+import 'package:ramifica/features/create/create_node_screen.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
 
 void main() {
@@ -29,20 +30,49 @@ void main() {
       expect(bloc.state.openNodeId, 'node_1');
     });
 
+    testWidgets('start a draft enters the fullscreen canvas route', (
+      tester,
+    ) async {
+      final bloc = CreateBloc(repository: _repo(null));
+      addTearDown(bloc.close);
+      final controller = AppRouteController(const CreateLocation());
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppNavigation(
+            controller: controller,
+            child: CreateView(bloc: bloc),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Entry route: the draft pitch shows, but no canvas yet.
+      expect(find.text('Your drafts live here.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('canvas-node-node_1')), findsNothing);
+
+      await tester.tap(find.text('Start a draft'));
+      await tester.pumpAndSettle();
+
+      expect(pathOf(controller.location), AppRoutes.createNew);
+      expect(bloc.state.hasDraft, isTrue);
+      expect(find.byKey(const ValueKey('canvas-node-node_1')), findsOneWidget);
+    });
+
     testWidgets('the canvas selects nodes and the inspector edits them', (
       tester,
     ) async {
       final bloc = await _pumpDraft(tester);
 
-      // Titles, secrets, and orphans draw on the canvas painter, which
-      // widget finders cannot see; selection through it is asserted below.
-
-      // Tapping the leaf selects it in the inspector.
-      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
-      final origin = tester.getTopLeft(find.byType(DraftCanvas));
-      await tester.tapAt(origin + layout.positions['node_2']!);
+      // Empty slots render plus minis: the root has one unslotted child,
+      // so a single `+ A` mini waits; endings take no children.
+      expect(find.byKey(const ValueKey('canvas-add-node_1-A')), findsOneWidget);
+      expect(find.byKey(const ValueKey('canvas-add-node_2-A')), findsNothing);
+      // Tapping a card selects it and pushes its fullscreen editor.
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_2')));
       await tester.pumpAndSettle();
       expect(bloc.state.openNodeId, 'node_2');
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
 
       // Manual edits write bloc state through the fields.
       await tester.enterText(
@@ -53,9 +83,59 @@ void main() {
       expect(bloc.state.openNode?.title, 'Typed leaf');
     });
 
+    testWidgets('a plus mini creates the child and enters it', (tester) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+
+      await tester.tap(find.byKey(const ValueKey('canvas-add-node_1-A')));
+      await tester.pumpAndSettle();
+
+      final add = calls.singleWhere((call) => call.name == 'createNode');
+      expect(add.data['parentNodeId'], 'node_1');
+      expect(bloc.state.openNodeId, isNotNull);
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
+    });
+
+    testWidgets('tapping slot B first creates the child on slot B', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpMediaDraft(tester, calls, [
+        MapEntry('node_1', {
+          ..._mediaDocs().first.value,
+          'choices': const [],
+        }),
+      ]);
+
+      // Both empty slots show, A left of B.
+      expect(
+        find.byKey(const ValueKey('canvas-add-node_1-A')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('canvas-add-node_1-B')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('canvas-add-node_1-B')));
+      await tester.pumpAndSettle();
+
+      // The child lands linked on B and its editor opens.
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      final sent = (save.data['node'] as Map).map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      final saved = (sent['choices'] as List).cast<Map>();
+      expect(saved, hasLength(1));
+      expect(saved.single['slot'], 'B');
+      expect(bloc.state.openNodeId, isNotNull);
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
+    });
     testWidgets('Spark fills empties but keeps manual edits', (tester) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
 
       await tester.enterText(
         find.byKey(const ValueKey('title-node_1')),
@@ -72,6 +152,8 @@ void main() {
 
     testWidgets('Regenerate overwrites manual edits', (tester) async {
       final bloc = await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
 
       await tester.enterText(
         find.byKey(const ValueKey('title-node_1')),
@@ -90,8 +172,10 @@ void main() {
       final calls = <_Call>[];
       await _pumpDraft(tester, calls);
 
+      await _openNode(tester, 'node_1');
+
       expect(find.textContaining('needs a ready video'), findsWidgets);
-      expect(find.byKey(const ValueKey('publish-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ribbon-publish')), findsOneWidget);
       expect(
         find.byWidgetPredicate(
           (widget) =>
@@ -139,6 +223,8 @@ void main() {
     testWidgets('root shows S controls, child hides them', (tester) async {
       final bloc = await _pumpMediaDraft(tester);
 
+      await _openNode(tester, 'node_1');
+
       // S-vs-E comparison labels render for the open root.
       expect(find.text('Start'), findsOneWidget);
       expect(find.text('End'), findsOneWidget);
@@ -148,10 +234,10 @@ void main() {
       );
       expect(find.byKey(const ValueKey('approve-end-node_1')), findsOneWidget);
 
-      // Tapping the leaf selects it in the inspector.
-      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
-      final origin = tester.getTopLeft(find.byType(DraftCanvas));
-      await tester.tapAt(origin + layout.positions['node_2']!);
+      // Back to the canvas, then tapping the leaf opens its own screen.
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_2')));
       await tester.pumpAndSettle();
       expect(bloc.state.openNodeId, 'node_2');
 
@@ -163,6 +249,8 @@ void main() {
     testWidgets('approve dispatches the end-frame approval', (tester) async {
       final calls = <_Call>[];
       await _pumpMediaDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
 
       final approve = find.byKey(const ValueKey('approve-end-node_1'));
       await tester.ensureVisible(approve);
@@ -179,6 +267,8 @@ void main() {
     testWidgets('reject flips an approved end frame off', (tester) async {
       final calls = <_Call>[];
       await _pumpMediaDraft(tester, calls, _mediaDocs(approved: true));
+
+      await _openNode(tester, 'node_1');
 
       // The approved pill marks the approved E frame.
       expect(
@@ -205,9 +295,7 @@ void main() {
     ) async {
       final bloc = await _pumpMediaDraft(tester);
 
-      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
-      final origin = tester.getTopLeft(find.byType(DraftCanvas));
-      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_2')));
       await tester.pumpAndSettle();
       expect(bloc.state.openNodeId, 'node_2');
 
@@ -226,9 +314,7 @@ void main() {
     testWidgets('a stale child video shows the desync badge', (tester) async {
       final bloc = await _pumpMediaDraft(tester);
 
-      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
-      final origin = tester.getTopLeft(find.byType(DraftCanvas));
-      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_2')));
       await tester.pumpAndSettle();
       expect(bloc.state.openNodeId, 'node_2');
 
@@ -239,6 +325,8 @@ void main() {
     testWidgets('the upload button hides without a picker', (tester) async {
       await _pumpMediaDraft(tester);
 
+      await _openNode(tester, 'node_1');
+
       expect(find.byKey(const ValueKey('upload-video-node_1')), findsNothing);
     });
 
@@ -246,6 +334,8 @@ void main() {
       tester,
     ) async {
       await _pumpMediaDraft(tester);
+
+      await _openNode(tester, 'node_1');
 
       // Generated S and E frames offer another take (same generate call).
       expect(find.text('Another take'), findsNWidgets(2));
@@ -266,6 +356,8 @@ void main() {
           }),
         ],
       );
+
+      await _openNode(tester, 'node_1');
 
       // S row, E row, and the video button all retake.
       expect(find.text('Another take'), findsNWidgets(3));
@@ -299,6 +391,8 @@ void main() {
             },
       );
 
+      await _openNode(tester, 'node_1');
+
       final upload = find.byKey(const ValueKey('upload-video-node_1'));
       await tester.ensureVisible(upload);
       await tester.pumpAndSettle();
@@ -330,6 +424,8 @@ void main() {
             const PickedVideoFile(contentType: 'video/avi', bytes: [1, 2, 3]),
       );
 
+      await _openNode(tester, 'node_1');
+
       final upload = find.byKey(const ValueKey('upload-video-node_1'));
       await tester.ensureVisible(upload);
       await tester.pumpAndSettle();
@@ -354,6 +450,8 @@ void main() {
         ],
       );
 
+      await _openNode(tester, 'node_1');
+
       final upload = find.byKey(const ValueKey('upload-video-node_1'));
       await tester.ensureVisible(upload);
       await tester.pumpAndSettle();
@@ -365,6 +463,8 @@ void main() {
 
     testWidgets('zones render over the last frame', (tester) async {
       final bloc = await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
 
       // The open root carries one choice with a center-frame zone.
       final zone = find.byKey(const ValueKey('zone-c1'));
@@ -378,6 +478,8 @@ void main() {
       tester,
     ) async {
       final bloc = await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
 
       final zone = find.byKey(const ValueKey('zone-c1'));
       await tester.ensureVisible(zone);
@@ -399,6 +501,8 @@ void main() {
     testWidgets('deleting a zone removes its choice', (tester) async {
       final bloc = await _pumpDraft(tester);
 
+      await _openNode(tester, 'node_1');
+
       final zone = find.byKey(const ValueKey('zone-c1'));
       await tester.ensureVisible(zone);
       await tester.pumpAndSettle();
@@ -418,6 +522,8 @@ void main() {
     testWidgets('a picked target adds its zone', (tester) async {
       final bloc = await _pumpDraft(tester);
 
+      await _openNode(tester, 'node_1');
+
       // One choice so far: the picker offers the leaf as the second target.
       final picker = find.byKey(const ValueKey('zone-target-node_1'));
       await tester.ensureVisible(picker);
@@ -434,59 +540,16 @@ void main() {
       expect(find.byKey(const ValueKey('zone-target-node_1')), findsNothing);
     });
 
-    testWidgets('the window stepper dispatches seconds', (tester) async {
-      final bloc = await _pumpDraft(tester);
-
-      final plus = find.byKey(const ValueKey('window-plus-node_1'));
-      await tester.ensureVisible(plus);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('window-value-node_1')), findsOneWidget);
-      expect(find.text('6s'), findsWidgets);
-
-      await tester.tap(plus);
-      await tester.pump();
-
-      expect(bloc.state.openNode?.windowSeconds, 7);
-      expect(find.text('7s'), findsWidgets);
-    });
-
-    testWidgets('the publish bar lists missing and disables the CTA', (
+    testWidgets('the ribbon publish CTA stays disabled until clean', (
       tester,
     ) async {
       await _pumpDraft(tester);
 
-      expect(find.byKey(const ValueKey('publish-bar')), findsOneWidget);
-      expect(find.textContaining('left to publish'), findsOneWidget);
-      final cta = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('publish-button')),
+      expect(find.byKey(const ValueKey('ribbon-publish')), findsOneWidget);
+      final cta = tester.widget<ElevatedButton>(
+        find.byKey(const ValueKey('ribbon-publish')),
       );
       expect(cta.onPressed, isNull);
-    });
-
-    testWidgets('a ready bar reports readiness without publishing', (
-      tester,
-    ) async {
-      var reported = false;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PublishBar(
-              problems: const [],
-              onPublish: () => reported = true,
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Ready to publish.'), findsOneWidget);
-      final cta = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('publish-button')),
-      );
-      expect(cta.onPressed, isNotNull);
-      await tester.tap(find.byKey(const ValueKey('publish-button')));
-      await tester.pumpAndSettle();
-      expect(reported, isTrue);
     });
 
     testWidgets('line approval opens the voice gate and generates', (
@@ -494,6 +557,8 @@ void main() {
     ) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
 
       // Unapproved line: the gate message shows and generation disables.
       final gate = find.byKey(const ValueKey('gen-voice-node_1'));
@@ -542,6 +607,7 @@ void main() {
         }),
         _mediaDocs()[1],
       ]);
+      await _openNode(tester, 'node_1');
 
       expect(bloc.state.openNode?.ttsApproved, isFalse);
       final approve = find.byKey(const ValueKey('approve-voice-node_1'));
@@ -582,9 +648,11 @@ void main() {
       expect(find.text('Listen'), findsOneWidget);
     });
 
-    testWidgets('section saves persist zones and window', (tester) async {
+    testWidgets('section saves persist zones', (tester) async {
       final calls = <_Call>[];
       await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
 
       final zones = find.byKey(const ValueKey('save-zones-node_1'));
       await tester.ensureVisible(zones);
@@ -592,19 +660,15 @@ void main() {
       await tester.tap(zones);
       await tester.pumpAndSettle();
 
-      final window = find.byKey(const ValueKey('save-window-node_1'));
-      await tester.ensureVisible(window);
-      await tester.pumpAndSettle();
-      await tester.tap(window);
-      await tester.pumpAndSettle();
-
-      expect(calls.where((call) => call.name == 'saveNode'), hasLength(2));
+      expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
     });
 
     testWidgets('the root delete button is disabled with its reason', (
       tester,
     ) async {
       await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
 
       final remove = find.byKey(const ValueKey('delete-node-node_1'));
       await tester.ensureVisible(remove);
@@ -620,9 +684,7 @@ void main() {
       final bloc = await _pumpDraft(tester);
 
       // The root choice targets the leaf.
-      final layout = layoutDraft(bloc.state.nodes, rootNodeId: 'node_1');
-      final origin = tester.getTopLeft(find.byType(DraftCanvas));
-      await tester.tapAt(origin + layout.positions['node_2']!);
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_2')));
       await tester.pumpAndSettle();
       expect(bloc.state.openNodeId, 'node_2');
 
@@ -631,9 +693,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text(
-          'Node node_2 is a choice target — remove the choice first.',
-        ),
+        find.text('Node node_2 is a choice target — remove the choice first.'),
         findsOneWidget,
       );
       expect(tester.widget<TextButton>(remove).onPressed, isNull);
@@ -701,10 +761,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
       await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
       await tester.pumpAndSettle();
-
-      bloc.add(const NodeSelected('node_3'));
-      await tester.pumpAndSettle();
-      expect(bloc.state.openNodeId, 'node_3');
+      await _openNode(tester, 'node_3');
 
       final remove = find.byKey(const ValueKey('delete-node-node_3'));
       await tester.ensureVisible(remove);
@@ -714,9 +771,7 @@ void main() {
       await tester.tap(remove);
       await tester.pumpAndSettle();
 
-      final deleted = calls.singleWhere(
-        (call) => call.name == 'deleteNode',
-      );
+      final deleted = calls.singleWhere((call) => call.name == 'deleteNode');
       expect(deleted.data, {'storyId': 'story_1', 'nodeId': 'node_3'});
       expect(
         bloc.state.nodes.map((node) => node.nodeId),
@@ -756,9 +811,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
       await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
       await tester.pumpAndSettle();
-
-      bloc.add(const NodeSelected('node_3'));
-      await tester.pumpAndSettle();
+      await _openNode(tester, 'node_3');
 
       final remove = find.byKey(const ValueKey('delete-node-node_3'));
       await tester.ensureVisible(remove);
@@ -767,10 +820,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('That action is not valid'), findsOneWidget);
-      expect(
-        bloc.state.nodes.map((node) => node.nodeId),
-        contains('node_3'),
-      );
+      expect(bloc.state.nodes.map((node) => node.nodeId), contains('node_3'));
     });
 
     testWidgets('publish success navigates through onPublished', (
@@ -844,15 +894,14 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
       await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
       await tester.pumpAndSettle();
-
       bloc.add(const StoryPublished());
       await tester.pumpAndSettle();
-
-      expect(
-        find.text('Node node_1 needs a ready video.'),
-        findsOneWidget,
-      );
       expect(bloc.state.publishedStoryId, isNull);
+
+      // The failed publish leaves the draft dirty; the checklist now lives
+      // in the node editor.
+      await _openNode(tester, 'node_1');
+      expect(find.text('Node node_1 needs a ready video.'), findsOneWidget);
     });
 
     testWidgets('a ready story publishes from the publish button', (
@@ -943,8 +992,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // The whole checklist passes, so the CTA is armed.
-      expect(find.text('Ready to publish.'), findsOneWidget);
-      final cta = find.byKey(const ValueKey('publish-button'));
+      final cta = find.byKey(const ValueKey('ribbon-publish'));
       await tester.ensureVisible(cta);
       await tester.pumpAndSettle();
       await tester.tap(cta);
@@ -982,6 +1030,14 @@ class _FakePlayback implements VoicePlayback {
 
   @override
   void dispose() {}
+}
+
+/// Opens the fullscreen editor for [nodeId] through its canvas card — the
+/// production flow: tap selects the node and pushes its screen.
+Future<void> _openNode(WidgetTester tester, String nodeId) async {
+  await tester.tap(find.byKey(ValueKey('canvas-node-$nodeId')));
+  await tester.pumpAndSettle();
+  expect(find.byType(CreateNodeScreen), findsOneWidget);
 }
 
 Future<CreateBloc> _pumpDraft(WidgetTester tester, [List<_Call>? calls]) async {

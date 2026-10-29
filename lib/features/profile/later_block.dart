@@ -18,6 +18,19 @@ class LaterBlock extends StatelessWidget {
         mainAxisSize: .min,
         crossAxisAlignment: .stretch,
         children: [
+          Row(
+            children: [
+              Icon(Icons.diamond_outlined, color: RamificaColors.hotspot),
+              SizedBox(width: 8),
+              Expanded(child: Text('Creator Guild', style: RamificaText.label)),
+            ],
+          ),
+          SizedBox(height: 4),
+          Text(
+            'Live rooms and guild perks land here.',
+            style: RamificaText.meta,
+          ),
+          SizedBox(height: 12),
           _LaterRow(
             key: Key('laterLiveRow'),
             icon: Icons.live_tv_outlined,
@@ -55,9 +68,7 @@ class _LaterRow extends StatelessWidget {
       children: [
         Icon(icon, color: RamificaColors.textSecondary),
         const SizedBox(width: 12),
-        Expanded(
-          child: Text(title, style: RamificaText.body),
-        ),
+        Expanded(child: Text(title, style: RamificaText.body)),
         const SizedBox(width: 12),
         Text(
           soonLabel,

@@ -79,6 +79,8 @@ class NodeSheet extends StatelessWidget {
               ),
             ),
           ] else ...[
+            const _SheetEyebrow(label: 'Selected scene'),
+            const SizedBox(height: 4),
             Text(
               stub.title ?? 'Untitled node',
               maxLines: 2,
@@ -93,21 +95,24 @@ class NodeSheet extends StatelessWidget {
               EndingBadge(type: stub.endingType),
             ],
             const SizedBox(height: 12),
+            ..._consensusBlock(),
             ..._pathRows(context),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: busy ? null : onRewind,
-                    child: Text(busy ? 'Working…' : 'Rewind'),
+                  flex: 2,
+                  child: _GradientButton(
+                    onPressed: onContinue,
+                    icon: Icons.play_arrow,
+                    label: 'Continue',
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: FilledButton(
-                    onPressed: onContinue,
-                    child: const Text('Continue'),
+                  child: OutlinedButton(
+                    onPressed: busy ? null : onRewind,
+                    child: Text(busy ? 'Working…' : 'Rewind'),
                   ),
                 ),
               ],
@@ -120,6 +125,85 @@ class NodeSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Stitch community-consensus panel from the real per-exit counts.
+  /// Labels stay in the rows below, so this shows the top share only.
+  List<Widget> _consensusBlock() {
+    if (stub.choices.isEmpty) return const [];
+    var sum = 0;
+    var top = 0;
+    for (final exit in stub.choices) {
+      sum += exit.count;
+      if (exit.count > top) top = exit.count;
+    }
+    if (sum <= 0) return const [];
+    final percent = (top / sum * 100).round();
+    return [
+      Container(
+        decoration: BoxDecoration(
+          color: RamificaColors.containerLowest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.group,
+                  size: 14,
+                  color: RamificaColors.nodeActive,
+                  semanticLabel: 'Community',
+                ),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text('Community consensus', style: RamificaText.meta),
+                ),
+                Text(
+                  '$percent%',
+                  style: RamificaText.labelSM.copyWith(
+                    color: RamificaColors.onPrimaryContainer,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: SizedBox(
+                height: 8,
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: top,
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              RamificaColors.hotspot,
+                              RamificaColors.nodeActive,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (sum > top)
+                      Expanded(
+                        flex: sum - top,
+                        child: Container(
+                          color: RamificaColors.containerHighest,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+    ];
   }
 
   List<Widget> _pathRows(BuildContext context) {
@@ -157,9 +241,7 @@ class NodeSheet extends StatelessWidget {
       sum += exit.count;
     }
     if (sum <= 0) {
-      return const [
-        Text('No plays yet.', style: RamificaText.meta),
-      ];
+      return const [Text('No plays yet.', style: RamificaText.meta)];
     }
     return [
       for (var i = 0; i < stub.choices.length; i++)
@@ -249,10 +331,7 @@ class _PathRow extends StatelessWidget {
                 ),
                 if (share != null) ...[
                   const SizedBox(width: 8),
-                  Text(
-                    '$count/$sum ($percent%)',
-                    style: RamificaText.meta,
-                  ),
+                  Text('$count/$sum ($percent%)', style: RamificaText.meta),
                 ],
               ],
             ),
@@ -271,6 +350,94 @@ class _PathRow extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetEyebrow extends StatelessWidget {
+  const _SheetEyebrow({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: RamificaColors.hotspot,
+            shape: .circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            fontFamily: RamificaText.sans,
+            fontWeight: FontWeight.w700,
+            fontSize: 10,
+            height: 14 / 10,
+            letterSpacing: 0.8,
+            color: RamificaColors.onPrimaryContainer,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Stitch gradient playback CTA. Static: no timers, no motion.
+class _GradientButton extends StatelessWidget {
+  const _GradientButton({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+  });
+
+  final VoidCallback onPressed;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: Ink(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: .center,
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: RamificaColors.onSecondary,
+                  semanticLabel: label,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: RamificaText.label.copyWith(
+                    color: RamificaColors.onSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

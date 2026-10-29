@@ -28,10 +28,19 @@ final class NodeSelected extends CreateEvent {
   final String nodeId;
 }
 
-/// Adds a child node under the open node through `createNode` and opens
-/// it. Needs an open node; otherwise ignored.
+/// Adds a child node under [parentNodeId] (or the open node when null or
+/// unknown) through `createNode` and opens it. Needs a draft with a
+/// resolvable parent; otherwise ignored.
 final class NodeAdded extends CreateEvent {
-  const NodeAdded();
+  const NodeAdded({this.parentNodeId, this.slot});
+
+  /// Parent for the new child. Null or unknown falls back to the open node.
+  final String? parentNodeId;
+
+  /// Branch slot the tapped `+` mini stood for (`A` or `B`). The auto-link
+  /// choice carries it so the child lands exactly on the tapped slot.
+  /// Null (or taken) falls back to the first free slot.
+  final String? slot;
 }
 
 /// Manual edit in the inspector. Writes bloc state only — nothing is
@@ -224,14 +233,6 @@ final class VoiceGenerateRequested extends CreateEvent {
 /// one is in flight is dropped.
 final class ZonesSaved extends CreateEvent {
   const ZonesSaved();
-}
-
-/// Persists the open node's window through `saveNode`. Thin wrapper over
-/// the save path: the window rides `windowSeconds` inside the full node
-/// doc, exactly like [NodeSaved]. `droppable`: a second save while one
-/// is in flight is dropped.
-final class WindowSaved extends CreateEvent {
-  const WindowSaved();
 }
 
 /// Deletes the open node through `deleteNode`. GUARDED server-side:

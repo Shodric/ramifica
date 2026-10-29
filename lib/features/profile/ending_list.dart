@@ -8,11 +8,7 @@ import 'package:ramifica/core/widgets/ending_badge.dart';
 /// a later slice), so the profile view takes these in as data until a
 /// reachable source exists.
 class UnlockedEnding {
-  const UnlockedEnding({
-    required this.storyId,
-    required this.name,
-    this.type,
-  });
+  const UnlockedEnding({required this.storyId, required this.name, this.type});
 
   /// The story whose graph opens on tap (`/graph/{storyId}`).
   final String storyId;
@@ -28,11 +24,7 @@ class UnlockedEnding {
 /// in via params, actions out via callback. No bloc, no router, no
 /// repository. Empty shows text only, no CTA.
 class EndingList extends StatelessWidget {
-  const EndingList({
-    super.key,
-    required this.endings,
-    required this.onOpen,
-  });
+  const EndingList({super.key, required this.endings, required this.onOpen});
 
   final List<UnlockedEnding> endings;
 
@@ -49,10 +41,7 @@ class EndingList extends StatelessWidget {
       crossAxisAlignment: .stretch,
       children: [
         for (var i = 0; i < endings.length; i++) ...[
-          _Row(
-            ending: endings[i],
-            onOpen: () => onOpen(endings[i].storyId),
-          ),
+          _Row(ending: endings[i], onOpen: () => onOpen(endings[i].storyId)),
           if (i != endings.length - 1) const SizedBox(height: 12),
         ],
       ],
@@ -74,19 +63,27 @@ class _Row extends StatelessWidget {
       child: GestureDetector(
         onTap: onOpen,
         behavior: .opaque,
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                ending.name,
-                style: RamificaText.label,
-                maxLines: 1,
-                overflow: .ellipsis,
+        child: Container(
+          padding: const .all(12),
+          decoration: BoxDecoration(
+            color: RamificaColors.containerLow,
+            borderRadius: .circular(16),
+            border: .all(color: RamificaColors.glassBorder),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  ending.name,
+                  style: RamificaText.label,
+                  maxLines: 2,
+                  overflow: .ellipsis,
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            EndingBadge(type: ending.type),
-          ],
+              const SizedBox(width: 12),
+              EndingBadge(type: ending.type),
+            ],
+          ),
         ),
       ),
     );

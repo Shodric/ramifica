@@ -1,8 +1,9 @@
 import {execFile} from "child_process";
 import {join} from "path";
 import {promisify} from "util";
-import {ffmpegBin} from "./bin";
 import {probeDuration} from "./processVideo";
+import {OpenRouterFetch, OpenRouterHttpError, postBytes} from "./openrouter";
+import {ffmpegBin} from "./bin";
 
 const run = promisify(execFile);
 
@@ -17,9 +18,10 @@ export interface SynthesizeOptions {
   voice: string;
   text: string;
   instructions?: string;
+  fetchFn?: OpenRouterFetch;
 }
-
-const defaultTtsModel = "google/gemini-3.8-flash-lite-tts";
+/** Default TTS model; override with OPENROUTER_TTS_MODEL. */
+export const defaultTtsModel = "google/gemini-3.8-flash-lite-tts";
 
 /**
  * Converts an existing voice take (m4a, mp3, wav, or raw 24 kHz mono PCM)
@@ -67,24 +69,25 @@ export const convertVoiceToM4a = async (
 export const synthesizePcm = async (
   options: SynthesizeOptions
 ): Promise<Buffer> => {
-  const response = await fetch("https://openrouter.ai/api/v1/audio/speech", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://ramifica.app",
-      "X-Title": "Ramifica seed",
-    },
-    body: JSON.stringify({
-      model: options.model ?? defaultTtsModel,
-      input: options.text,
-      voice: options.voice,
-      response_format: "pcm",
-      ...(options.instructions ? {instructions: options.instructions} : {}),
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`TTS request failed: ${response.status}.`);
+  try {
+    return await postBytes("https://openrouter.ai/api/v1/audio/speech", {
+      apiKey: options.apiKey,
+      fetchFn: options.fetchFn,
+      title: "Ramifica seed",
+      body: {
+        model: options.model ?? defaultTtsModel,
+        input: options.text,
+        voice: options.voice,
+        response_format: "pcm",
+        ...(options.instructions === undefined ?
+          {} :
+          {instructions: options.instructions}),
+      },
+    });
+  } catch (error) {
+    if (error instanceof OpenRouterHttpError) {
+      throw new Error(`TTS request failed: ${error.status}.`);
+    }
+    throw error;
   }
-  return Buffer.from(await response.arrayBuffer());
 };

@@ -10,6 +10,7 @@ void main() {
     expect(AppRoutes.profile, '/profile');
     expect(AppRoutes.access, '/access');
     expect(AppRoutes.create, '/create');
+    expect(AppRoutes.createNew, '/create/new-creation');
     expect(AppRoutes.storyPath('story_temple'), '/story/story_temple');
     expect(AppRoutes.graphPath('story_1'), '/graph/story_1');
   });
@@ -36,6 +37,8 @@ void main() {
 
     expect(parseLocation('/access'), isA<AccessLocation>());
     expect(parseLocation('/create'), isA<CreateLocation>());
+    expect(parseLocation('/create/new-creation'), isA<CreateCanvasLocation>());
+    expect(pathOf(const CreateCanvasLocation()), '/create/new-creation');
     expect(parseLocation('/profile'), isA<ProfileLocation>());
     expect(pathOf(parseLocation('/story/a%20b')), '/story/a%20b');
     expect(pathOf(parseLocation('/graph/story_1')), '/graph/story_1');

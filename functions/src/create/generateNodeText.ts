@@ -10,6 +10,11 @@ import {
   requireUid,
   toRecord,
 } from "../feed/shared";
+import {
+  completeChat,
+  OpenRouterFetch,
+  OpenRouterHttpError,
+} from "../media/openrouter";
 
 /** One proposed choice label for a decision node. */
 export interface GeneratedChoice {
@@ -25,17 +30,7 @@ export interface GenerateNodeTextResult {
 }
 
 /** Minimal POST surface the text provider needs; keeps tests offline. */
-export interface TextFetch {
-  (url: string, init: {
-    method: string;
-    headers: Record<string, string>;
-    body: string;
-  }): Promise<{
-    ok: boolean;
-    status: number;
-    json: () => Promise<unknown>;
-  }>;
-}
+export type TextFetch = OpenRouterFetch;
 
 /** Injectable provider pieces so tests run without OpenRouter. */
 export interface TextGenDeps {
@@ -43,9 +38,6 @@ export interface TextGenDeps {
   model?: string;
   fetchFn?: TextFetch;
 }
-
-/** OpenRouter chat endpoint; TTS in media/voice uses the same provider. */
-const chatUrl = "https://openrouter.ai/api/v1/chat/completions";
 
 /** Default chat model: cheap and fast; override with OPENROUTER_TEXT_MODEL. */
 const defaultTextModel = "google/gemini-2.5-flash-lite";
@@ -188,38 +180,25 @@ const completeText = async (
   }
   const model =
     deps.model ?? process.env.OPENROUTER_TEXT_MODEL ?? defaultTextModel;
-  const fetchFn: TextFetch = deps.fetchFn ?? ((url, init) =>
-    fetch(url, init).then((res) => ({
-      ok: res.ok,
-      status: res.status,
-      json: () => res.json() as Promise<unknown>,
-    }))
-  );
-  const response = await fetchFn(chatUrl, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://ramifica.app",
-      "X-Title": "Ramifica create",
-    },
-    body: JSON.stringify({
+  let content: string;
+  try {
+    content = await completeChat({
+      apiKey,
       model,
-      max_tokens: maxTokens,
-      messages: [
-        {role: "system", content: systemPrompt},
-        {role: "user", content: userPrompt(story, node, authorText)},
-      ],
-    }),
-  });
-  if (!response.ok) {
-    throw new HttpsError(
-      "unavailable",
-      `Text generation failed: ${response.status}.`
-    );
+      system: systemPrompt,
+      user: userPrompt(story, node, authorText),
+      maxTokens,
+      fetchFn: deps.fetchFn,
+    });
+  } catch (error) {
+    if (error instanceof OpenRouterHttpError) {
+      throw new HttpsError(
+        "unavailable",
+        `Text generation failed: ${error.status}.`
+      );
+    }
+    throw error;
   }
-  const payload = await response.json();
-  const content = firstContent(payload);
   if (content.trim() === "") {
     throw new HttpsError(
       "internal",
@@ -227,18 +206,6 @@ const completeText = async (
     );
   }
   return content;
-};
-
-/**
- * First chat choice message content, or blank when the shape is off.
- * @param {unknown} payload Decoded provider JSON.
- * @return {string} The answer text, or blank.
- */
-const firstContent = (payload: unknown): string => {
-  const choices = asFields(payload)?.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return "";
-  const content = asFields(asFields(choices[0])?.message)?.content;
-  return typeof content === "string" ? content : "";
 };
 
 /**

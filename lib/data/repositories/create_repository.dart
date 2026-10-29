@@ -380,9 +380,11 @@ class CreateRepository {
 
   /// Asks for the node video via the `generateNodeVideo` callable. GATED
   /// server-side on the approved parent E (own S on the root); the call
-  /// inherits that E as this node's S. Records intent; the caller reloads
-  /// the nodes to read the resulting `pending`/`ready` status.
-  Future<void> generateNodeVideo({
+  /// inherits that E as this node's S. Returns whether the backend is
+  /// still working the job: true means the caller re-asks until the
+  /// backend reports done or the poll cap is hit. The caller reloads the
+  /// nodes to read the resulting `pending`/`ready` status.
+  Future<bool> generateNodeVideo({
     required String storyId,
     required String nodeId,
     String? prompt,
@@ -393,7 +395,8 @@ class CreateRepository {
     final data = {'storyId': story, 'nodeId': node};
     final hint = prompt?.trim();
     if (hint != null && hint.isNotEmpty) data['prompt'] = hint;
-    await callFunction('generateNodeVideo', data);
+    final res = await callFunction('generateNodeVideo', data);
+    return res['poll'] == true;
   }
 
   /// Renders the node voice via the `generateNodeVoice` callable. GATED

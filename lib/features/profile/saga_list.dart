@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/lock_mark.dart';
 import 'package:ramifica/core/widgets/story_card.dart';
@@ -9,7 +10,13 @@ import 'package:ramifica/core/widgets/story_card.dart';
 /// story's `sagaUnlocked` flag is set. A locked entry carries no title:
 /// rendering it must never leak one (like map locks).
 class SagaStory {
-  const SagaStory({required this.storyId, required this.unlocked, this.title, this.coverUrl, this.authorName});
+  const SagaStory({
+    required this.storyId,
+    required this.unlocked,
+    this.title,
+    this.coverUrl,
+    this.authorName,
+  });
 
   /// The story to open on tap (`/story/{storyId}`).
   final String storyId;
@@ -51,7 +58,10 @@ class SagaList extends StatelessWidget {
       children: [
         for (var i = 0; i < stories.length; i++) ...[
           if (stories[i].unlocked)
-            _OpenRow(story: stories[i], onOpen: () => onOpen(stories[i].storyId))
+            _OpenRow(
+              story: stories[i],
+              onOpen: () => onOpen(stories[i].storyId),
+            )
           else
             const _LockedRow(),
           if (i != stories.length - 1) const SizedBox(height: 12),
@@ -69,11 +79,19 @@ class _OpenRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StoryCard(
-      title: story.title ?? story.storyId,
-      authorName: story.authorName ?? '',
-      coverUrl: story.coverUrl,
-      onOpen: onOpen,
+    return Container(
+      padding: const .all(12),
+      decoration: BoxDecoration(
+        color: RamificaColors.containerLow,
+        borderRadius: .circular(16),
+        border: .all(color: RamificaColors.glassBorder),
+      ),
+      child: StoryCard(
+        title: story.title ?? story.storyId,
+        authorName: story.authorName ?? '',
+        coverUrl: story.coverUrl,
+        onOpen: onOpen,
+      ),
     );
   }
 }
@@ -83,6 +101,9 @@ class _LockedRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(label: 'Locked story', child: const Row(children: [LockMark()]));
+    return Semantics(
+      label: 'Locked story',
+      child: const Row(children: [LockMark()]),
+    );
   }
 }

@@ -400,6 +400,59 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
   assert.equal(outsideSnapshot(db, "story_draft"), before);
 });
 
+test("saveNode persists the branch slot and rejects bad ones", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      choices: [
+        {
+          choiceId: "c1",
+          label: "Left",
+          targetNodeId: "node_002",
+          isDefault: true,
+          slot: "A",
+        },
+        {
+          choiceId: "c2",
+          label: "Right",
+          targetNodeId: "node_003",
+          slot: "B",
+        },
+      ],
+    },
+  });
+  const node = await db.doc("stories/story_draft/nodes/node_001").get();
+  const saved = node.data() ?? {};
+  assert.deepEqual(
+    (saved.choices as Array<Record<string, unknown>>).map(
+      (choice) => choice.slot
+    ),
+    ["A", "B"]
+  );
+  for (const bad of ["C", "", 42]) {
+    await assert.rejects(
+      saveNodeWith(db, "u1", {
+        storyId: "story_draft",
+        node: {
+          nodeId: "node_001",
+          choices: [
+            {
+              choiceId: "c1",
+              label: "Left",
+              targetNodeId: "node_002",
+              slot: bad,
+            },
+          ],
+        },
+      }),
+      (error: unknown) => (error as {code?: string}).code === "invalid-argument"
+    );
+  }
+});
+
 test("saveNode supports partial updates", async () => {
   const db = new MemDb();
   await seedDraft(db);

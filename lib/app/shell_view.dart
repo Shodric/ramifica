@@ -66,7 +66,7 @@ class _ShellViewState extends State<ShellView> {
         _consumePending();
       case ExploreLocation():
         shell.add(const TabSelected(.explore));
-      case CreateLocation():
+      case CreateLocation() || CreateCanvasLocation():
         shell.add(const TabSelected(.create));
       case GraphLocation(:final storyId):
         shell.add(TabSelected(.graph, storyId: storyId));
@@ -155,42 +155,44 @@ class _ShellViewState extends State<ShellView> {
               const ProfileView(),
             ],
           ),
-          bottomNavigationBar: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              backgroundColor: RamificaColors.glass,
-              indicatorColor: state.tab == .create
-                  ? const Color(0x00000000)
-                  : RamificaColors.hotspot.withValues(alpha: 0.2),
-              elevation: 0,
-              labelTextStyle: WidgetStateProperty.resolveWith((states) {
-                final selected = states.contains(WidgetState.selected);
-                return RamificaText.meta.copyWith(
-                  color: selected
-                      ? RamificaColors.hotspot
-                      : RamificaColors.textSecondary,
-                  fontWeight: selected ? .w600 : .w400,
-                );
-              }),
-              iconTheme: WidgetStateProperty.resolveWith((states) {
-                final selected = states.contains(WidgetState.selected);
-                return IconThemeData(
-                  color: selected
-                      ? RamificaColors.hotspot
-                      : RamificaColors.textSecondary,
-                );
-              }),
-            ),
-            child: NavigationBar(
-              selectedIndex: state.tab.index,
-              labelBehavior: .alwaysShow,
-              destinations: [
-                for (final tab in ShellTab.values) _destination(tab),
-              ],
-              onDestinationSelected: (index) {
-                _select(state, ShellTab.values[index]);
-              },
-            ),
-          ),
+          bottomNavigationBar: widget.location is CreateCanvasLocation
+              ? null
+              : NavigationBarTheme(
+                  data: NavigationBarThemeData(
+                    backgroundColor: RamificaColors.glass,
+                    indicatorColor: state.tab == .create
+                        ? const Color(0x00000000)
+                        : RamificaColors.hotspot.withValues(alpha: 0.2),
+                    elevation: 0,
+                    labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                      final selected = states.contains(WidgetState.selected);
+                      return RamificaText.meta.copyWith(
+                        color: selected
+                            ? RamificaColors.hotspot
+                            : RamificaColors.textSecondary,
+                        fontWeight: selected ? .w600 : .w400,
+                      );
+                    }),
+                    iconTheme: WidgetStateProperty.resolveWith((states) {
+                      final selected = states.contains(WidgetState.selected);
+                      return IconThemeData(
+                        color: selected
+                            ? RamificaColors.hotspot
+                            : RamificaColors.textSecondary,
+                      );
+                    }),
+                  ),
+                  child: NavigationBar(
+                    selectedIndex: state.tab.index,
+                    labelBehavior: .alwaysShow,
+                    destinations: [
+                      for (final tab in ShellTab.values) _destination(tab),
+                    ],
+                    onDestinationSelected: (index) {
+                      _select(state, ShellTab.values[index]);
+                    },
+                  ),
+                ),
         );
       },
     );

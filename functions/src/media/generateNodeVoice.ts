@@ -13,7 +13,7 @@ import {
   requireUid,
   toRecord,
 } from "../feed/shared";
-import {convertVoiceToM4a, synthesizePcm} from "./voice";
+import {convertVoiceToM4a, defaultTtsModel, synthesizePcm} from "./voice";
 
 /** Raw PCM take from the TTS provider. */
 export interface VoiceTake {
@@ -197,9 +197,11 @@ const defaultSynthesize = ():
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
   const voice = process.env.OPENROUTER_TTS_VOICE ?? defaultVoice;
+  const model = process.env.OPENROUTER_TTS_MODEL ?? defaultTtsModel;
   return async (text: string) => ({
     pcm: await synthesizePcm({
       apiKey,
+      model,
       voice,
       text,
       instructions: defaultInstructions,

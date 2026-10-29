@@ -35,58 +35,63 @@ class ProfileHeader extends StatelessWidget {
     final name = _titleOf(displayName, handle);
     final tag = handle?.trim() ?? '';
     final area = locale.trim();
+    final verified =
+        (displayName?.trim().isNotEmpty ?? false) || tag.isNotEmpty;
     return Semantics(
       label: isOwn ? 'Your profile' : 'Author $name',
-      child: Row(
-        crossAxisAlignment: .start,
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
         children: [
-          _Avatar(photoUrl: photoUrl, name: name),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: .start,
-              mainAxisSize: .min,
+          SizedBox(
+            height: 244,
+            child: Stack(
               children: [
-                Text(
-                  name,
-                  style: RamificaText.label,
-                  maxLines: 2,
-                  overflow: .ellipsis,
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 176,
+                  child: _Banner(),
                 ),
-                if (tag.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    '@$tag',
-                    style: RamificaText.meta,
-                    maxLines: 1,
-                    overflow: .ellipsis,
-                  ),
-                ],
-                if (area.isNotEmpty || followingCount != null) ...[
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: .center,
-                    children: [
-                      if (area.isNotEmpty) _LocaleBadge(locale: area),
-                      if (followingCount != null)
-                        Text(
-                          '$followingCount following',
-                          style: RamificaText.meta,
-                        ),
-                    ],
-                  ),
-                ],
+                Positioned(
+                  left: 12,
+                  bottom: 0,
+                  child: _AvatarRing(photoUrl: photoUrl, name: name),
+                ),
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          _NameRow(name: name, verified: verified),
+          if (tag.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              '@$tag',
+              style: RamificaText.meta,
+              maxLines: 1,
+              overflow: .ellipsis,
+            ),
+          ],
+          if (area.isNotEmpty || followingCount != null) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: .center,
+              children: [
+                if (area.isNotEmpty) _LocaleBadge(locale: area),
+                if (followingCount != null)
+                  Text('$followingCount following', style: RamificaText.meta),
+              ],
+            ),
+          ],
           if (!isOwn) ...[
-            const SizedBox(width: 12),
-            FilledButton(
-              key: const Key('profileFollowButton'),
-              onPressed: toggling ? null : onFollowToggle,
-              child: Text(isFollowing ? 'Following' : 'Follow'),
+            const SizedBox(height: 16),
+            _FollowCta(
+              isFollowing: isFollowing,
+              toggling: toggling,
+              onFollowToggle: onFollowToggle,
             ),
           ],
         ],
@@ -126,8 +131,69 @@ class _LocaleBadge extends StatelessWidget {
   }
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.photoUrl, required this.name});
+class _NameRow extends StatelessWidget {
+  const _NameRow({required this.name, required this.verified});
+
+  final String name;
+  final bool verified;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            name,
+            style: RamificaText.headlineSM,
+            maxLines: 2,
+            overflow: .ellipsis,
+          ),
+        ),
+        if (verified) ...[
+          const SizedBox(width: 6),
+          const Icon(Icons.verified, size: 18, color: RamificaColors.hotspot),
+        ],
+      ],
+    );
+  }
+}
+
+/// Static cinematic banner: token gradient only, no remote art (the profile
+/// carries no cover source). Fully static, settles immediately.
+class _Banner extends StatelessWidget {
+  const _Banner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 176,
+      decoration: BoxDecoration(
+        borderRadius: .circular(16),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            RamificaColors.containerHigh,
+            RamificaColors.containerLowest,
+          ],
+        ),
+        border: .all(color: RamificaColors.glassBorder),
+      ),
+      child: const Center(
+        child: Icon(
+          Icons.auto_stories_outlined,
+          size: 56,
+          color: RamificaColors.glassBorder,
+        ),
+      ),
+    );
+  }
+}
+
+/// Avatar with the Stitch cyan gradient ring and hub dot. Photo only from
+/// state; otherwise (and on load error) a static placeholder icon.
+class _AvatarRing extends StatelessWidget {
+  const _AvatarRing({required this.photoUrl, required this.name});
 
   final String? photoUrl;
   final String name;
@@ -135,18 +201,126 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final uri = photoUrl?.trim() ?? '';
-    if (uri.isEmpty) {
-      return const CircleAvatar(
-        radius: 28,
-        backgroundColor: RamificaColors.nodeLocked,
-        child: Icon(Icons.person, size: 28, color: RamificaColors.textPrimary),
-      );
-    }
-    return CircleAvatar(
-      radius: 28,
-      backgroundColor: RamificaColors.nodeLocked,
-      backgroundImage: NetworkImage(uri),
-      onBackgroundImageError: (_, _) {},
+    final Widget face = uri.isEmpty
+        ? const ColoredBox(
+            color: RamificaColors.nodeLocked,
+            child: Icon(
+              Icons.person,
+              size: 40,
+              color: RamificaColors.textPrimary,
+            ),
+          )
+        : Image.network(
+            uri,
+            fit: .cover,
+            errorBuilder: (_, _, _) => const ColoredBox(
+              color: RamificaColors.nodeLocked,
+              child: Icon(
+                Icons.person,
+                size: 40,
+                color: RamificaColors.textPrimary,
+              ),
+            ),
+          );
+    return SizedBox(
+      width: 96,
+      height: 96,
+      child: Stack(
+        children: [
+          Container(
+            width: 96,
+            height: 96,
+            padding: const .all(2.5),
+            decoration: const BoxDecoration(
+              borderRadius: BorderRadius.all(Radius.circular(22)),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+              ),
+            ),
+            child: ClipRRect(borderRadius: .circular(19), child: face),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                shape: .circle,
+                color: RamificaColors.containerLowest,
+                border: .all(color: RamificaColors.glassBorder),
+              ),
+              child: const Icon(
+                Icons.hub,
+                size: 13,
+                color: RamificaColors.hotspot,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Foreign-only follow CTA in the Stitch action-hub style: cyan gradient
+/// while unfollowed, quiet container once following. Taps leave through
+/// [onFollowToggle]; disabled while [toggling].
+class _FollowCta extends StatelessWidget {
+  const _FollowCta({
+    required this.isFollowing,
+    required this.toggling,
+    this.onFollowToggle,
+  });
+
+  final bool isFollowing;
+  final bool toggling;
+  final VoidCallback? onFollowToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: .circular(12),
+      child: Ink(
+        height: 48,
+        decoration: BoxDecoration(
+          borderRadius: .circular(12),
+          gradient: isFollowing
+              ? null
+              : const LinearGradient(
+                  colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
+                ),
+          color: isFollowing ? RamificaColors.containerHigh : null,
+        ),
+        child: InkWell(
+          key: const Key('profileFollowButton'),
+          borderRadius: .circular(12),
+          onTap: toggling ? null : onFollowToggle,
+          child: Row(
+            mainAxisAlignment: .center,
+            children: [
+              Icon(
+                isFollowing ? Icons.check_circle : Icons.add_circle,
+                color: isFollowing
+                    ? RamificaColors.hotspot
+                    : RamificaColors.onSecondary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isFollowing ? 'Following' : 'Follow',
+                style: RamificaText.label.copyWith(
+                  color: isFollowing
+                      ? RamificaColors.hotspot
+                      : RamificaColors.onSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

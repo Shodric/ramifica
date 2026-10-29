@@ -430,7 +430,8 @@ const parseChoices = (value: unknown, isEnding: boolean): ChoiceFields[] => {
 };
 
 /**
- * Validates one choice. Zones default to the frame center.
+ * Validates one choice. Zones default to the frame center; the branch
+ * slot must be `A` or `B` when present and is dropped when absent.
  * @param {unknown} item Raw choice item.
  * @param {number} index Position for the error.
  * @return {ChoiceFields} The clean choice.
@@ -457,7 +458,14 @@ const parseChoice = (item: unknown, index: number): ChoiceFields => {
       `Choice ${index} needs a targetNodeId.`
     );
   }
-  return {
+  const rawSlot = "slot" in itemFields ? itemFields.slot : undefined;
+  if (rawSlot !== undefined && rawSlot !== "A" && rawSlot !== "B") {
+    throw new HttpsError(
+      "invalid-argument",
+      `Choice ${index} slot must be "A" or "B".`
+    );
+  }
+  const clean: ChoiceFields = {
     choiceId: rawId.trim(),
     label: parseText(
       itemFields.label ?? "", `Choice ${index} label`, maxLabelChars
@@ -470,6 +478,8 @@ const parseChoice = (item: unknown, index: number): ChoiceFields => {
     y: parseZone(itemFields.y, `Choice ${index} y`, 0.5),
     radius: parseZone(itemFields.radius, `Choice ${index} radius`, 0.15),
   };
+  if (rawSlot !== undefined) clean.slot = rawSlot;
+  return clean;
 };
 
 /**

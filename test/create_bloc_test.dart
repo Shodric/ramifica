@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
@@ -286,9 +287,7 @@ void main() {
 
       await repository.deleteNode(storyId: 'story_1', nodeId: 'node_2');
 
-      final deleted = calls.singleWhere(
-        (call) => call.name == 'deleteNode',
-      );
+      final deleted = calls.singleWhere((call) => call.name == 'deleteNode');
       expect(deleted.data['storyId'], 'story_1');
       expect(deleted.data['nodeId'], 'node_2');
     });
@@ -407,9 +406,7 @@ void main() {
             state.nodes.every((node) => node.nodeId != 'node_3'),
       );
 
-      final deleted = calls.singleWhere(
-        (call) => call.name == 'deleteNode',
-      );
+      final deleted = calls.singleWhere((call) => call.name == 'deleteNode');
       expect(deleted.data, {'storyId': 'story_1', 'nodeId': 'node_3'});
       expect(after.openNodeId, 'node_1');
       expect(after.failure, isNull);
@@ -436,69 +433,72 @@ void main() {
       await bloc.stream.firstWhere((state) => state.failure != null);
 
       expect(bloc.state.failure, 'That action is not valid');
-      expect(
-        bloc.state.nodes.map((node) => node.nodeId),
-        contains('node_1'),
-      );
+      expect(bloc.state.nodes.map((node) => node.nodeId), contains('node_1'));
     });
 
-    test('StoryPublished marks the story published on empty problems', () async {
-      final bloc = CreateBloc(
-        repository: CreateRepository(
-          createDraftDoc: ({required authorId, required title}) async =>
-              'story_1',
-          fetchStoryDoc: (_) async => _storyDoc(),
-          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
-          callFunction: (name, data) async => {
-            'storyId': 'story_1',
-            'published': true,
-            'problems': <String>[],
-          },
-        ),
-      );
-      addTearDown(bloc.close);
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
+    test(
+      'StoryPublished marks the story published on empty problems',
+      () async {
+        final bloc = CreateBloc(
+          repository: CreateRepository(
+            createDraftDoc: ({required authorId, required title}) async =>
+                'story_1',
+            fetchStoryDoc: (_) async => _storyDoc(),
+            fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+            callFunction: (name, data) async => {
+              'storyId': 'story_1',
+              'published': true,
+              'problems': <String>[],
+            },
+          ),
+        );
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const StoryPublished());
-      final published = await bloc.stream.firstWhere(
-        (state) => state.publishedStoryId != null,
-      );
+        bloc.add(const StoryPublished());
+        final published = await bloc.stream.firstWhere(
+          (state) => state.publishedStoryId != null,
+        );
 
-      expect(published.publishedStoryId, 'story_1');
-      expect(published.failure, isNull);
-    });
+        expect(published.publishedStoryId, 'story_1');
+        expect(published.failure, isNull);
+      },
+    );
 
-    test('StoryPublished shows the server problems without publishing', () async {
-      final bloc = CreateBloc(
-        repository: CreateRepository(
-          createDraftDoc: ({required authorId, required title}) async =>
-              'story_1',
-          fetchStoryDoc: (_) async => _storyDoc(),
-          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
-          callFunction: (name, data) async => {
-            'storyId': 'story_1',
-            'published': false,
-            'problems': [
-              'Node node_1 needs a ready video.',
-              'At least one ending is required.',
-            ],
-          },
-        ),
-      );
-      addTearDown(bloc.close);
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
+    test(
+      'StoryPublished shows the server problems without publishing',
+      () async {
+        final bloc = CreateBloc(
+          repository: CreateRepository(
+            createDraftDoc: ({required authorId, required title}) async =>
+                'story_1',
+            fetchStoryDoc: (_) async => _storyDoc(),
+            fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+            callFunction: (name, data) async => {
+              'storyId': 'story_1',
+              'published': false,
+              'problems': [
+                'Node node_1 needs a ready video.',
+                'At least one ending is required.',
+              ],
+            },
+          ),
+        );
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const StoryPublished());
-      await bloc.stream.firstWhere((state) => state.failure != null);
+        bloc.add(const StoryPublished());
+        await bloc.stream.firstWhere((state) => state.failure != null);
 
-      expect(
-        bloc.state.failure,
-        'Node node_1 needs a ready video.\nAt least one ending is required.',
-      );
-      expect(bloc.state.publishedStoryId, isNull);
-    });
+        expect(
+          bloc.state.failure,
+          'Node node_1 needs a ready video.\nAt least one ending is required.',
+        );
+        expect(bloc.state.publishedStoryId, isNull);
+      },
+    );
 
     test('a publish transport failure shows its phrase', () async {
       final bloc = CreateBloc(
@@ -652,6 +652,88 @@ void main() {
         'nodeId': 'node_2',
         'prompt': 'drift',
       });
+    });
+
+    test('generateNodeVideo reports the backend poll flag', () async {
+      final repository = CreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async => {'poll': true},
+      );
+
+      expect(
+        await repository.generateNodeVideo(
+          storyId: 'story_1',
+          nodeId: 'node_1',
+        ),
+        isTrue,
+      );
+    });
+
+    test('video generation polls until the backend reports done', () async {
+      var videoCalls = 0;
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async {
+            if (name == 'generateNodeVideo') {
+              videoCalls++;
+              return {'poll': videoCalls < 3};
+            }
+            return <String, dynamic>{};
+          },
+        ),
+        videoPollInterval: Duration.zero,
+        maxVideoPolls: 5,
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VideoGenerateRequested('node_1'));
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && videoCalls == 3,
+      );
+
+      expect(videoCalls, 3);
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('video generation fails closed when the poll cap is hit', () async {
+      var videoCalls = 0;
+      final bloc = CreateBloc(
+        repository: CreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async {
+            if (name == 'generateNodeVideo') {
+              videoCalls++;
+              return {'poll': true};
+            }
+            return <String, dynamic>{};
+          },
+        ),
+        videoPollInterval: Duration.zero,
+        maxVideoPolls: 2,
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const VideoGenerateRequested('node_1'));
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && videoCalls == 3,
+      );
+
+      expect(videoCalls, 3);
+      expect(bloc.state.failure, 'Something failed');
     });
 
     test('image generation dispatches and reloads the nodes', () async {
@@ -1425,7 +1507,7 @@ void main() {
 
   group('CreateState', () {
     test('missing lists the unmet publish conditions', () {
-      const node = DraftNode(nodeId: 'node_1');
+      const node = DraftNode(nodeId: 'node_1', windowSeconds: null);
 
       final missing = missingForNode(node: node);
 
@@ -1446,7 +1528,10 @@ void main() {
       );
       expect(missing, contains('Node node_1 needs an approved narrator line.'));
       expect(missing, contains('Node node_1 needs a ready narrator voice.'));
-      expect(missing, contains('Node node_1 needs an approved narrator voice.'));
+      expect(
+        missing,
+        contains('Node node_1 needs an approved narrator voice.'),
+      );
     });
 
     test('a complete node has nothing missing', () {
@@ -1508,7 +1593,9 @@ void main() {
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 1.4, y: -0.2));
+      bloc.add(
+        const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 1.4, y: -0.2),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       final moved = bloc.state.nodes
@@ -1527,8 +1614,17 @@ void main() {
       final before = bloc.state.nodes;
 
       bloc
-        ..add(const ZoneMoved(nodeId: 'missing', choiceId: 'c1', x: 0.1, y: 0.1))
-        ..add(const ZoneMoved(nodeId: 'node_1', choiceId: 'missing', x: 0.1, y: 0.1));
+        ..add(
+          const ZoneMoved(nodeId: 'missing', choiceId: 'c1', x: 0.1, y: 0.1),
+        )
+        ..add(
+          const ZoneMoved(
+            nodeId: 'node_1',
+            choiceId: 'missing',
+            x: 0.1,
+            y: 0.1,
+          ),
+        );
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(bloc.state.nodes, before);
@@ -1575,32 +1671,35 @@ void main() {
     test('removing the default promotes the survivor', () async {
       final calls = <_Call>[];
       final bloc = CreateBloc(
-        repository: _repo(calls, nodes: [
-          MapEntry('node_1', {
-            ..._nodeDoc(),
-            'choices': [
-              {
-                'choiceId': 'c1',
-                'label': 'One',
-                'targetNodeId': 'node_2',
-                'isDefault': true,
-                'x': 0.2,
-                'y': 0.3,
-                'radius': 0.15,
-              },
-              {
-                'choiceId': 'c2',
-                'label': 'Two',
-                'targetNodeId': 'node_2',
-                'isDefault': false,
-                'x': 0.7,
-                'y': 0.3,
-                'radius': 0.15,
-              },
-            ],
-          }),
-          MapEntry('node_2', _nodeDoc()),
-        ]),
+        repository: _repo(
+          calls,
+          nodes: [
+            MapEntry('node_1', {
+              ..._nodeDoc(),
+              'choices': [
+                {
+                  'choiceId': 'c1',
+                  'label': 'One',
+                  'targetNodeId': 'node_2',
+                  'isDefault': true,
+                  'x': 0.2,
+                  'y': 0.3,
+                  'radius': 0.15,
+                },
+                {
+                  'choiceId': 'c2',
+                  'label': 'Two',
+                  'targetNodeId': 'node_2',
+                  'isDefault': false,
+                  'x': 0.7,
+                  'y': 0.3,
+                  'radius': 0.15,
+                },
+              ],
+            }),
+            MapEntry('node_2', _nodeDoc()),
+          ],
+        ),
         auth: _auth('uid_1'),
       );
       addTearDown(bloc.close);
@@ -1623,9 +1722,7 @@ void main() {
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(
-        const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 99),
-      );
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 99));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(
         bloc.state.nodes
@@ -1634,9 +1731,7 @@ void main() {
         15,
       );
 
-      bloc.add(
-        const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 0),
-      );
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 0));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(
         bloc.state.nodes
@@ -1646,12 +1741,9 @@ void main() {
       );
     });
 
-    test('zones and window persist through saveNode', () async {
+    test('zones persist and the window always saves fixed at 6s', () async {
       final calls = <_Call>[];
-      final bloc = CreateBloc(
-        repository: _repo(calls),
-        auth: _auth('uid_1'),
-      );
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
@@ -1667,11 +1759,9 @@ void main() {
       final sent = (save.data['node'] as Map).map(
         (key, value) => MapEntry(key.toString(), value),
       );
-      expect(sent['windowSeconds'], 9);
+      expect(sent['windowSeconds'], 6);
       final choices = (sent['choices'] as List).cast<Map>();
-      final moved = choices.singleWhere(
-        (choice) => choice['choiceId'] == 'c1',
-      );
+      final moved = choices.singleWhere((choice) => choice['choiceId'] == 'c1');
       expect(moved['x'], 0.7);
       expect(moved['y'], 0.2);
     });
@@ -1699,6 +1789,7 @@ void main() {
         nodeId: 'node_9',
         title: 'Dawn',
         isEnding: true,
+        windowSeconds: null,
         endingName: 'Dawn',
         endingType: 'abierto',
         videoUrl: 'https://example.com/end.mp4',
@@ -1727,13 +1818,13 @@ void main() {
       // An orphan shows its reachability problem.
       problems = const CreateState(
         story: story,
-        nodes: [DraftNode(nodeId: 'node_9')],
+        nodes: [
+          DraftNode(nodeId: 'node_1'),
+          DraftNode(nodeId: 'node_9'),
+        ],
         openNodeId: 'node_9',
       ).publishProblems();
-      expect(
-        problems,
-        contains('Node node_9 is not reachable from the root.'),
-      );
+      expect(problems, contains('Node node_9 is not reachable from the root.'));
     });
 
     test('line and take approvals write bloc state', () async {
@@ -1763,18 +1854,13 @@ void main() {
 
     test('voice generate dispatches and reloads', () async {
       final calls = <_Call>[];
-      final bloc = CreateBloc(
-        repository: _repo(calls),
-        auth: _auth('uid_1'),
-      );
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
       bloc.add(const VoiceGenerateRequested('node_1'));
-      await bloc.stream.firstWhere(
-        (state) => state.job == CreateJob.imaging,
-      );
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.imaging);
       expect(bloc.state.jobNodeId, 'node_1');
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
 
@@ -1786,10 +1872,7 @@ void main() {
 
     test('voice generate on unknown nodes touches nothing', () async {
       final calls = <_Call>[];
-      final bloc = CreateBloc(
-        repository: _repo(calls),
-        auth: _auth('uid_1'),
-      );
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
@@ -1803,21 +1886,16 @@ void main() {
 
     test('section saves persist through saveNode', () async {
       final calls = <_Call>[];
-      final bloc = CreateBloc(
-        repository: _repo(calls),
-        auth: _auth('uid_1'),
-      );
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(
-        const NodeFieldChanged(nodeId: 'node_1', lineApproved: true),
-      );
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', lineApproved: true));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       bloc.add(const ZonesSaved());
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
-      bloc.add(const WindowSaved());
+      bloc.add(const NodeSaved());
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
 
       final saves = calls.where((call) => call.name == 'saveNode').toList();
@@ -1828,7 +1906,89 @@ void main() {
         );
         expect(sent['nodeId'], 'node_1');
         expect(sent['lineApproved'], isTrue);
+        expect(sent['windowSeconds'], 6);
       }
+    });
+
+    test(
+      'adding under an explicit parent uses it, not the open node',
+      () async {
+        final calls = <_Call>[];
+        final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+
+        expect(bloc.state.openNodeId, 'node_1');
+        bloc.add(const NodeAdded(parentNodeId: 'node_2'));
+        await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+        final add = calls.singleWhere((call) => call.name == 'createNode');
+        expect(add.data['parentNodeId'], 'node_2');
+      },
+    );
+
+    test('adding without a parent falls back to the open node', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeAdded());
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      final add = calls.singleWhere((call) => call.name == 'createNode');
+      expect(add.data['parentNodeId'], 'node_1');
+    });
+
+    test('adding a child auto-links it into the tapped slot', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeAdded(parentNodeId: 'node_2'));
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      // The parent is saved with a blank choice at the mock's new id, so
+      // the child lands linked instead of unreachable at the bottom.
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      final sent = (save.data['node'] as Map).map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      expect(sent['nodeId'], 'node_2');
+      final choices = (sent['choices'] as List).cast<Map>();
+      expect(choices, hasLength(2));
+      expect(choices.last['targetNodeId'], 'node_1');
+      expect(choices.last['slot'], 'A');
+    });
+
+    test('tapping slot B first links the child into slot B', () async {
+      final calls = <_Call>[];
+      final docs = [
+        MapEntry('node_1', {..._nodeDoc(), 'choices': const []}),
+      ];
+      final bloc = CreateBloc(
+        repository: _repo(calls, nodes: docs),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeAdded(parentNodeId: 'node_1', slot: 'B'));
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      final sent = (save.data['node'] as Map).map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      final choices = (sent['choices'] as List).cast<Map>();
+      expect(choices, hasLength(1));
+      expect(choices.single['slot'], 'B');
+      expect(choices.single['targetNodeId'], 'node_1');
     });
   });
 
@@ -1853,10 +2013,20 @@ void main() {
 
       final layout = layoutDraft(nodes, rootNodeId: 'node_1');
 
-      expect(layout.positions.keys, {'node_1', 'node_2', 'node_9'});
-      expect(layout.edges.single.from, 'node_1');
-      expect(layout.edges.single.to, 'node_2');
-      expect(layout.edges.single.returns, isFalse);
+      expect(layout.positions.keys, {
+        'node_1',
+        'node_2',
+        'node_9',
+        'mini:node_1:A',
+        'mini:node_2:A',
+        'mini:node_2:B',
+        'mini:node_9:A',
+        'mini:node_9:B',
+      });
+      final real = layout.edges.where((edge) => !edge.to.startsWith('mini:'));
+      expect(real.single.from, 'node_1');
+      expect(real.single.to, 'node_2');
+      expect(real.single.returns, isFalse);
       expect(
         layout.positions['node_2']!.dy,
         greaterThan(layout.positions['node_1']!.dy),
@@ -1880,7 +2050,161 @@ void main() {
 
       final layout = layoutDraft(nodes, rootNodeId: 'node_1');
 
-      expect(layout.edges.single.returns, isTrue);
+      final returns = layout.edges.where((edge) => edge.returns);
+      expect(returns, hasLength(1));
+      expect(returns.single.from, 'node_1');
+      expect(returns.single.to, 'node_1');
+    });
+
+    test('empty slots join the layout as virtual minis', () {
+      const nodes = [DraftNode(nodeId: 'node_1', title: 'Root')];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'node_1');
+
+      expect(layout.positions.keys, {
+        'node_1',
+        'mini:node_1:A',
+        'mini:node_1:B',
+      });
+      // Slots hang below the parent in order: A left of B, same row.
+      final parent = layout.positions['node_1']!;
+      final a = layout.positions['mini:node_1:A']!;
+      final b = layout.positions['mini:node_1:B']!;
+      expect(a.dy, greaterThan(parent.dy));
+      expect(b.dy, a.dy);
+      expect(a.dx, lessThan(b.dx));
+      expect(layout.edges.where((edge) => edge.from == 'node_1'), hasLength(2));
+      expect(layout.edges.every((edge) => !edge.returns), isTrue);
+    });
+
+    test('a slot-B child sits right of the A mini', () {
+      const nodes = [
+        DraftNode(
+          nodeId: 'node_1',
+          title: 'Root',
+          choices: [
+            DraftChoice(
+              choiceId: 'c1',
+              label: '',
+              targetNodeId: 'node_2',
+              isDefault: true,
+              slot: 'B',
+            ),
+          ],
+        ),
+        DraftNode(nodeId: 'node_2', title: 'End', isEnding: true),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'node_1');
+
+      expect(layout.positions.keys, {'node_1', 'mini:node_1:A', 'node_2'});
+      final mini = layout.positions['mini:node_1:A']!;
+      final child = layout.positions['node_2']!;
+      expect(mini.dx, lessThan(child.dx));
+      expect(mini.dy, child.dy);
+      expect(layout.edges.where((edge) => edge.from == 'node_1'), hasLength(2));
+      expect(layout.edges.every((edge) => !edge.returns), isTrue);
+    });
+
+    test('recenter lands the target at the viewport center', () {
+      const viewport = Size(400, 600);
+      final transform = recenterTransform(viewport, const Offset(172, 122));
+      expect(transform.storage[12], 200 - 172);
+      expect(transform.storage[13], 300 - 122);
+      expect(transform.storage[0], 1);
+      expect(recenterTransform(null, const Offset(1, 2)).storage[12], 0);
+      expect(recenterTransform(viewport, null).storage[12], 0);
+    });
+
+    test('every position fits inside the canvas with card margin', () {
+      const nodes = [
+        DraftNode(
+          nodeId: 'node_1',
+          choices: [
+            DraftChoice(
+              choiceId: 'c1',
+              label: 'A',
+              targetNodeId: 'node_2',
+              isDefault: true,
+            ),
+            DraftChoice(
+              choiceId: 'c2',
+              label: 'B',
+              targetNodeId: 'node_3',
+              isDefault: false,
+            ),
+          ],
+        ),
+        DraftNode(
+          nodeId: 'node_2',
+          choices: [
+            DraftChoice(
+              choiceId: 'c3',
+              label: 'C',
+              targetNodeId: 'node_4',
+              isDefault: true,
+            ),
+          ],
+        ),
+        DraftNode(nodeId: 'node_3'),
+        DraftNode(nodeId: 'node_4'),
+      ];
+      final layout = layoutDraft(nodes, rootNodeId: 'node_1');
+      for (final position in layout.positions.values) {
+        expect(position.dx, greaterThanOrEqualTo(85));
+        expect(position.dy, greaterThanOrEqualTo(86));
+        expect(position.dx, lessThanOrEqualTo(layout.size.width - 85));
+        expect(position.dy, lessThanOrEqualTo(layout.size.height - 86));
+      }
+    });
+
+    test('scene numbers follow the story walk, not fetch order', () {
+      // Chain root -B-> n2 -B-> n3 -A-> n4 -B-> n5, listed scrambled.
+      DraftChoice choice(String id, String target, String slot) {
+        return DraftChoice(
+          choiceId: id,
+          label: '',
+          targetNodeId: target,
+          isDefault: true,
+          slot: slot,
+        );
+      }
+
+      final nodes = [
+        DraftNode(
+          nodeId: 'node_3',
+          title: 'C',
+          choices: [choice('c3', 'node_4', 'A')],
+        ),
+        const DraftNode(nodeId: 'node_5', title: 'E'),
+        DraftNode(
+          nodeId: 'node_1',
+          title: 'Root',
+          choices: [choice('c1', 'node_2', 'B')],
+        ),
+        DraftNode(
+          nodeId: 'node_2',
+          title: 'B',
+          choices: [choice('c2', 'node_3', 'B')],
+        ),
+        DraftNode(
+          nodeId: 'node_4',
+          title: 'BA',
+          choices: [choice('c4', 'node_5', 'B')],
+        ),
+        const DraftNode(nodeId: 'orphan', title: 'Orphan'),
+      ];
+
+      final numbers = sceneIndexes(nodes, 'node_1');
+
+      expect(numbers, {
+        'node_1': 1,
+        'node_2': 2,
+        'node_3': 3,
+        'node_4': 4,
+        'node_5': 5,
+        'orphan': 6,
+      });
     });
   });
 }
