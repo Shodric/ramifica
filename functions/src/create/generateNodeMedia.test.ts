@@ -4,6 +4,7 @@ import {test} from "node:test";
 import {Db, DbCol, DbDoc, DbRef, DbTx} from "../feed/shared";
 import {
   approveNodeImageWith,
+  buildImagePrompt,
   generateNodeImageWith,
   generateNodeVideoWith,
   imageProviderKind,
@@ -389,7 +390,9 @@ test("ready E resets approval and desyncs children", async () => {
     {storyId: "story_draft", nodeId: "node_001", which: "end"},
     mockDeps()
   );
-  const expectedHash = sha8("still:Vertical still, Gate, no text.");
+  const expectedHash = sha8(
+    `still:${buildImagePrompt({title: "The temple"}, {title: "Gate"}, "end")}`
+  );
   assert.equal(result.imageStatus, "ready");
   assert.equal(result.endHash, expectedHash);
   assert.equal(result.imageUrl, `https://cdn.example/${expectedHash}.png`);
@@ -677,7 +680,6 @@ test("video completion stores the finished clip", async () => {
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.videoStatus, "ready");
   assert.equal(child.data()?.durationSeconds, 6);
-  assert.equal(child.data()?.pauseAtSeconds, 6 - 1 / 30);
 });
 
 test("video failure clears the job and fails", async () => {
@@ -722,4 +724,58 @@ test("an expired video job clears and fails", async () => {
   );
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.videoJobId, null);
+});
+
+test("image prompts ground the still in story, line, and frame", () => {
+  const story = {title: "The temple", synopsis: "A cursed gate."};
+  const node = {
+    title: "Gate",
+    ttsText: "The stones remember your name.",
+    endingName: null,
+    videoPrompt: null,
+  };
+  const start = buildImagePrompt(story, node, "start");
+  assert.match(start, /Opening frame/);
+  assert.match(start, /The temple/);
+  assert.match(start, /A cursed gate/);
+  assert.match(start, /The stones remember your name/);
+  const end = buildImagePrompt(story, node, "end");
+  assert.match(end, /Closing frame/);
+  assert.doesNotMatch(end, /Opening frame/);
+});
+
+test("image prompts omit blanks and stay within budget", () => {
+  const prompt = buildImagePrompt(
+    {title: "T", synopsis: "x".repeat(500)},
+    {title: "", ttsText: null, endingName: "Fin", videoPrompt: "morph"},
+    "end"
+  );
+  assert.doesNotMatch(prompt, /MOMENT/);
+  assert.match(prompt, /Fin/);
+  assert.match(prompt, /CLIP CONTEXT: morph/);
+  assert.ok(prompt.length <= 2000);
+});
+
+test("image generation falls back to the story-grounded prompt", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_001").set(
+    {ttsText: "The stones remember your name."},
+    {merge: true}
+  );
+  let seen = "";
+  await generateNodeImageWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001", which: "start"},
+    mockDeps({
+      imageGen: async (prompt: string) => {
+        seen = prompt;
+        return {bytes: Buffer.from("still")};
+      },
+    })
+  );
+  assert.match(seen, /The temple/);
+  assert.match(seen, /The stones remember your name/);
+  assert.match(seen, /Opening frame/);
 });

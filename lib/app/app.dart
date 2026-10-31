@@ -30,6 +30,7 @@ class RamificaApp extends StatefulWidget {
   final PendingStoryStore? pendingStoryStore;
   final RunRepository? runRepository;
   final CatalogRepository? catalogRepository;
+
   /// Test double. Production builds a browser [Prefetcher].
   final Prefetcher? prefetcher;
 
@@ -73,6 +74,7 @@ class _RamificaAppState extends State<RamificaApp> {
     final app = AppNavigation(
       controller: _controller,
       child: MaterialApp.router(
+        debugShowCheckedModeBanner: false,
         title: 'Ramifica',
         theme: RamificaTheme.data,
         routerDelegate: _router,

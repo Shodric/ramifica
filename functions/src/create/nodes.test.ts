@@ -202,8 +202,6 @@ const seedDraft = async (db: MemDb): Promise<void> => {
     endingType: null,
     videoUrl: "https://old.example/v.mp4",
     videoStatus: "ready",
-    pauseAtSeconds: 9.967,
-    windowSeconds: 6,
     ttsText: "Old line.",
     lineApproved: true,
     ttsAudioUrl: "https://old.example/v.m4a",
@@ -347,13 +345,14 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
       endingName: null,
       endingType: null,
       ttsText: "New line.",
-      windowSeconds: 9,
       choices: [
         {
           choiceId: "c1",
           label: "Enter",
           targetNodeId: "node_002",
           isDefault: true,
+          icon: "mountain",
+          iconColor: "gold",
           x: 0.25,
           y: 0.65,
           radius: 0.15,
@@ -375,7 +374,6 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
   assert.equal(saved.title, "New title");
   assert.equal(saved.visibility, "secret");
   assert.equal(saved.ttsText, "New line.");
-  assert.equal(saved.windowSeconds, 9);
   assert.deepEqual(saved.choices, [
     {
       choiceId: "c1",
@@ -385,6 +383,8 @@ test("saveNode persists the whitelist and ignores the rest", async () => {
       x: 0.25,
       y: 0.65,
       radius: 0.15,
+      icon: "mountain",
+      iconColor: "gold",
     },
   ]);
   assert.equal(saved.videoUrl, "https://old.example/v.mp4");
@@ -549,13 +549,11 @@ test("saveNode normalizes endings and rejects choices on them", async () => {
     node: {
       nodeId: "node_001",
       isEnding: true,
-      windowSeconds: 6,
       endingName: "Dawn",
       endingType: "abierto",
     },
   });
   const node = await db.doc("stories/story_draft/nodes/node_001").get();
-  assert.equal(node.data()?.windowSeconds, null);
   assert.equal(node.data()?.endingName, "Dawn");
   await assert.rejects(
     saveNodeWith(db, "u1", {
@@ -607,9 +605,6 @@ test("saveNode validates every whitelisted field", async () => {
     {nodeId: "node_001", ttsText: "x".repeat(1001)},
     {nodeId: "node_001", lineApproved: "yes"},
     {nodeId: "node_001", ttsApproved: 1},
-    {nodeId: "node_001", windowSeconds: null},
-    {nodeId: "node_001", windowSeconds: 2},
-    {nodeId: "node_001", windowSeconds: 3.5},
     {nodeId: "node_001", choices: "nope"},
     {nodeId: "node_001", choices: [{choiceId: "c1", label: "L",
       targetNodeId: "n2"}, {choiceId: "c2", label: "L", targetNodeId: "n3"},
@@ -620,6 +615,10 @@ test("saveNode validates every whitelisted field", async () => {
       label: "x".repeat(25), targetNodeId: "n2"}]},
     {nodeId: "node_001", choices: [{choiceId: "c1", label: "L",
       targetNodeId: "n2", x: 2}]},
+    {nodeId: "node_001", choices: [{choiceId: "c1", label: "L",
+      targetNodeId: "n2", icon: "spaceship"}]},
+    {nodeId: "node_001", choices: [{choiceId: "c1", label: "L",
+      targetNodeId: "n2", iconColor: "neon"}]},
     {nodeId: "node_001", isEnding: "yes"},
   ];
   for (const node of bad) {

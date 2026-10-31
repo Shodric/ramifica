@@ -39,7 +39,12 @@ class RunStart {
 /// is still active; absent keys parse the same as null so old payloads
 /// still parse.
 class CommitResult {
-  const CommitResult({required this.playback, this.ending, this.sagaUnlocked, this.reward});
+  const CommitResult({
+    required this.playback,
+    this.ending,
+    this.sagaUnlocked,
+    this.reward,
+  });
 
   factory CommitResult.fromJson(Map<String, dynamic> json) {
     return CommitResult(
@@ -155,7 +160,9 @@ class RewardGrant {
 
   @override
   bool operator ==(Object other) {
-    return other is RewardGrant && other.rewardId == rewardId && other.code == code;
+    return other is RewardGrant &&
+        other.rewardId == rewardId &&
+        other.code == code;
   }
 
   @override
@@ -246,8 +253,6 @@ class PlaybackNode {
     required this.isEnding,
     required this.videoUrl,
     required this.durationSeconds,
-    required this.pauseAtSeconds,
-    required this.windowSeconds,
     required this.videoFrameLastBlurData,
     this.ttsText,
     this.ttsAudioUrl,
@@ -264,8 +269,6 @@ class PlaybackNode {
       isEnding: _requiredBool(json['isEnding']),
       videoUrl: _requiredString(json['videoUrl']),
       durationSeconds: _requiredDouble(json['durationSeconds']),
-      pauseAtSeconds: _requiredDouble(json['pauseAtSeconds']),
-      windowSeconds: _requiredInt(json['windowSeconds']),
       videoFrameLastBlurData: _requiredString(json['videoFrameLastBlurData']),
       ttsText: _optionalString(json['ttsText']),
       ttsAudioUrl: _optionalString(json['ttsAudioUrl']),
@@ -281,8 +284,6 @@ class PlaybackNode {
   final bool isEnding;
   final String videoUrl;
   final double durationSeconds;
-  final double pauseAtSeconds;
-  final int windowSeconds;
   final String videoFrameLastBlurData;
   final String? ttsText;
   final String? ttsAudioUrl;
@@ -299,8 +300,6 @@ class PlaybackNode {
         other.isEnding == isEnding &&
         other.videoUrl == videoUrl &&
         other.durationSeconds == durationSeconds &&
-        other.pauseAtSeconds == pauseAtSeconds &&
-        other.windowSeconds == windowSeconds &&
         other.videoFrameLastBlurData == videoFrameLastBlurData &&
         other.ttsText == ttsText &&
         other.ttsAudioUrl == ttsAudioUrl &&
@@ -317,8 +316,6 @@ class PlaybackNode {
     isEnding,
     videoUrl,
     durationSeconds,
-    pauseAtSeconds,
-    windowSeconds,
     videoFrameLastBlurData,
     ttsText,
     ttsAudioUrl,
@@ -340,6 +337,8 @@ class PlaybackChoice {
     required this.radius,
     required this.targetSecret,
     required this.target,
+    this.icon,
+    this.iconColor,
   });
 
   factory PlaybackChoice.fromJson(Map<String, dynamic> json) {
@@ -360,6 +359,8 @@ class PlaybackChoice {
       radius: _requiredDouble(json['radius']),
       targetSecret: secret,
       target: secret ? null : PlaybackTarget.fromJson(_objectMap(rawTarget)),
+      icon: _optionalString(json['icon']),
+      iconColor: _optionalString(json['iconColor']),
     );
   }
 
@@ -373,6 +374,13 @@ class PlaybackChoice {
   final bool targetSecret;
   final PlaybackTarget? target;
 
+  /// Persisted hotspot icon name from the shared catalog; null on
+  /// choices published before icons existed (fallback glyph applies).
+  final String? icon;
+
+  /// Persisted hotspot icon color name; null draws the accent fallback.
+  final String? iconColor;
+
   @override
   bool operator ==(Object other) {
     return other is PlaybackChoice &&
@@ -384,7 +392,9 @@ class PlaybackChoice {
         other.y == y &&
         other.radius == radius &&
         other.targetSecret == targetSecret &&
-        other.target == target;
+        other.target == target &&
+        other.icon == icon &&
+        other.iconColor == iconColor;
   }
 
   @override
@@ -398,6 +408,8 @@ class PlaybackChoice {
     radius,
     targetSecret,
     target,
+    icon,
+    iconColor,
   );
 }
 

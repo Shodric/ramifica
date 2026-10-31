@@ -568,23 +568,6 @@ void main() {
       );
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
     });
-
-    test('ending docs parse a null windowSeconds and round-trip it', () {
-      final node = DraftNode.fromMap('node_9', {
-        'title': 'Dawn',
-        'visibility': 'visible',
-        'isEnding': true,
-        'endingName': 'Dawn',
-        'endingType': 'abierto',
-      });
-
-      expect(node.isEnding, isTrue);
-      expect(node.windowSeconds, isNull);
-
-      final reparsed = DraftNode.fromMap('node_9', node.toJson());
-      expect(reparsed.windowSeconds, isNull);
-      expect(reparsed, node);
-    });
   });
 
   group('CreateMedia', () {
@@ -1006,7 +989,7 @@ void main() {
         uid: 'uid_1',
         storyId: 'story_1',
         nodeId: 'node_2',
-        takeId: 'take_7',
+        takeId: 'take7',
         contentType: 'video/mp4',
         bytes: const [1, 2, 3],
       );
@@ -1014,15 +997,15 @@ void main() {
         uid: 'uid_1',
         storyId: 'story_1',
         nodeId: 'node_2',
-        takeId: 'take_7',
+        takeId: 'take7',
         contentType: 'video/quicktime',
         bytes: const [1, 2, 3],
       );
 
       expect(calls, hasLength(2));
       expect(calls[0].name, 'uploadNodeVideo');
-      expect(calls[0].data['path'], 'uploads/uid_1/story_1_node_2_take_7.mp4');
-      expect(calls[1].data['path'], 'uploads/uid_1/story_1_node_2_take_7.mov');
+      expect(calls[0].data['path'], 'uploads/uid_1/story_1_node_2_take7.mp4');
+      expect(calls[1].data['path'], 'uploads/uid_1/story_1_node_2_take7.mov');
     });
 
     test('uploadNodeVideo rejects blanks without network', () async {
@@ -1135,7 +1118,7 @@ void main() {
         nodeId: 'node_2',
       );
       expect(echoed.error, isNull);
-      expect(echoed.takeId, 'take_1');
+      expect(echoed.takeId, 'take1');
 
       final missing = await repository.fetchUploadMarker(
         storyId: 'story_1',
@@ -1166,7 +1149,7 @@ void main() {
             return [MapEntry('node_1', pre)];
           }
           return [
-            MapEntry('node_1', {..._nodeDoc(), 'uploadTakeId': 'take_1'}),
+            MapEntry('node_1', {..._nodeDoc(), 'uploadTakeId': 'take1'}),
           ];
         },
         callFunction: (name, data) async => <String, dynamic>{},
@@ -1194,7 +1177,7 @@ void main() {
           nodeId: 'node_1',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_1',
+          takeId: 'take1',
         ),
       );
       await bloc.stream.firstWhere(
@@ -1225,7 +1208,7 @@ void main() {
           nodeId: 'node_2',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_silent',
+          takeId: 'takesilent',
         ),
       );
       await bloc.stream.firstWhere(
@@ -1253,14 +1236,14 @@ void main() {
           nodeId: 'node_1',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_fresh',
+          takeId: 'takefresh',
         ),
       );
       await bloc.stream.firstWhere(
         (state) => state.job == CreateJob.none && state.uploadProgress == null,
       );
 
-      // The stale `take_1` echo is not success: bounded polling gives up
+      // The stale `take1` echo is not success: bounded polling gives up
       // instead of blessing another take's write.
       expect(bloc.state.failure, 'Something failed');
     });
@@ -1278,7 +1261,7 @@ void main() {
           nodeId: 'node_1',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_1',
+          takeId: 'take1',
         ),
       );
       await bloc.stream.firstWhere(
@@ -1288,7 +1271,7 @@ void main() {
       final upload = calls.singleWhere(
         (call) => call.name == 'uploadNodeVideo',
       );
-      expect(upload.data['path'], 'uploads/uid_1/story_1_node_1_take_1.mp4');
+      expect(upload.data['path'], 'uploads/uid_1/story_1_node_1_take1.mp4');
       expect(upload.data['contentType'], 'video/mp4');
       expect(bloc.state.failure, isNull);
     });
@@ -1322,7 +1305,7 @@ void main() {
           nodeId: 'node_1',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_1',
+          takeId: 'take1',
         ),
       );
       await bloc.stream.firstWhere((state) => state.job == CreateJob.uploading);
@@ -1392,7 +1375,7 @@ void main() {
             nodeId: 'node_1',
             contentType: 'video/mp4',
             bytes: [1, 2, 3],
-            takeId: 'take_1',
+            takeId: 'take1',
           ),
         );
         await bloc.stream.firstWhere(
@@ -1435,7 +1418,7 @@ void main() {
           nodeId: 'node_1',
           contentType: 'video/mp4',
           bytes: [1, 2, 3],
-          takeId: 'take_1',
+          takeId: 'take1',
         ),
       );
       await bloc.stream.firstWhere((state) => state.failure != null);
@@ -1507,7 +1490,7 @@ void main() {
 
   group('CreateState', () {
     test('missing lists the unmet publish conditions', () {
-      const node = DraftNode(nodeId: 'node_1', windowSeconds: null);
+      const node = DraftNode(nodeId: 'node_1');
 
       final missing = missingForNode(node: node);
 
@@ -1522,10 +1505,6 @@ void main() {
         contains('Node node_1 needs an approved start image.'),
       );
       expect(missing, contains('Node node_1 needs one or two choices.'));
-      expect(
-        missing,
-        contains('Node node_1 needs windowSeconds between 3 and 15.'),
-      );
       expect(missing, contains('Node node_1 needs an approved narrator line.'));
       expect(missing, contains('Node node_1 needs a ready narrator voice.'));
       expect(
@@ -1716,41 +1695,14 @@ void main() {
       expect(choices.single.isDefault, isTrue);
     });
 
-    test('window steps clamp to 3-15', () async {
-      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
-      addTearDown(bloc.close);
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
-
-      bloc.add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 99));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(
-        bloc.state.nodes
-            .firstWhere((node) => node.nodeId == 'node_1')
-            .windowSeconds,
-        15,
-      );
-
-      bloc.add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 0));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(
-        bloc.state.nodes
-            .firstWhere((node) => node.nodeId == 'node_1')
-            .windowSeconds,
-        3,
-      );
-    });
-
-    test('zones persist and the window always saves fixed at 6s', () async {
+    test('zones persist', () async {
       final calls = <_Call>[];
       final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc
-        ..add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 0.7, y: 0.2))
-        ..add(const NodeFieldChanged(nodeId: 'node_1', windowSeconds: 9));
+      bloc.add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 0.7, y: 0.2));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       bloc.add(const NodeSaved());
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
@@ -1759,7 +1711,6 @@ void main() {
       final sent = (save.data['node'] as Map).map(
         (key, value) => MapEntry(key.toString(), value),
       );
-      expect(sent['windowSeconds'], 6);
       final choices = (sent['choices'] as List).cast<Map>();
       final moved = choices.singleWhere((choice) => choice['choiceId'] == 'c1');
       expect(moved['x'], 0.7);
@@ -1789,7 +1740,6 @@ void main() {
         nodeId: 'node_9',
         title: 'Dawn',
         isEnding: true,
-        windowSeconds: null,
         endingName: 'Dawn',
         endingType: 'abierto',
         videoUrl: 'https://example.com/end.mp4',
@@ -1906,7 +1856,6 @@ void main() {
         );
         expect(sent['nodeId'], 'node_1');
         expect(sent['lineApproved'], isTrue);
-        expect(sent['windowSeconds'], 6);
       }
     });
 
@@ -2343,8 +2292,7 @@ Map<String, dynamic> _nodeDoc() {
     'visibility': 'visible',
     'isEnding': false,
     'videoStatus': 'idle',
-    'windowSeconds': 6,
-    'uploadTakeId': 'take_1',
+    'uploadTakeId': 'take1',
     'ttsText': '',
     'lineApproved': false,
     'ttsStatus': 'idle',
@@ -2368,7 +2316,6 @@ DraftNode _completeNode() {
     title: 'Door',
     videoUrl: 'https://example.com/video.mp4',
     videoStatus: 'ready',
-    windowSeconds: 6,
     startImageSourceUrl: 'https://example.com/s.png',
     startImageApproved: true,
     endImageSourceUrl: 'https://example.com/e.png',

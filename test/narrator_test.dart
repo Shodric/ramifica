@@ -168,8 +168,6 @@ Map<String, dynamic> _playback({required bool voice}) {
       'isEnding': false,
       'videoUrl': 'https://example.com/video.mp4',
       'durationSeconds': 10,
-      'pauseAtSeconds': 9.967,
-      'windowSeconds': 6,
       'ttsText': voice ? 'Enter or climb?' : null,
       'ttsAudioUrl': voice ? 'https://example.com/voice.m4a' : null,
       'ttsDurationSeconds': voice ? 4.1 : null,

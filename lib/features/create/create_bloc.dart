@@ -387,12 +387,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
-      // The choice window is fixed product-wide (6s): endings carry no
-      // window, decisions always save 6. No UI edits this value.
-      final fixed = node.isEnding
-          ? node.copy(windowSeconds: () => null)
-          : node.copy(windowSeconds: () => 6);
-      await repository.saveNode(storyId: story.storyId, node: fixed);
+      await repository.saveNode(storyId: story.storyId, node: node);
       emit(
         state.copy(
           job: CreateJob.none,
@@ -874,11 +869,6 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.visibility != null) {
     next = next.copy(visibility: event.visibility);
   }
-  if (event.windowSeconds != null) {
-    // Clamp to the `saveNode` window (3-15) so an out-of-range step can
-    // never fail the save.
-    next = next.copy(windowSeconds: () => event.windowSeconds!.clamp(3, 15));
-  }
   if (event.lineApproved != null) {
     next = next.copy(lineApproved: event.lineApproved);
   }
@@ -892,6 +882,28 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
         for (final choice in next.choices)
           labels.containsKey(choice.choiceId)
               ? choice.copy(label: labels[choice.choiceId])
+              : choice,
+      ],
+    );
+  }
+  final icons = event.choiceIcons;
+  if (icons != null && icons.isNotEmpty) {
+    next = next.copy(
+      choices: [
+        for (final choice in next.choices)
+          icons.containsKey(choice.choiceId)
+              ? choice.copy(icon: icons[choice.choiceId])
+              : choice,
+      ],
+    );
+  }
+  final iconColors = event.choiceIconColors;
+  if (iconColors != null && iconColors.isNotEmpty) {
+    next = next.copy(
+      choices: [
+        for (final choice in next.choices)
+          iconColors.containsKey(choice.choiceId)
+              ? choice.copy(iconColor: iconColors[choice.choiceId])
               : choice,
       ],
     );

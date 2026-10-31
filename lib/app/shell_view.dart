@@ -6,7 +6,6 @@ import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
-import 'package:ramifica/core/widgets/ramifica_isotipo.dart';
 import 'package:ramifica/features/access/access_bloc.dart';
 import 'package:ramifica/features/access/access_event.dart';
 import 'package:ramifica/features/access/access_state.dart';
@@ -251,7 +250,7 @@ class _CreateIcon extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.bottomLeft,
                 end: Alignment.topRight,
-                colors: ramificaBrandRampColors,
+                colors: RamificaColors.rampColors,
               ),
               boxShadow: [BoxShadow(color: Color(0x8000F2FE), blurRadius: 16)],
             ),

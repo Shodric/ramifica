@@ -142,8 +142,8 @@ class _CreateViewState extends State<CreateView> {
   }
 
   /// Adds a child under [parentId] on [slot], then enters it once the save
-  /// lands.
-  void _addAndOpen(CreateBloc bloc, String parentId, String slot) {
+  /// lands. A null slot falls back to the first free one (HUD next-scene).
+  void _addAndOpen(CreateBloc bloc, String parentId, [String? slot]) {
     _pendingPush = true;
     bloc.add(NodeAdded(parentNodeId: parentId, slot: slot));
   }
@@ -283,7 +283,6 @@ class _CreateViewState extends State<CreateView> {
                 ? () => bloc.add(const StoryPublished())
                 : null,
             canPublish: state.job == CreateJob.none && problems.isEmpty,
-            problems: problems,
             onClose: () => _go(context, AppRoutes.create),
           ),
           const SizedBox(height: 12),

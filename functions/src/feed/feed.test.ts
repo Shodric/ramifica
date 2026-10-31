@@ -202,8 +202,6 @@ const nodeFields = (overrides: Fields = {}): Fields => ({
   isEnding: false,
   videoUrl: "https://example.com/video.mp4",
   durationSeconds: 10,
-  pauseAtSeconds: 9.967,
-  windowSeconds: 6,
   videoFrameLastBlurData: "data:image/webp;base64,abc",
   ...overrides,
 });

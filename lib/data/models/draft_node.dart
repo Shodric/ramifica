@@ -11,6 +11,8 @@ class DraftChoice {
     required this.targetNodeId,
     required this.isDefault,
     this.slot,
+    this.icon,
+    this.iconColor,
     this.x = 0.5,
     this.y = 0.5,
     this.radius = 0.15,
@@ -23,6 +25,8 @@ class DraftChoice {
       targetNodeId: _requiredString(json['targetNodeId']),
       isDefault: json['isDefault'] == true,
       slot: _optionalString(json['slot']),
+      icon: _optionalString(json['icon']),
+      iconColor: _optionalString(json['iconColor']),
       x: _optionalDouble(json['x']) ?? 0.5,
       y: _optionalDouble(json['y']) ?? 0.5,
       radius: _optionalDouble(json['radius']) ?? 0.15,
@@ -38,10 +42,18 @@ class DraftChoice {
   /// where the child lands. Null on legacy choices, which keep
   /// append-order placement.
   final String? slot;
+
+  /// Persisted hotspot icon name from the shared catalog
+  /// (`choice_icon.dart`); null on legacy choices, which draw the
+  /// index-based fallback until the author picks one.
+  final String? icon;
+
+  /// Persisted hotspot icon color name from the shared palette; null
+  /// draws the per-index accent until the author picks one.
+  final String? iconColor;
   final double x;
   final double y;
   final double radius;
-
   Map<String, dynamic> toJson() {
     return {
       'choiceId': choiceId,
@@ -49,6 +61,8 @@ class DraftChoice {
       'targetNodeId': targetNodeId,
       'isDefault': isDefault,
       if (slot != null) 'slot': slot,
+      if (icon != null) 'icon': icon,
+      if (iconColor != null) 'iconColor': iconColor,
       'x': x,
       'y': y,
       'radius': radius,
@@ -60,6 +74,8 @@ class DraftChoice {
     String? targetNodeId,
     bool? isDefault,
     String? slot,
+    String? icon,
+    String? iconColor,
     double? x,
     double? y,
     double? radius,
@@ -70,6 +86,8 @@ class DraftChoice {
       targetNodeId: targetNodeId ?? this.targetNodeId,
       isDefault: isDefault ?? this.isDefault,
       slot: slot ?? this.slot,
+      icon: icon ?? this.icon,
+      iconColor: iconColor ?? this.iconColor,
       x: x ?? this.x,
       y: y ?? this.y,
       radius: radius ?? this.radius,
@@ -84,14 +102,26 @@ class DraftChoice {
         other.targetNodeId == targetNodeId &&
         other.isDefault == isDefault &&
         other.slot == slot &&
+        other.icon == icon &&
+        other.iconColor == iconColor &&
         other.x == x &&
         other.y == y &&
         other.radius == radius;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(choiceId, label, targetNodeId, isDefault, slot, x, y, radius);
+  int get hashCode => Object.hash(
+    choiceId,
+    label,
+    targetNodeId,
+    isDefault,
+    slot,
+    icon,
+    iconColor,
+    x,
+    y,
+    radius,
+  );
 }
 
 /// A draft node: `stories/{storyId}/nodes/{nodeId}`. Secrets included —
@@ -114,8 +144,6 @@ class DraftNode {
     this.videoToHash,
     this.videoJobId,
     this.videoPrompt,
-    this.pauseAtSeconds,
-    this.windowSeconds = 6,
     this.startImageSourceUrl,
     this.startImageStatus = 'idle',
     this.startHash,
@@ -140,6 +168,10 @@ class DraftNode {
 
   factory DraftNode.fromMap(String nodeId, Map<String, dynamic> data) {
     if (nodeId.isEmpty) throw const AppFailure(.invalid);
+    final rawTitle = data['title'];
+    if (rawTitle != null && rawTitle is! String) {
+      throw const AppFailure(.invalid);
+    }
     final rawChoices = data['choices'];
     return DraftNode(
       nodeId: nodeId,
@@ -155,10 +187,6 @@ class DraftNode {
       videoToHash: _optionalString(data['videoToHash']),
       videoJobId: _optionalString(data['videoJobId']),
       videoPrompt: _optionalString(data['videoPrompt']),
-      pauseAtSeconds: _optionalDouble(data['pauseAtSeconds']),
-      windowSeconds: data['isEnding'] == true
-          ? null
-          : (_optionalInt(data['windowSeconds']) ?? 6),
       startImageSourceUrl: _optionalString(data['startImageSourceUrl']),
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
       startHash: _optionalString(data['startHash']),
@@ -205,10 +233,6 @@ class DraftNode {
   final String? videoToHash;
   final String? videoJobId;
   final String? videoPrompt;
-  final double? pauseAtSeconds;
-
-  /// Decision window in seconds, 3 to 15. Null on endings.
-  final int? windowSeconds;
 
   /// S frame (root only): the source URL, generation status, content
   /// hash, and author approval. Non-root nodes inherit S from their
@@ -283,8 +307,6 @@ class DraftNode {
       'videoToHash': videoToHash,
       'videoJobId': videoJobId,
       'videoPrompt': videoPrompt,
-      'pauseAtSeconds': pauseAtSeconds,
-      'windowSeconds': windowSeconds,
       'startImageSourceUrl': startImageSourceUrl,
       'startImageStatus': startImageStatus,
       'startHash': startHash,
@@ -321,8 +343,6 @@ class DraftNode {
     String? Function()? videoToHash,
     String? Function()? videoJobId,
     String? Function()? videoPrompt,
-    double? Function()? pauseAtSeconds,
-    int? Function()? windowSeconds,
     String? Function()? startImageSourceUrl,
     String? startImageStatus,
     String? Function()? startHash,
@@ -360,12 +380,6 @@ class DraftNode {
       videoToHash: videoToHash == null ? this.videoToHash : videoToHash(),
       videoJobId: videoJobId == null ? this.videoJobId : videoJobId(),
       videoPrompt: videoPrompt == null ? this.videoPrompt : videoPrompt(),
-      pauseAtSeconds: pauseAtSeconds == null
-          ? this.pauseAtSeconds
-          : pauseAtSeconds(),
-      windowSeconds: windowSeconds == null
-          ? this.windowSeconds
-          : windowSeconds(),
       startImageSourceUrl: startImageSourceUrl == null
           ? this.startImageSourceUrl
           : startImageSourceUrl(),
@@ -421,8 +435,6 @@ class DraftNode {
         other.videoToHash == videoToHash &&
         other.videoJobId == videoJobId &&
         other.videoPrompt == videoPrompt &&
-        other.pauseAtSeconds == pauseAtSeconds &&
-        other.windowSeconds == windowSeconds &&
         other.startImageSourceUrl == startImageSourceUrl &&
         other.startImageStatus == startImageStatus &&
         other.startHash == startHash &&
@@ -460,8 +472,6 @@ class DraftNode {
     videoToHash,
     videoJobId,
     videoPrompt,
-    pauseAtSeconds,
-    windowSeconds,
     startImageSourceUrl,
     startImageStatus,
     startHash,

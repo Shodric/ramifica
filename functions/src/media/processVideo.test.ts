@@ -68,7 +68,6 @@ test("processVideo re-encodes with audio and extracts frames", async () => {
   try {
     const out = await processVideo(await makeClip(dir, true), dir);
     assert.equal(Math.abs(out.durationSeconds - 2) < 0.3, true);
-    assert.equal(out.pauseAtSeconds, out.durationSeconds - 1 / 30);
     assert.deepEqual(await probeSize(out.videoPath), {
       width: 480,
       height: 854,

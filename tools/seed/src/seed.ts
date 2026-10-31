@@ -431,7 +431,6 @@ async function uploadNode(
     endImageSource: media.endSource === "upload" ? "upload" : "muse",
     endImageApproved: true,
     videoSource: media.videoSource,
-    pauseAtSeconds: video.pauseAtSeconds,
     durationSeconds: video.durationSeconds,
     ttsText: node.ttsText ?? "",
     lineApproved: true,
@@ -444,9 +443,6 @@ async function uploadNode(
     ),
     choices: (node.choices ?? []).map((choice) => ({...choice})),
   };
-  if (!node.isEnding) {
-    doc.windowSeconds = node.windowSeconds ?? 6;
-  }
   return doc;
 }
 

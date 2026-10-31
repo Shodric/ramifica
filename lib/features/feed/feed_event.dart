@@ -62,11 +62,6 @@ final class StorySwiped extends FeedEvent {
   const StorySwiped();
 }
 
-/// `windowSeconds` ran out. Starts the default portal when nobody is holding.
-final class WindowElapsed extends FeedEvent {
-  const WindowElapsed();
-}
-
 /// From the ending card. Starts a new run at the root and keeps endings.
 final class OtherPathRequested extends FeedEvent {
   const OtherPathRequested();

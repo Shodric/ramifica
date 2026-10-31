@@ -20,8 +20,6 @@ export interface ValidatableNode {
   videoSource?: string | null;
   videoFrameLastUrl?: string | null;
   durationSeconds?: number | null;
-  pauseAtSeconds?: number | null;
-  windowSeconds?: number | null;
   startImageApproved?: boolean | null;
   startFromNodeId?: string | null;
   startParentEndHash?: string | null;
@@ -109,9 +107,6 @@ const validateNode = (
   if (node.videoStatus !== "ready" || !node.videoUrl) {
     problems.push(`Node ${node.nodeId} needs a ready video.`);
   }
-  if (!isPositive(node.pauseAtSeconds)) {
-    problems.push(`Node ${node.nodeId} needs pauseAtSeconds from extraction.`);
-  }
   problems.push(...validateFrames(node, byId, isRoot));
   if (node.isEnding) {
     problems.push(...validateEnding(node));
@@ -189,9 +184,6 @@ const validateDecision = (
     problems.push(`Node ${node.nodeId} needs exactly one default choice.`);
   }
   problems.push(...validateVoice(node));
-  if (!isWindow(node.windowSeconds)) {
-    problems.push(`Node ${node.nodeId} needs windowSeconds between 3 and 15.`);
-  }
   return problems;
 };
 
@@ -199,9 +191,6 @@ const validateEnding = (node: ValidatableNode): string[] => {
   const problems: string[] = [];
   if (node.choices.length > 0) {
     problems.push(`Ending ${node.nodeId} must not have choices.`);
-  }
-  if (node.windowSeconds !== undefined && node.windowSeconds !== null) {
-    problems.push(`Ending ${node.nodeId} must not have windowSeconds.`);
   }
   if (!node.endingName || node.endingName.trim() === "") {
     problems.push(`Ending ${node.nodeId} needs a name.`);
@@ -246,8 +235,3 @@ const isUnit = (value: number | null | undefined): value is number => {
   );
 };
 
-const isWindow = (value: number | null | undefined): value is number => {
-  return (
-    Number.isInteger(value) && (value as number) >= 3 && (value as number) <= 15
-  );
-};

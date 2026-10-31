@@ -83,10 +83,8 @@ class CreateState {
 
   /// Unmet publish conditions for [node], one message each. Mirrors the
   /// per-node checklist in functions/src/publish/validateStory.ts, minus
-  /// the server-verified frame sync hashes and the extraction-owned
-  /// `pauseAtSeconds` (the image/video milestones own those): title,
-  /// visibility, video, images, voice, window, and choices. Empty when
-  /// the node can publish.
+  /// the server-verified frame sync hashes: title, visibility, video,
+  /// images, voice, and choices. Empty when the node can publish.
   List<String> missingFor(DraftNode node) {
     return missingForNode(node: node, isRoot: isRoot(node.nodeId));
   }
@@ -251,11 +249,10 @@ class CreateState {
 
 /// The publish checklist for one node, shared by the state and the tests.
 /// Mirrors functions/src/publish/validateStory.ts per node, minus the
-/// server-verified frame sync hashes and the extraction-owned
-/// `pauseAtSeconds`: title, visibility, video, images, choices, window,
-/// and voice. [isRoot] adds the start-image approval only the root needs
-/// (children inherit S from their parent E). Reachability stays out: it
-/// is story-level and the canvas marks orphans distinctly.
+/// server-verified frame sync hashes: title, visibility, video, images,
+/// choices, and voice. [isRoot] adds the start-image approval only the
+/// root needs (children inherit S from their parent E). Reachability stays
+/// out: it is story-level and the canvas marks orphans distinctly.
 List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   final missing = <String>[];
   final id = node.nodeId;
@@ -277,9 +274,6 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   if (node.isEnding) {
     if (node.choices.isNotEmpty) {
       missing.add('Ending $id must not have choices.');
-    }
-    if (node.windowSeconds != null) {
-      missing.add('Ending $id must not have windowSeconds.');
     }
     if (node.endingName == null || node.endingName!.trim().isEmpty) {
       missing.add('Ending $id needs a name.');
@@ -308,10 +302,6 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
     }
     if (node.choices.where((choice) => choice.isDefault).length != 1) {
       missing.add('Node $id needs exactly one default choice.');
-    }
-    final window = node.windowSeconds;
-    if (window == null || window < 3 || window > 15) {
-      missing.add('Node $id needs windowSeconds between 3 and 15.');
     }
   }
   // Voice: required on decisions; on endings only when a line exists.

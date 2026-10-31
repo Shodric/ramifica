@@ -16,7 +16,6 @@
       "isEnding": false,
       "ttsText": "What do you think Jeff should do? Enter the temple, or climb the ridge?",
       "voiceId": "Kore",
-      "windowSeconds": 6,
       "startImagePrompt": "Vertical cinematic still, mossy stone temple gate at dawn, jungle mist, no text, no people.",
       "endImagePrompt": "Vertical cinematic still, dark temple doorway with stairs going down, torch light, no text, no people.",
       "choices": [
@@ -59,7 +58,6 @@
       "isEnding": false,
       "ttsText": "What do you think Jeff should do? Keep climbing, or head back to the temple?",
       "voiceId": "Kore",
-      "windowSeconds": 6,
       "endImagePrompt": "Vertical cinematic still, grassy ridge above jungle ruins at dusk, winding path, no text, no people.",
       "choices": [
         {

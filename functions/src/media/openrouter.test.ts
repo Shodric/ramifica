@@ -227,20 +227,56 @@ test("generateImageBytes decodes the first payload", async () => {
   );
 });
 
-test("submitVideo posts first/last frames and returns the job id", async () => {
+test("submitVideo posts the start frame and omits unset fields", async () => {
   const seen: SeenRequest[] = [];
   const out = await submitVideo({
     apiKey: "key-1",
     model: "vid-m",
     prompt: "morph",
     startUrl: "https://cdn.example/s.png",
-    endUrl: "https://cdn.example/e.png",
-    resolution: "720p",
+    resolution: "768p",
     aspectRatio: "9:16",
     duration: 6,
     fetchFn: stubJson({id: "job-1"}, 202, seen),
   });
   assert.deepEqual(out, {jobId: "job-1"});
+  assert.deepEqual(JSON.parse(seen[0].init.body ?? ""), {
+    model: "vid-m",
+    prompt: "morph",
+    frame_images: [
+      {
+        type: "image_url",
+        image_url: {url: "https://cdn.example/s.png"},
+        frame_type: "first_frame",
+      },
+    ],
+    resolution: "768p",
+    aspect_ratio: "9:16",
+    duration: 6,
+  });
+  await assert.rejects(
+    submitVideo({
+      apiKey: "key-1",
+      model: "vid-m",
+      prompt: "morph",
+      startUrl: "s",
+      fetchFn: stubJson({}, 202, []),
+    }),
+    /no job id/
+  );
+});
+
+test("submitVideo adds the last frame when the provider takes it", async () => {
+  const seen: SeenRequest[] = [];
+  await submitVideo({
+    apiKey: "key-1",
+    model: "vid-m",
+    prompt: "morph",
+    startUrl: "https://cdn.example/s.png",
+    endUrl: "https://cdn.example/e.png",
+    generateAudio: true,
+    fetchFn: stubJson({id: "job-1"}, 202, seen),
+  });
   assert.deepEqual(JSON.parse(seen[0].init.body ?? ""), {
     model: "vid-m",
     prompt: "morph",
@@ -256,22 +292,8 @@ test("submitVideo posts first/last frames and returns the job id", async () => {
         frame_type: "last_frame",
       },
     ],
-    resolution: "720p",
-    aspect_ratio: "9:16",
-    duration: 6,
-    generate_audio: false,
+    generate_audio: true,
   });
-  await assert.rejects(
-    submitVideo({
-      apiKey: "key-1",
-      model: "vid-m",
-      prompt: "morph",
-      startUrl: "s",
-      endUrl: "e",
-      fetchFn: stubJson({}, 202, []),
-    }),
-    /no job id/
-  );
 });
 
 test("checkVideo maps statuses and prefers unsigned urls", async () => {

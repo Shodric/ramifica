@@ -35,6 +35,60 @@ const maxTtsChars = 1000;
 /** Decisions carry one or two choices, like the publish checklist. */
 const maxChoices = 2;
 
+/**
+ * Hotspot icon names an author may store on a choice. Mirrors the client
+ * catalog (`lib/core/widgets/choice_icon.dart`); keep the two in sync.
+ */
+const choiceIconNames: Record<string, true> = {
+  mountain: true,
+  forest: true,
+  lightning: true,
+  key: true,
+  unlock: true,
+  shield: true,
+  fingerprint: true,
+  compass: true,
+  door: true,
+  star: true,
+  heart: true,
+  eye: true,
+  sun: true,
+  moon: true,
+  fire: true,
+  water: true,
+  castle: true,
+  anchor: true,
+  ship: true,
+  plane: true,
+  car: true,
+  run: true,
+  walk: true,
+  diamond: true,
+  flag: true,
+  map: true,
+  home: true,
+  beach: true,
+  snow: true,
+  trophy: true,
+};
+
+/**
+ * Hotspot icon color names an author may store on a choice. Mirrors the
+ * client palette (`lib/core/widgets/choice_icon.dart`); keep in sync.
+ */
+const choiceIconColorNames: Record<string, true> = {
+  cyan: true,
+  blue: true,
+  violet: true,
+  pink: true,
+  red: true,
+  orange: true,
+  gold: true,
+  green: true,
+  mint: true,
+  white: true,
+};
+
 /** Ending types from the publish checklist. */
 const endingTypes = ["abierto", "tragico", "secreto"];
 
@@ -65,15 +119,14 @@ export const createNode = onCall(
 
 /**
  * Persists the author's node edits. Field whitelist: title, visibility,
- * isEnding, endingName, endingType, ttsText, windowSeconds, choices, and
- * the line/voice approvals. Everything else in the payload — nodeId
- * routing aside — is ignored, so pipeline-owned media fields and
- * story-level authorId, status, and rootNodeId can never escalate through
- * this path. New words idle the stored voice and clear both approvals
- * unless the same save approves the line. Endings normalize windowSeconds
- * to null; non-empty choices on an ending are rejected rather than
- * dropped. Target ids stay unchecked here on purpose: a choice may point
- * at a node created next, and the publish checklist reports dangling
+ * isEnding, endingName, endingType, ttsText, choices, and the line/voice
+ * approvals. Everything else in the payload — nodeId routing aside — is
+ * ignored, so pipeline-owned media fields and story-level authorId,
+ * status, and rootNodeId can never escalate through this path. New words
+ * idle the stored voice and clear both approvals unless the same save
+ * approves the line. Non-empty choices on an ending are rejected rather
+ * than dropped. Target ids stay unchecked here on purpose: a choice may
+ * point at a node created next, and the publish checklist reports dangling
  * targets. This never touches other stories, runs, or published docs.
  */
 export const saveNode = onCall(
@@ -153,8 +206,6 @@ export const createNodeWith = async (
       endingType: null,
       videoUrl: null,
       videoStatus: "idle",
-      pauseAtSeconds: null,
-      windowSeconds: 6,
       ttsText: "",
       lineApproved: false,
       ttsAudioUrl: null,
@@ -268,9 +319,6 @@ const parseNodeUpdate = (
   }
   if ("ttsApproved" in nodeFields) {
     update.ttsApproved = parseBoolean(nodeFields.ttsApproved, "ttsApproved");
-  }
-  if ("windowSeconds" in nodeFields) {
-    update.windowSeconds = parseWindow(nodeFields.windowSeconds, isEnding);
   }
   if ("choices" in nodeFields) {
     update.choices = parseChoices(nodeFields.choices, isEnding);
@@ -386,24 +434,6 @@ const parseEndingType = (value: unknown): string | null => {
 };
 
 /**
- * Decision window. Endings normalize to null to match the checklist.
- * @param {unknown} value Raw value.
- * @param {boolean} isEnding Whether the node is an ending.
- * @return {number | null} The window, or null.
- */
-const parseWindow = (value: unknown, isEnding: boolean): number | null => {
-  if (isEnding) return null;
-  if (typeof value !== "number" || !Number.isInteger(value) ||
-    value < 3 || value > 15) {
-    throw new HttpsError(
-      "invalid-argument",
-      "windowSeconds must be an integer between 3 and 15."
-    );
-  }
-  return value;
-};
-
-/**
  * Validates the choice list. Targets stay unchecked: a choice may point
  * at the node created next, and publish validation reports danglers.
  * @param {unknown} value Raw `choices` value.
@@ -465,6 +495,28 @@ const parseChoice = (item: unknown, index: number): ChoiceFields => {
       `Choice ${index} slot must be "A" or "B".`
     );
   }
+  const rawIcon = "icon" in itemFields ? itemFields.icon : undefined;
+  if (
+    rawIcon !== undefined &&
+    (typeof rawIcon !== "string" || choiceIconNames[rawIcon] !== true)
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Choice ${index} icon is not a supported hotspot icon.`
+    );
+  }
+  const rawIconColor =
+    "iconColor" in itemFields ? itemFields.iconColor : undefined;
+  if (
+    rawIconColor !== undefined &&
+    (typeof rawIconColor !== "string" ||
+      choiceIconColorNames[rawIconColor] !== true)
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Choice ${index} iconColor is not a supported hotspot color.`
+    );
+  }
   const clean: ChoiceFields = {
     choiceId: rawId.trim(),
     label: parseText(
@@ -479,6 +531,8 @@ const parseChoice = (item: unknown, index: number): ChoiceFields => {
     radius: parseZone(itemFields.radius, `Choice ${index} radius`, 0.15),
   };
   if (rawSlot !== undefined) clean.slot = rawSlot;
+  if (rawIcon !== undefined) clean.icon = rawIcon;
+  if (rawIconColor !== undefined) clean.iconColor = rawIconColor;
   return clean;
 };
 

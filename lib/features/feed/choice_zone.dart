@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/glass_panel.dart';
 import 'package:ramifica/features/feed/video_frame.dart';
 
@@ -20,6 +21,9 @@ class ChoiceZone extends StatelessWidget {
     required this.video,
     required this.enabled,
     required this.onHoldStart,
+    this.icon,
+    this.iconColor,
+    this.index = 0,
   });
 
   final String choiceId;
@@ -28,6 +32,15 @@ class ChoiceZone extends StatelessWidget {
   final double y;
   final double radius;
   final VideoFrame video;
+
+  /// Persisted hotspot icon name; null draws the index fallback.
+  final String? icon;
+
+  /// Persisted hotspot icon color name; null draws the accent fallback.
+  final String? iconColor;
+
+  /// Choice order in the node, for the legacy icon fallback.
+  final int index;
 
   /// False while a hold is already running. A new press does not steal it.
   final bool enabled;
@@ -50,6 +63,14 @@ class ChoiceZone extends StatelessWidget {
             height: diameter,
             child: _ZoneRing(
               key: ValueKey('ring-$choiceId'),
+              icon: choiceIconData(icon, index),
+              color: choiceIconColor(
+                iconColor,
+                index % 2 == 0
+                    ? RamificaColors.hotspot
+                    : RamificaColors.nodeActive,
+              ),
+              diameter: diameter,
               enabled: enabled,
               onHoldStart: onHoldStart,
             ),
@@ -87,10 +108,18 @@ class ChoiceZone extends StatelessWidget {
 class _ZoneRing extends StatelessWidget {
   const _ZoneRing({
     super.key,
+    required this.icon,
+    required this.color,
+    required this.diameter,
     required this.enabled,
     required this.onHoldStart,
   });
 
+  /// Author-picked hotspot glyph, drawn centred in the ring (the label
+  /// already rides under it), tinted with the picked icon color.
+  final IconData icon;
+  final Color color;
+  final double diameter;
   final bool enabled;
   final ValueChanged<int> onHoldStart;
 
@@ -115,7 +144,15 @@ class _ZoneRing extends StatelessWidget {
           shape: .circle,
           border: Border.all(color: RamificaColors.hotspot, width: 2),
         ),
-        child: SizedBox.expand(),
+        child: Center(
+          child: IgnorePointer(
+            child: Icon(
+              icon,
+              size: (diameter * 0.38).clamp(16, 32).toDouble(),
+              color: color,
+            ),
+          ),
+        ),
       ),
     );
   }

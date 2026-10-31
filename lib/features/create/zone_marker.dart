@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 
 /// Hold-zone editor over the node's LAST frame (the E image, which is what
 /// the player holds on). One circle per choice, positioned in 0-1 frame
 /// coordinates like the player-side [ChoiceZone].
 ///
-/// * tap a circle to select it, drag to move it (clamped to the frame);
-///   the move commits through [onZoneMoved] on release, so a drag sends
-///   one bloc event, not a stream;
-/// * the selected zone shows its label field: 24 chars max with a live
-///   counter ([onLabelChanged]), matching the publish checklist;
+/// * tap a circle to select it (it stays selected), drag to move it
+///   (clamped to the frame); the move commits through [onZoneMoved] on
+///   release, so a drag sends one bloc event, not a stream;
+/// * under the frame, one always-visible card per choice edits its name
+///   — 24 chars max with a live counter ([onLabelChanged]), matching the
+///   publish checklist — and its hotspot icon ([onIconChanged]); the
+///   name rides in the badge under the puck, like the player HUD;
 /// * add/remove zones through [onZoneAdded]/[onZoneRemoved]; adding needs
 ///   a target node, picked from [targets].
 ///
@@ -29,6 +32,8 @@ class ZoneMarker extends StatefulWidget {
     this.onZoneAdded,
     this.onZoneRemoved,
     this.onLabelChanged,
+    this.onIconChanged,
+    this.onIconColorChanged,
   });
 
   final String nodeId;
@@ -56,6 +61,12 @@ class ZoneMarker extends StatefulWidget {
 
   final void Function(String choiceId, String label)? onLabelChanged;
 
+  /// Picked hotspot icon name for a choice, from the shared catalog.
+  final void Function(String choiceId, String icon)? onIconChanged;
+
+  /// Picked hotspot icon color name for a choice, from the shared palette.
+  final void Function(String choiceId, String color)? onIconColorChanged;
+
   @override
   State<ZoneMarker> createState() => _ZoneMarkerState();
 }
@@ -63,6 +74,7 @@ class ZoneMarker extends StatefulWidget {
 class _ZoneMarkerState extends State<ZoneMarker> {
   String? _selectedId;
   Offset? _dragging;
+  var _showGrid = true;
   final Map<String, TextEditingController> _labels = {};
 
   @override
@@ -72,6 +84,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     }
     super.dispose();
   }
+
   @override
   void initState() {
     super.initState();
@@ -113,15 +126,6 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     }
   }
 
-  DraftChoice? get _selected {
-    final id = _selectedId;
-    if (id == null) return null;
-    for (final choice in widget.choices) {
-      if (choice.choiceId == id) return choice;
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final nodeId = widget.nodeId;
@@ -141,17 +145,22 @@ class _ZoneMarkerState extends State<ZoneMarker> {
               height: height,
               child: DecoratedBox(
                 decoration: const BoxDecoration(
-                  color: RamificaColors.inputFill,
-                  borderRadius: RamificaLayout.cardBorderRadius,
+                  color: RamificaColors.containerLowest,
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
                   border: Border.fromBorderSide(RamificaColors.inputBorder),
                 ),
                 child: ClipRRect(
-                  borderRadius: RamificaLayout.cardBorderRadius,
+                  borderRadius: const BorderRadius.all(Radius.circular(12)),
                   child: Stack(
                     children: [
                       Positioned.fill(child: _frameImage()),
+                      if (_showGrid)
+                        const Positioned.fill(
+                          child: CustomPaint(painter: _DotGridPainter()),
+                        ),
                       for (final choice in widget.choices)
                         _zoneCircle(choice, width, height),
+                      Positioned(top: 8, right: 8, child: _gridToggle()),
                     ],
                   ),
                 ),
@@ -160,9 +169,35 @@ class _ZoneMarkerState extends State<ZoneMarker> {
           },
         ),
         const SizedBox(height: 8),
-        _selectedPanel(nodeId),
+        _choiceCards(),
         _addRow(nodeId),
       ],
+    );
+  }
+
+  /// Dot-grid overlay toggle. Only hides the coordinate overlay;
+  /// zone positions never change with it.
+  Widget _gridToggle() {
+    return GestureDetector(
+      key: const ValueKey('zone-grid-toggle'),
+      onTap: widget.busy
+          ? null
+          : () => setState(() => _showGrid = !_showGrid),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: RamificaColors.containerLowest.withValues(alpha: 0.8),
+        ),
+        child: Icon(
+          Icons.grid_4x4,
+          size: 16,
+          color: _showGrid
+              ? RamificaColors.hotspot
+              : RamificaColors.textPrimary,
+        ),
+      ),
     );
   }
 
@@ -170,22 +205,34 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     final url = widget.endImageUrl;
     if (url == null) {
       return const Center(
-        child: Text('Generate the end frame to place zones.', style: RamificaText.meta),
+        child: Text(
+          'Generate the end frame to place zones.',
+          style: RamificaText.meta,
+        ),
       );
     }
-    return Image.network(
-      url,
-      fit: .cover,
-      errorBuilder: (_, _, _) => const Center(
-        child: Text('End frame unavailable.', style: RamificaText.meta),
+    return Opacity(
+      opacity: 0.8,
+      child: Image.network(
+        url,
+        fit: .cover,
+        errorBuilder: (_, _, _) => const Center(
+          child: Text('End frame unavailable.', style: RamificaText.meta),
+        ),
       ),
     );
   }
 
-  /// One hold-zone circle over the frame, mirroring the player ring.
+  /// One hold-zone over the frame. The drag geometry stays the zone disc
+  /// (center + radius in 0-1 frame coordinates); the visual is the suite
+  /// hotspot: a glass icon puck with a numbered label badge under it.
   Widget _zoneCircle(DraftChoice choice, double width, double height) {
     final nodeId = widget.nodeId;
     final selected = choice.choiceId == _selectedId;
+    final index = widget.choices.indexOf(choice);
+    final accent = index % 2 == 0
+        ? RamificaColors.hotspot
+        : RamificaColors.nodeActive;
     final at = _dragging != null && selected
         ? _dragging!
         : Offset(choice.x, choice.y);
@@ -209,11 +256,17 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         onPanUpdate: widget.busy
             ? null
             : (details) => setState(() {
+                // Accumulate the per-event delta instead of deriving the
+                // centre from localPosition: that position is expressed in
+                // the coordinate space captured when the drag started, so
+                // re-adding the current centre on every update compounds
+                // the displacement and slams the zone into a corner.
+                final current = _dragging ?? Offset(choice.x, choice.y);
                 _dragging = Offset(
-                  ((details.localPosition.dx + at.dx * width - ring) / width)
+                  (current.dx + details.delta.dx / width)
                       .clamp(0, 1)
                       .toDouble(),
-                  ((details.localPosition.dy + at.dy * height - ring) / height)
+                  (current.dy + details.delta.dy / height)
                       .clamp(0, 1)
                       .toDouble(),
                 );
@@ -230,50 +283,84 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         onTap: widget.busy
             ? null
             : () => setState(() {
-                _selectedId = selected ? null : choice.choiceId;
+                // Select only, never toggle off: onPanDown already
+                // selected this zone on the same pointer-down, so a
+                // toggle would read that fresh selection and undo it
+                // before the tap even lands.
+                _selectedId = choice.choiceId;
                 _dragging = null;
               }),
-        child: DecoratedBox(
-          key: ValueKey('zone-ring-$nodeId-${choice.choiceId}'),
-          decoration: BoxDecoration(
-            shape: .circle,
-            color: RamificaColors.glowCyan,
-            border: Border.all(
-              color: selected
-                  ? RamificaColors.nodeActive
-                  : RamificaColors.hotspot,
-              width: selected ? 3 : 2,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: RamificaColors.glowCyan,
-                blurRadius: selected ? 16 : 8,
+        child: Column(
+          mainAxisAlignment: .center,
+          mainAxisSize: .min,
+          children: [
+            Container(
+              key: ValueKey('zone-ring-$nodeId-${choice.choiceId}'),
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                shape: .circle,
+                color: RamificaColors.containerLowest.withValues(alpha: 0.9),
+                border: Border.all(color: accent, width: selected ? 2 : 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: 0.45),
+                    blurRadius: selected ? 16 : 10,
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Center(
-            child: Text(
-              choice.label.length > 24
-                  ? choice.label.substring(0, 24)
-                  : choice.label,
-              maxLines: 1,
-              overflow: .ellipsis,
-              style: RamificaText.meta,
+              child: Icon(
+                choiceIconData(choice.icon, index),
+                size: 20,
+                color: choiceIconColor(choice.iconColor, accent),
+              ),
             ),
-          ),
+            const SizedBox(height: 4),
+            Container(
+              constraints: const BoxConstraints(maxWidth: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: RamificaColors.containerLowest.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(4),
+                border: selected ? Border.all(color: accent) : null,
+              ),
+              child: Row(
+                mainAxisSize: .min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accent,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      '${index + 1}. ${choice.label}',
+                      maxLines: 1,
+                      overflow: .ellipsis,
+                      style: RamificaText.labelSM.copyWith(fontSize: 10),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// Label + delete for the selected zone. The label field hard-caps at
-  /// 24 characters with a live counter — the client-side half of the
-  /// publish label rule (the backend `saveNode` check is the other half).
-  Widget _selectedPanel(String nodeId) {
-    final selected = _selected;
-    if (selected == null) {
+  /// One always-visible editor card per choice, in choice order: name
+  /// field, icon picker, coordinates, delete. Editing never depends on
+  /// which zone happens to be selected on the frame — the card number
+  /// and accent match the puck badge, so the pairing stays obvious.
+  Widget _choiceCards() {
+    if (widget.choices.isEmpty) {
       return const Text(
-        'Tap a circle to edit its label, drag to move it.',
+        'Add a zone below to edit its hotspot.',
         style: RamificaText.meta,
       );
     }
@@ -281,47 +368,298 @@ class _ZoneMarkerState extends State<ZoneMarker> {
       crossAxisAlignment: .stretch,
       mainAxisSize: .min,
       children: [
-        TextField(
-          key: ValueKey('zone-label-${selected.choiceId}'),
-          controller: _labels[selected.choiceId],
-          enabled: !widget.busy,
-          maxLength: 24,
-          maxLengthEnforcement: .enforced,
-          buildCounter: (
-            _, {
-            required int currentLength,
-            required bool isFocused,
-            required int? maxLength,
-          }) =>
-              Text('$currentLength/24', style: RamificaText.meta),
-          decoration: _zoneInputDecoration(),
-          onChanged: (label) =>
-              widget.onLabelChanged?.call(selected.choiceId, label),
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '(${selected.x.toStringAsFixed(2)}, ${selected.y.toStringAsFixed(2)})',
+        for (var i = 0; i < widget.choices.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _choiceCard(widget.choices[i], i),
+        ],
+      ],
+    );
+  }
+
+  Widget _choiceCard(DraftChoice choice, int index) {
+    final accent = index % 2 == 0
+        ? RamificaColors.hotspot
+        : RamificaColors.nodeActive;
+    return Container(
+      key: ValueKey('zone-card-${choice.choiceId}'),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: RamificaColors.containerBase,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                alignment: .center,
+                decoration: BoxDecoration(
+                  shape: .circle,
+                  color: accent.withValues(alpha: 0.2),
+                ),
+                child: Text(
+                  '${index + 1}',
+                  style: RamificaText.labelSM.copyWith(
+                    fontSize: 11,
+                    color: accent,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Hotspot ${index + 1}',
+                  style: RamificaText.labelSM,
+                  maxLines: 1,
+                  overflow: .ellipsis,
+                ),
+              ),
+              Text(
+                '(${choice.x.toStringAsFixed(2)}, ${choice.y.toStringAsFixed(2)})',
                 style: RamificaText.meta,
               ),
-            ),
-            TextButton(
-              key: ValueKey('zone-delete-${selected.choiceId}'),
-              onPressed: widget.busy
-                  ? null
-                  : () {
-                      setState(() {
-                        _selectedId = null;
-                        _dragging = null;
-                      });
-                      widget.onZoneRemoved?.call(selected.choiceId);
-                    },
-              child: const Text('Delete zone'),
-            ),
-          ],
+              TextButton(
+                key: ValueKey('zone-delete-${choice.choiceId}'),
+                onPressed: widget.busy
+                    ? null
+                    : () {
+                        setState(() {
+                          if (_selectedId == choice.choiceId) {
+                            _selectedId = null;
+                            _dragging = null;
+                          }
+                        });
+                        widget.onZoneRemoved?.call(choice.choiceId);
+                      },
+                child: const Text('Delete zone'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Current icon left of the name field; tapping it opens the
+          // icon picker modal. The label field hard-caps at 24 chars
+          // with a live counter — the client-side half of the publish
+          // label rule (the backend `saveNode` check is the other half).
+          Row(
+            crossAxisAlignment: .start,
+            children: [
+              _iconButton(choice, index, accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  key: ValueKey('zone-label-${choice.choiceId}'),
+                  controller: _labels[choice.choiceId],
+                  enabled: !widget.busy,
+                  maxLength: 24,
+                  maxLengthEnforcement: .enforced,
+                  buildCounter: (
+                    _, {
+                    required int currentLength,
+                    required bool isFocused,
+                    required int? maxLength,
+                  }) => Text('$currentLength/24', style: RamificaText.meta),
+                  decoration: _zoneInputDecoration(),
+                  onChanged: (label) =>
+                      widget.onLabelChanged?.call(choice.choiceId, label),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The choice's current icon (or the legacy fallback when none is
+  /// stored), left of the name field. Tapping opens the picker modal;
+  /// the pick commits its persisted name through [onIconChanged].
+  Widget _iconButton(DraftChoice choice, int index, Color accent) {
+    return IconButton(
+      key: ValueKey('zone-icon-${choice.choiceId}'),
+      tooltip: 'Hotspot icon',
+      icon: Icon(choiceIconData(choice.icon, index), size: 20),
+      onPressed: widget.busy ? null : () => _pickIcon(choice, index, accent),
+      color: choiceIconColor(choice.iconColor, accent),
+      style: IconButton.styleFrom(
+        backgroundColor: accent.withValues(alpha: 0.2),
+        fixedSize: const Size(40, 40),
+        minimumSize: const Size(40, 40),
+        padding: .zero,
+        side: BorderSide(color: accent),
+      ),
+    );
+  }
+
+  /// Icon + color picker as a draggable modal sheet: it opens tall and
+  /// drags up to near full screen over the full catalog grid. Picking a
+  /// color commits at once and keeps the sheet open (the tile glyphs
+  /// preview it); picking an icon closes the sheet and reports the
+  /// persisted name. Dismissing keeps any color already picked.
+  Future<void> _pickIcon(DraftChoice choice, int index, Color accent) async {
+    var pickedColor = choice.iconColor;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          builder: (sheetContext, scrollController) {
+            return StatefulBuilder(
+              builder: (sheetContext, setSheetState) {
+                final tint = choiceIconColor(pickedColor, accent);
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: .stretch,
+                      children: [
+                        const Text('Hotspot icon', style: RamificaText.label),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final option in choiceColorOptions)
+                              _colorSwatch(
+                                choice,
+                                option,
+                                selected: isChoiceColorSelected(
+                                  pickedColor,
+                                  index,
+                                  option.name,
+                                ),
+                                onTap: () {
+                                  setSheetState(
+                                    () => pickedColor = option.name,
+                                  );
+                                  widget.onIconColorChanged?.call(
+                                    choice.choiceId,
+                                    option.name,
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Expanded(
+                          child: GridView.builder(
+                            controller: scrollController,
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 4,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio: 0.85,
+                                ),
+                            itemCount: choiceIconOptions.length,
+                            itemBuilder: (context, i) {
+                              final option = choiceIconOptions[i];
+                              final selected = isChoiceIconSelected(
+                                choice.icon,
+                                index,
+                                option.name,
+                              );
+                              return InkWell(
+                                key: ValueKey(
+                                  'zone-icon-${choice.choiceId}-${option.name}',
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () =>
+                                    Navigator.pop(sheetContext, option.name),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: selected
+                                        ? tint.withValues(alpha: 0.2)
+                                        : RamificaColors.containerHigh,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: selected
+                                        ? Border.all(color: tint)
+                                        : null,
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: .center,
+                                    children: [
+                                      Icon(
+                                        option.icon,
+                                        size: 22,
+                                        color: selected
+                                            ? tint
+                                            : RamificaColors.textSecondary,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        option.label,
+                                        style: RamificaText.caption.copyWith(
+                                          fontSize: 10,
+                                          color: selected
+                                              ? tint
+                                              : RamificaColors.textSecondary,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: .ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+    if (picked != null) {
+      widget.onIconChanged?.call(choice.choiceId, picked);
+    }
+  }
+
+  /// One color in the picker's palette row. The selected swatch carries
+  /// a light ring plus a check whose ink flips with the swatch luminance.
+  Widget _colorSwatch(
+    DraftChoice choice,
+    ChoiceColorOption option, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      key: ValueKey('zone-icon-color-${choice.choiceId}-${option.name}'),
+      customBorder: const CircleBorder(),
+      onTap: widget.busy ? null : onTap,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          shape: .circle,
+          color: option.color,
+          border: selected
+              ? Border.all(color: RamificaColors.textPrimary, width: 2)
+              : Border.all(color: RamificaColors.glassBorder),
         ),
-      ],
+        child: selected
+            ? Icon(
+                Icons.check,
+                size: 16,
+                color: option.color.computeLuminance() > 0.6
+                    ? Colors.black87
+                    : Colors.white,
+              )
+            : null,
+      ),
     );
   }
 
@@ -346,9 +684,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                 DropdownMenuItem(
                   value: target.nodeId,
                   child: Text(
-                    target.title.trim().isEmpty
-                        ? '(untitled)'
-                        : target.title,
+                    target.title.trim().isEmpty ? '(untitled)' : target.title,
                     style: RamificaText.meta,
                   ),
                 ),
@@ -380,4 +716,25 @@ InputDecoration _zoneInputDecoration() {
       borderSide: RamificaColors.inputFocusedBorder,
     ),
   );
+}
+
+
+/// Faint coordinate dot grid over the frame (24px pitch, suite style).
+/// Static paint only: no controllers, so tests settle freely.
+class _DotGridPainter extends CustomPainter {
+  const _DotGridPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = RamificaColors.hotspot.withValues(alpha: 0.25);
+    for (var x = 12.0; x < size.width; x += 24) {
+      for (var y = 12.0; y < size.height; y += 24) {
+        canvas.drawCircle(Offset(x, y), 1, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DotGridPainter oldDelegate) => false;
 }

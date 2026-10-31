@@ -276,8 +276,6 @@ Map<String, dynamic> _playback({
       'isEnding': ending,
       'videoUrl': 'https://example.com/$storyId.mp4',
       'durationSeconds': 10,
-      'pauseAtSeconds': 9.967,
-      'windowSeconds': 6,
       'ttsText': line ? 'What now?' : (ending ? null : 'Enter or climb?'),
       'ttsAudioUrl': line
           ? 'https://example.com/$storyId-end.m4a'

@@ -9,7 +9,6 @@ const run = promisify(execFile);
 export interface ProcessedVideo {
   videoPath: string;
   durationSeconds: number;
-  pauseAtSeconds: number;
   firstFramePath: string;
   lastFramePath: string;
   firstBlurData: string;
@@ -64,7 +63,6 @@ export const processVideo = async (
   return {
     videoPath,
     durationSeconds,
-    pauseAtSeconds: durationSeconds - 1 / 30,
     firstFramePath,
     lastFramePath,
     firstBlurData,

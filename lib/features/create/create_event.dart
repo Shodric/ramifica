@@ -52,8 +52,9 @@ final class NodeFieldChanged extends CreateEvent {
     this.title,
     this.ttsText,
     this.choiceLabels,
+    this.choiceIcons,
+    this.choiceIconColors,
     this.visibility,
-    this.windowSeconds,
     this.lineApproved,
     this.ttsApproved,
   });
@@ -69,11 +70,14 @@ final class NodeFieldChanged extends CreateEvent {
   /// New choice labels by choice id, or null to leave them.
   final Map<String, String>? choiceLabels;
 
+  /// New choice hotspot icon names by choice id, or null to leave them.
+  final Map<String, String>? choiceIcons;
+
+  /// New choice hotspot icon color names by choice id, or null.
+  final Map<String, String>? choiceIconColors;
+
   /// `visible` or `secret`, or null to leave it.
   final String? visibility;
-
-  /// New decision window, or null to leave it.
-  final int? windowSeconds;
 
   /// Narrator line approval, or null to leave it. Persists through
   /// `saveNode`; the voice gate reads it before generating.

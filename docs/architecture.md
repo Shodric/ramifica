@@ -135,7 +135,7 @@ lib/
       access_view.dart          // Google button, email fields, password reset. No tab bar.
     feed/
       feed_bloc.dart            // Run phase. Lives above the tabs.
-      feed_event.dart           // StoryOpened, StorySwiped, UserGestured, AppHidden, PauseReached, MuteToggled, VoiceFinished, HoldStarted, HoldCancelled, HoldCompleted, WindowElapsed, OtherPathRequested, MapRequested.
+      feed_event.dart           // StoryOpened, StorySwiped, UserGestured, AppHidden, PauseReached, MuteToggled, VoiceFinished, HoldStarted, HoldCancelled, HoldCompleted, OtherPathRequested, MapRequested.
       feed_state.dart           // Phase, playback, mute, autoMuted, endingSpeaking, hiddenPaused, hold zone. No 0-to-1 progress.
       feed_view.dart            // Stack: video, chip, zones, portal, subtitle, ending card.
       node_video.dart           // Paints the mp4. Reports the first frame and PauseReached (ended).
@@ -167,7 +167,6 @@ lib/
       node_inspector.dart       // Prompts, S, E, clip, line, voice, and StatusPill.
       frame_compare.dart        // S and E of the same node.
       zone_marker.dart          // The finger marks the circle on the last frame.
-      window_picker.dart        // windowSeconds, 3 to 15, default 6. The pause is always the last frame.
       publish_bar.dart          // Publish, and the list of what is missing.
     profile/
       profile_bloc.dart         // Own profile or another author's, from authorId.
@@ -221,7 +220,7 @@ On a signed-in feed route, the shell sends `StoryOpened` once. `FeedBloc` lives 
 
 `StorySwiped` draws another published story at random, excluding the current one, and opens it with the same resume rule (`CatalogRepository.publishedStoryIds`, drawn in memory in this slice). It is only accepted from `playing` or with the ending card visible (`ending` without `endingSpeaking`); speaking, window, holding, committing, and the closing line ignore it. With no other story, or with no catalog, it is ignored. A catalog failure keeps the current clip. `StorySwiped` is restartable. When the open story changes, the view moves the route to `/story/{id}` so the shell and the URL follow; the shell's same-story guard skips any reload.
 
-While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. Turning sound on resumes the audio context from that tap. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. The voice file is decoded when the node opens. With sound, Web Audio plays it and hides the line. While muted, `ttsText` sits in the lower third for `ttsDurationSeconds`. `VoiceFinished` then enters `window`. The window shows one `ChoiceZone` per exit, label under the ring, and starts `windowSeconds`. A pointer down sends `HoldStarted`. `HoldPortal` grows from that point for one second, filled with the current node's `videoFrameLastBlurData`. Zones map 0..1 frame coordinates through the 9:16 cover rect, and a full-screen release catcher ends the tracked pointer's hold anywhere; other fingers cannot cancel it. Releasing early sends `HoldCancelled` and the circle shrinks. If the window runs out during that hold, the hold keeps going. Releasing after that starts the default portal. `WindowElapsed` with no finger opens the same portal on the default option. `HoldCompleted` seals the hold, keeps the portal full, and calls `commitChoice` with a fresh `requestId`. A lost network sends the same `requestId` once more. An `invalid` answer falls back to `loadPlayback` and continues from the real node. The destination clip then starts from its first frame, or parks on the ending when the run ended. Leaving the Feed tab pauses the clip. An `ended` run does not play the clip or the line. The first-gesture unmute comes later.
+ While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. Turning sound on resumes the audio context from that tap. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. The voice file is decoded when the node opens. With sound, Web Audio plays it and hides the line. While muted, `ttsText` sits in the lower third for `ttsDurationSeconds`. `VoiceFinished` then enters `window`. The window shows one `ChoiceZone` per exit — the author's picked icon inside the ring, its label under the ring — and stays open until the player holds one. A pointer down sends `HoldStarted`. `HoldPortal` grows from that point for one second, filled with the current node's `videoFrameLastBlurData`. Zones map 0..1 frame coordinates through the 9:16 cover rect, and a full-screen release catcher ends the tracked pointer's hold anywhere; other fingers cannot cancel it. Releasing early sends `HoldCancelled` and the circle shrinks back to the window. `HoldCompleted` seals the hold, keeps the portal full, and calls `commitChoice` with a fresh `requestId`. A lost network sends the same `requestId` once more. An `invalid` answer falls back to `loadPlayback` and continues from the real node. The destination clip then starts from its first frame, or parks on the ending when the run ended. Leaving the Feed tab pauses the clip. An `ended` run does not play the clip or the line. The first-gesture unmute comes later.
 
 Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar is a `NavigationBar` drawn over the body.
 
@@ -352,8 +351,6 @@ Firestore rules let only the story's author read `nodes`. A player does not read
     "isEnding": false,
     "videoUrl": "https://firebasestorage.googleapis.com/.../video-9f3e1a2b.mp4?alt=media&token=...",
     "durationSeconds": 10.0,
-    "pauseAtSeconds": 9.967,
-    "windowSeconds": 6,
     "ttsText": "What do you think Jeff should do? Enter the temple, or climb the ridge?",
     "ttsAudioUrl": "https://firebasestorage.googleapis.com/.../voz-c4d5e6f7.m4a?alt=media&token=...",
     "ttsDurationSeconds": 4.1,

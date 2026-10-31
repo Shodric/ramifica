@@ -251,7 +251,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                               !playback.node.isEnding &&
                               (state.phase == .window ||
                                   state.phase == .holding))
-                            for (final choice in playback.choices)
+                            for (final (i, choice) in playback.choices.indexed)
                               ChoiceZone(
                                 key: ValueKey(choice.choiceId),
                                 choiceId: choice.choiceId,
@@ -261,6 +261,9 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                 radius: choice.radius,
                                 video: video,
                                 enabled: state.phase == .window,
+                                icon: choice.icon,
+                                iconColor: choice.iconColor,
+                                index: i,
                                 onHoldStart: (pointer) {
                                   _pointer = pointer;
                                   bloc.add(HoldStarted(choice.choiceId));

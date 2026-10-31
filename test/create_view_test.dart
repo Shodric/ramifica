@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
@@ -101,21 +102,12 @@ void main() {
     ) async {
       final calls = <_Call>[];
       final bloc = await _pumpMediaDraft(tester, calls, [
-        MapEntry('node_1', {
-          ..._mediaDocs().first.value,
-          'choices': const [],
-        }),
+        MapEntry('node_1', {..._mediaDocs().first.value, 'choices': const []}),
       ]);
 
       // Both empty slots show, A left of B.
-      expect(
-        find.byKey(const ValueKey('canvas-add-node_1-A')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('canvas-add-node_1-B')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('canvas-add-node_1-A')), findsOneWidget);
+      expect(find.byKey(const ValueKey('canvas-add-node_1-B')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('canvas-add-node_1-B')));
       await tester.pumpAndSettle();
@@ -142,7 +134,7 @@ void main() {
         'Typed root',
       );
       await tester.pump();
-      await tester.tap(find.text('Spark'));
+      await tester.tap(find.byKey(const ValueKey('gen-text-node_1')));
       await tester.pumpAndSettle();
 
       expect(calls.single.name, 'generateNodeText');
@@ -160,7 +152,7 @@ void main() {
         'Typed root',
       );
       await tester.pump();
-      await tester.tap(find.text('Regenerate'));
+      await tester.tap(find.byKey(const ValueKey('regen-text-node_1')));
       await tester.pumpAndSettle();
 
       expect(bloc.state.openNode?.title, 'Spark title');
@@ -190,7 +182,7 @@ void main() {
       );
       await tester.pump();
       calls.clear();
-      await tester.tap(find.text('Save'));
+      await tester.tap(find.byKey(const ValueKey('save-node-node_1')));
       await tester.pumpAndSettle();
 
       final save = calls.singleWhere((call) => call.name == 'saveNode');
@@ -403,7 +395,7 @@ void main() {
       expect(calls, hasLength(1));
       expect(
         calls.single.data['path'],
-        'uploads/uid_1/story_1_node_1_take_1.mp4',
+        'uploads/uid_1/story_1_node_1_take1.mp4',
       );
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.text('50%'), findsOneWidget);
@@ -474,6 +466,102 @@ void main() {
       expect(bloc.state.openNode?.choices.single.x, 0.25);
     });
 
+    testWidgets('dragging a zone moves it with the finger, not to a corner', (
+      tester,
+    ) async {
+      final bloc = await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
+
+      final zone = find.byKey(const ValueKey('zone-c1'));
+      await tester.ensureVisible(zone);
+      await tester.pumpAndSettle();
+      final before = tester.getCenter(zone);
+
+      // Multi-step drag with a pump per step: each frame rebuilds the
+      // zone at its in-flight position, like a real finger drag.
+      final gesture = await tester.startGesture(before);
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump();
+      for (var step = 0; step < 4; step++) {
+        await gesture.moveBy(const Offset(10, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // Past the touch slop the zone tracks the finger: 4 x 10px steps.
+      final after = tester.getCenter(zone);
+      expect(after.dx - before.dx, closeTo(40, 2));
+      expect(after.dy - before.dy, closeTo(0, 2));
+      expect(bloc.state.openNode?.choices.single.x, lessThan(0.5));
+      expect(bloc.state.openNode?.choices.single.y, 0.65);
+    });
+
+    testWidgets('tapping a zone keeps it selected', (tester) async {
+      await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
+
+      final zone = find.byKey(const ValueKey('zone-c1'));
+      await tester.ensureVisible(zone);
+      await tester.pumpAndSettle();
+
+      double ringWidth() {
+        final ring = tester.widget<Container>(
+          find.byKey(const ValueKey('zone-ring-node_1-c1')),
+        );
+        final border = (ring.decoration! as BoxDecoration).border! as Border;
+        return border.top.width;
+      }
+
+      expect(ringWidth(), 1);
+      await tester.tap(zone);
+      await tester.pumpAndSettle();
+      // onPanDown selects on pointer-down; the tap must not undo it.
+      expect(ringWidth(), 2);
+    });
+
+    testWidgets('hotspot cards are always visible and pick icon and color', (
+      tester,
+    ) async {
+      final bloc = await _pumpDraft(tester);
+
+      await _openNode(tester, 'node_1');
+
+      // No tap or drag first: the editor card is already there.
+      expect(find.byKey(const ValueKey('zone-label-c1')), findsOneWidget);
+
+      // The current icon sits left of the name field; tapping it opens
+      // the picker modal.
+      final iconButton = find.byKey(const ValueKey('zone-icon-c1'));
+      await tester.ensureVisible(iconButton);
+      await tester.pumpAndSettle();
+      await tester.tap(iconButton);
+      await tester.pumpAndSettle();
+
+      // Picking a color commits at once and keeps the modal open.
+      final gold = find.byKey(const ValueKey('zone-icon-color-c1-gold'));
+      await tester.tap(gold);
+      await tester.pumpAndSettle();
+      expect(bloc.state.openNode?.choices.single.iconColor, 'gold');
+
+      final mountain = find.byKey(const ValueKey('zone-icon-c1-mountain'));
+      await tester.ensureVisible(mountain);
+      await tester.pumpAndSettle();
+      await tester.tap(mountain);
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.openNode?.choices.single.icon, 'mountain');
+      final puck = tester.widget<Icon>(
+        find.descendant(
+          of: find.byKey(const ValueKey('zone-ring-node_1-c1')),
+          matching: find.byType(Icon),
+        ),
+      );
+      expect(puck.icon, Icons.terrain);
+      expect(puck.color, RamificaColors.rewardGold);
+    });
     testWidgets('zone labels cap at 24 characters with a counter', (
       tester,
     ) async {
@@ -663,19 +751,13 @@ void main() {
       expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
     });
 
-    testWidgets('the root delete button is disabled with its reason', (
-      tester,
-    ) async {
+    testWidgets('the root shows no delete button', (tester) async {
       await _pumpDraft(tester);
 
       await _openNode(tester, 'node_1');
 
-      final remove = find.byKey(const ValueKey('delete-node-node_1'));
-      await tester.ensureVisible(remove);
-      await tester.pumpAndSettle();
-
-      expect(find.text('The root node cannot be deleted.'), findsOneWidget);
-      expect(tester.widget<TextButton>(remove).onPressed, isNull);
+      expect(find.byKey(const ValueKey('delete-node-node_1')), findsNothing);
+      expect(find.text('The root node cannot be deleted.'), findsNothing);
     });
 
     testWidgets('a targeted node delete button names the blocker', (
@@ -696,7 +778,7 @@ void main() {
         find.text('Node node_2 is a choice target — remove the choice first.'),
         findsOneWidget,
       );
-      expect(tester.widget<TextButton>(remove).onPressed, isNull);
+      expect(tester.widget<FilledButton>(remove).onPressed, isNull);
     });
 
     testWidgets('deleting an untargeted node removes it from the canvas', (
@@ -708,7 +790,6 @@ void main() {
           'visibility': 'visible',
           'isEnding': false,
           'videoStatus': 'idle',
-          'windowSeconds': 6,
           'ttsText': '',
           'lineApproved': false,
           'ttsStatus': 'idle',
@@ -766,9 +847,12 @@ void main() {
       final remove = find.byKey(const ValueKey('delete-node-node_3'));
       await tester.ensureVisible(remove);
       await tester.pumpAndSettle();
-      expect(tester.widget<TextButton>(remove).onPressed, isNotNull);
+      expect(tester.widget<FilledButton>(remove).onPressed, isNotNull);
 
       await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('confirm-delete-node_3')));
       await tester.pumpAndSettle();
 
       final deleted = calls.singleWhere((call) => call.name == 'deleteNode');
@@ -817,6 +901,9 @@ void main() {
       await tester.ensureVisible(remove);
       await tester.pumpAndSettle();
       await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('confirm-delete-node_3')));
       await tester.pumpAndSettle();
 
       expect(find.text('That action is not valid'), findsOneWidget);
@@ -927,7 +1014,6 @@ void main() {
               'isEnding': false,
               'videoStatus': 'ready',
               'videoUrl': 'https://cdn.example/root.mp4',
-              'windowSeconds': 6,
               'startImageSourceUrl': 'https://frames.invalid/s.webp',
               'startImageStatus': 'ready',
               'startImageApproved': true,
@@ -1072,7 +1158,7 @@ Future<CreateBloc> _pumpUploadDraft(
   List<MapEntry<String, Map<String, dynamic>>>? docs,
   UploadVideoFile? upload,
   PickVideoFile? pick,
-  String takeId = 'take_1',
+  String takeId = 'take1',
 }) async {
   final resolved = (docs ?? _mediaDocs()).map((doc) {
     if (doc.key == 'node_1' && !doc.value.containsKey('uploadTakeId')) {
@@ -1179,7 +1265,6 @@ List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
       'visibility': 'visible',
       'isEnding': false,
       'videoStatus': 'idle',
-      'windowSeconds': 6,
       'ttsText': '',
       'lineApproved': false,
       'ttsStatus': 'idle',
@@ -1242,7 +1327,6 @@ CreateRepository _repo(
             'visibility': 'visible',
             'isEnding': false,
             'videoStatus': 'idle',
-            'windowSeconds': 6,
             'ttsText': '',
             'lineApproved': false,
             'ttsStatus': 'idle',

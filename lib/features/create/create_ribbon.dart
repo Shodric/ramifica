@@ -3,7 +3,7 @@ import 'package:ramifica/app/theme.dart';
 
 /// Stitch-style canvas ribbon: status pill + story title with the Simulate
 /// and Publish actions on row one; tree-mode toggle and zoom cluster on row
-/// two; publish blockers on row three (only when the draft has issues).
+/// two. The Publish CTA disables while the draft has missing items.
 /// All copy is final EN — no hold, timing, or tap-to-choose affordances.
 class CreateRibbon extends StatelessWidget {
   const CreateRibbon({
@@ -18,7 +18,6 @@ class CreateRibbon extends StatelessWidget {
     required this.onSimulate,
     required this.onPublish,
     required this.canPublish,
-    required this.problems,
     required this.onClose,
   });
 
@@ -35,10 +34,6 @@ class CreateRibbon extends StatelessWidget {
   /// Publish CTA enabled exactly when the draft has no missing items and
   /// no job is running.
   final bool canPublish;
-
-  /// Story-level publish blockers shown under the actions. Empty hides
-  /// the row entirely.
-  final List<String> problems;
 
   /// Leaves the fullscreen canvas back to Explore.
   final VoidCallback onClose;
@@ -124,110 +119,7 @@ class CreateRibbon extends StatelessWidget {
             ),
           ],
         ),
-        if (problems.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          _ProblemsCard(problems: problems),
-        ],
       ],
-    );
-  }
-}
-
-/// Story-level publish blockers, Stitch-card styled. Expanded by default
-/// so authors see why publishing is gated; the header toggles it shut.
-/// Static content only — no timers, animations, or navigation.
-class _ProblemsCard extends StatefulWidget {
-  const _ProblemsCard({required this.problems});
-
-  final List<String> problems;
-
-  @override
-  State<_ProblemsCard> createState() => _ProblemsCardState();
-}
-
-class _ProblemsCardState extends State<_ProblemsCard> {
-  var _expanded = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final count = widget.problems.length;
-    return Container(
-      key: const ValueKey('publish-problems'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: RamificaColors.containerHigh,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RamificaColors.outlineVariant),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.warning_amber_rounded,
-                size: 16,
-                color: RamificaColors.textSecondary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  count == 1
-                      ? '1 issue to publish'
-                      : '$count issues to publish',
-                  style: RamificaText.labelSM,
-                ),
-              ),
-              IconButton(
-                key: const ValueKey('publish-problems-toggle'),
-                tooltip: _expanded ? 'Hide issues' : 'Show issues',
-                onPressed: () => setState(() => _expanded = !_expanded),
-                icon: Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 18,
-                ),
-              ),
-            ],
-          ),
-          if (_expanded)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 168),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: widget.problems.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          margin: const EdgeInsets.only(top: 5),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: RamificaColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            widget.problems[index],
-                            style: RamificaText.caption.copyWith(
-                              color: RamificaColors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

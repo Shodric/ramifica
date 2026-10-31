@@ -39,8 +39,8 @@ export interface TextGenDeps {
   fetchFn?: TextFetch;
 }
 
-/** Default chat model: cheap and fast; override with OPENROUTER_TEXT_MODEL. */
-const defaultTextModel = "google/gemini-2.5-flash-lite";
+/** Default chat model; override with OPENROUTER_TEXT_MODEL. */
+const defaultTextModel = "meta/muse-spark-1.3-contributor";
 
 /**
  * Cost guard: author prompt plus context past this is rejected, so one

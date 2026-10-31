@@ -1,19 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
-import 'package:ramifica/core/widgets/glass_panel.dart';
-import 'package:ramifica/core/widgets/meta_badge.dart';
-import 'package:ramifica/core/widgets/ramifica_isotipo.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/frame_compare.dart';
-import 'package:ramifica/features/create/zone_marker.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
+import 'package:ramifica/features/create/zone_marker.dart';
 
 /// Inspector for the open draft node: manual editing fields, the
 /// per-node [StatusPill], and what is missing for publish.
 ///
 /// Manual editing is the point. Every keystroke writes bloc state through
-/// the callbacks; nothing reaches the server until [onSave]. Controllers
+/// the callbacks; the node saves from the screen app bar. Controllers
 /// resync from [node] only when the text differs (a proposal or a
 /// reload), so typing never loses its caret: the bloc echoes each
 /// keystroke back unchanged.
@@ -21,11 +19,12 @@ class NodeInspector extends StatefulWidget {
   const NodeInspector({
     super.key,
     required this.node,
-    required this.status,
     required this.missing,
-    required this.headline,
-    this.choiceTargets = const {},
     this.busy = false,
+    this.onPromptGenerate,
+    this.choiceTargets = const {},
+    this.targetTitles = const {},
+    this.onAddBranch,
     this.isRoot = false,
     this.parent,
     this.targets = const [],
@@ -34,15 +33,15 @@ class NodeInspector extends StatefulWidget {
     this.onTitleChanged,
     this.onLineChanged,
     this.onChoiceLabelChanged,
+    this.onChoiceIconChanged,
+    this.onChoiceIconColorChanged,
     this.onVisibilityChanged,
     this.onZoneMoved,
     this.onZoneAdded,
     this.onZoneRemoved,
     this.onZonesSaved,
-    this.onSave,
     this.onDelete,
     this.deleteBlockedReason,
-    this.onGenerate,
     this.onRegenerate,
     this.onImageApprovalChanged,
     this.onImageGenerate,
@@ -54,14 +53,18 @@ class NodeInspector extends StatefulWidget {
     this.uploadProgress,
   });
   final DraftNode node;
-  final StatusPillState status;
   final List<String> missing;
-
-  /// `Scene 3 - ABA` style headline for the breadcrumb row.
-  final String headline;
 
   /// `Scene M` label per choice id for the decision cards.
   final Map<String, String> choiceTargets;
+
+  /// Full `Scene M (Title)` target per choice id for the decision cards.
+  /// Falls back to [choiceTargets] when a choice is missing here.
+  final Map<String, String> targetTitles;
+
+  /// Adds a child under the open node, then lets the author open it from
+  /// the canvas. Null hides the action.
+  final VoidCallback? onAddBranch;
 
   /// A save or generation is in flight: fields and buttons disable.
   final bool busy;
@@ -86,12 +89,13 @@ class NodeInspector extends StatefulWidget {
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onLineChanged;
   final void Function(String choiceId, String label)? onChoiceLabelChanged;
+  final void Function(String choiceId, String icon)? onChoiceIconChanged;
+  final void Function(String choiceId, String color)? onChoiceIconColorChanged;
   final ValueChanged<String>? onVisibilityChanged;
   final void Function(String choiceId, double x, double y)? onZoneMoved;
   final ValueChanged<String>? onZoneAdded;
   final ValueChanged<String>? onZoneRemoved;
   final VoidCallback? onZonesSaved;
-  final VoidCallback? onSave;
 
   /// Deletes the open node. Null while no draft guards apply — always set
   /// by the view; null only in bare widget tests.
@@ -100,7 +104,10 @@ class NodeInspector extends StatefulWidget {
   /// Why the open node cannot be deleted, or null when it can go. Non-null
   /// disables the delete button with this reason.
   final String? deleteBlockedReason;
-  final VoidCallback? onGenerate;
+
+  /// Prompt-driven generation: the AI card sends its textarea text (empty
+  /// means unguided, like the old bare generate). Null hides the CTA.
+  final ValueChanged<String>? onPromptGenerate;
   final VoidCallback? onRegenerate;
 
   final void Function(String which, bool approved)? onImageApprovalChanged;
@@ -130,6 +137,8 @@ class _NodeInspectorState extends State<NodeInspector> {
     text: widget.node.ttsText,
   );
   final Map<String, TextEditingController> _labels = {};
+  final TextEditingController _prompt = TextEditingController();
+  final GlobalKey _previewKey = GlobalKey();
 
   @override
   void initState() {
@@ -143,6 +152,7 @@ class _NodeInspectorState extends State<NodeInspector> {
     if (old.node.nodeId != widget.node.nodeId) {
       _title.text = widget.node.title;
       _line.text = widget.node.ttsText;
+      _prompt.clear();
       _syncLabels(force: true);
     } else {
       _setIfDifferent(_title, widget.node.title);
@@ -155,6 +165,7 @@ class _NodeInspectorState extends State<NodeInspector> {
   void dispose() {
     _title.dispose();
     _line.dispose();
+    _prompt.dispose();
     for (final controller in _labels.values) {
       controller.dispose();
     }
@@ -164,105 +175,163 @@ class _NodeInspectorState extends State<NodeInspector> {
   @override
   Widget build(BuildContext context) {
     final node = widget.node;
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: .stretch,
-        mainAxisSize: .min,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: RamificaColors.hotspot,
-                  boxShadow: [
-                    BoxShadow(color: RamificaColors.glowCyan, blurRadius: 8),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.headline,
-                      style: RamificaText.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      'Editing · Draft',
-                      style: RamificaText.caption.copyWith(
-                        color: RamificaColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: RamificaColors.glass,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: RamificaColors.glassBorder),
-                ),
-                child: Text(
-                  'Draft',
-                  style: RamificaText.caption.copyWith(
-                    color: RamificaColors.textSecondary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              StatusPill(status: widget.status),
-            ],
+    return Column(
+      crossAxisAlignment: .stretch,
+      mainAxisSize: .min,
+      children: [
+        _buildAiCard(node),
+        const SizedBox(height: 24),
+        TextField(
+          key: ValueKey('title-${node.nodeId}'),
+          controller: _title,
+          enabled: !widget.busy,
+          maxLength: 40,
+          decoration: _inspectorInputDecoration(
+            labelText: 'Title',
+            hintText: 'The temple door',
           ),
-          const SizedBox(height: 12),
-          TextField(
-            key: ValueKey('title-${node.nodeId}'),
-            controller: _title,
-            enabled: !widget.busy,
-            maxLength: 40,
-            decoration: _inspectorInputDecoration(
-              labelText: 'Title',
-              hintText: 'The temple door',
-            ),
-            onChanged: widget.onTitleChanged,
+          onChanged: widget.onTitleChanged,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: ValueKey('line-${node.nodeId}'),
+          controller: _line,
+          enabled: !widget.busy,
+          maxLines: 3,
+          decoration: _inspectorInputDecoration(
+            labelText: 'Narrator line',
+            hintText: 'What should they do next?',
           ),
-          const SizedBox(height: 8),
-          TextField(
-            key: ValueKey('line-${node.nodeId}'),
-            controller: _line,
-            enabled: !widget.busy,
-            maxLines: 3,
-            decoration: _inspectorInputDecoration(
-              labelText: 'Narrator line',
-              hintText: 'What should they do next?',
+          onChanged: widget.onLineChanged,
+        ),
+        const SizedBox(height: 24),
+        _buildHotspotHeader(node),
+        const SizedBox(height: 8),
+        if (node.isEnding)
+          const Text(
+            'Endings hold no choices, so there are no zones.',
+            style: RamificaText.meta,
+          )
+        else
+          Container(
+            key: _previewKey,
+            child: ZoneMarker(
+              nodeId: node.nodeId,
+              choices: node.choices,
+              targets: widget.targets,
+              endImageUrl: node.endImageSourceUrl,
+              busy: widget.busy,
+              onZoneMoved: widget.onZoneMoved,
+              onZoneAdded: widget.onZoneAdded,
+              onZoneRemoved: widget.onZoneRemoved,
+              onLabelChanged: widget.onChoiceLabelChanged,
+              onIconChanged: widget.onChoiceIconChanged,
+              onIconColorChanged: widget.onChoiceIconColorChanged,
             ),
-            onChanged: widget.onLineChanged,
+          ),
+        if (!node.isEnding) ...[
+          const SizedBox(height: 4),
+          Align(
+            alignment: .centerRight,
+            child: TextButton(
+              key: ValueKey('save-zones-${node.nodeId}'),
+              onPressed: widget.busy ? null : widget.onZonesSaved,
+              child: const Text('Save zones'),
+            ),
           ),
           for (var i = 0; i < node.choices.length; i++) ...[
             const SizedBox(height: 8),
             _DecisionCard(
               choice: node.choices[i],
+              index: i,
               slot: node.choices[i].slot ?? String.fromCharCode(65 + i),
               targetLabel:
                   widget.choiceTargets[node.choices[i].choiceId] ?? 'Scene —',
+              targetTitle: widget.targetTitles[node.choices[i].choiceId],
               busy: widget.busy,
               labelController: _labels[node.choices[i].choiceId],
               onLabelChanged: (label) => widget.onChoiceLabelChanged?.call(
                 node.choices[i].choiceId,
                 label,
               ),
+              onTune: _scrollToPreview,
             ),
           ],
-          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 24),
+        _buildAddOption(),
+        const SizedBox(height: 24),
+        _buildProduction(node),
+        if (!widget.isRoot) ...[const SizedBox(height: 24), _buildDelete(node)],
+      ],
+    );
+  }
+
+  /// Suite section header over the scene preview: title plus the live
+  /// count of placed hotspots.
+  Widget _buildHotspotHeader(DraftNode node) {
+    return Row(
+      children: [
+        const Icon(Icons.touch_app, color: RamificaColors.hotspot, size: 20),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: Text(
+            'Hotspot & HUD Mapping',
+            style: TextStyle(
+              fontFamily: RamificaText.display,
+              fontWeight: .w600,
+              fontSize: 18,
+              height: 24 / 18,
+              color: RamificaColors.textPrimary,
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: RamificaColors.containerBase,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: .min,
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: RamificaColors.hotspot,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${node.choices.length} Active Points',
+                style: RamificaText.caption.copyWith(
+                  color: RamificaColors.hotspot,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Everything the suite flow does not show but publishing still needs:
+  /// visibility, the missing checklist, frames, video, voice, save, and
+  /// delete — grouped in one production card under the episode tree.
+  Widget _buildProduction(DraftNode node) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: RamificaColors.containerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RamificaColors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
           Row(
             children: [
               const Text('Secret', style: RamificaText.meta),
@@ -369,37 +438,6 @@ class _NodeInspectorState extends State<NodeInspector> {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('Zones', style: RamificaText.label),
-          const SizedBox(height: 8),
-          if (node.isEnding)
-            const Text(
-              'Endings hold no choices, so there are no zones.',
-              style: RamificaText.meta,
-            )
-          else
-            ZoneMarker(
-              nodeId: node.nodeId,
-              choices: node.choices,
-              targets: widget.targets,
-              endImageUrl: node.endImageSourceUrl,
-              busy: widget.busy,
-              onZoneMoved: widget.onZoneMoved,
-              onZoneAdded: widget.onZoneAdded,
-              onZoneRemoved: widget.onZoneRemoved,
-              onLabelChanged: widget.onChoiceLabelChanged,
-            ),
-          if (!node.isEnding) ...[
-            const SizedBox(height: 4),
-            Align(
-              alignment: .centerRight,
-              child: TextButton(
-                key: ValueKey('save-zones-${node.nodeId}'),
-                onPressed: widget.busy ? null : widget.onZonesSaved,
-                child: const Text('Save zones'),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
           const Text('Voice', style: RamificaText.label),
           const SizedBox(height: 8),
           _lineApprovalRow(node),
@@ -468,60 +506,324 @@ class _NodeInspectorState extends State<NodeInspector> {
               ],
             ),
           ],
-          const Text('Generate variations', style: RamificaText.labelSM),
-          const SizedBox(height: 8),
-          const Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              MetaBadge(label: 'generateNodeText'),
-              MetaBadge(label: 'generateNodeImage'),
-              MetaBadge(label: 'generateNodeVideo'),
-              MetaBadge(label: 'generateNodeVoice'),
-            ],
+        ],
+      ),
+    );
+  }
+
+  /// Suite AI card: prompt box, static model pills, and the generate CTA.
+  /// Sends the textarea through [NodeInspector.onPromptGenerate]; an empty
+  /// prompt means unguided, like the old bare generate. The Autocomplete
+  /// chip in the prompt header reuses [NodeInspector.onRegenerate]: Spark
+  /// fills (or overwrites) the scene text without a prompt.
+  Widget _buildAiCard(DraftNode node) {
+    final generate = widget.onPromptGenerate;
+    return Container(
+      decoration: BoxDecoration(
+        color: RamificaColors.containerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RamificaColors.outlineVariant),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x99000000),
+            blurRadius: 32,
+            offset: Offset(0, 8),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: widget.busy ? null : widget.onSave,
-                  child: const Text('Save'),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -48,
+              right: -32,
+              child: Container(
+                width: 176,
+                height: 176,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      RamificaColors.hotspot.withValues(alpha: 0.16),
+                      RamificaColors.hotspot.withValues(alpha: 0),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _GradientCta(
-                  label: 'Spark',
-                  onPressed: widget.busy ? null : widget.onGenerate,
+            ),
+            Positioned(
+              bottom: -32,
+              left: -32,
+              child: Container(
+                width: 176,
+                height: 176,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      RamificaColors.nodeActive.withValues(alpha: 0.16),
+                      RamificaColors.nodeActive.withValues(alpha: 0),
+                    ],
+                  ),
                 ),
               ),
-              TextButton(
-                onPressed: widget.busy ? null : widget.onRegenerate,
-                child: const Text('Regenerate'),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: .stretch,
+                mainAxisSize: .min,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.psychology,
+                        color: RamificaColors.hotspot,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'AI Script Assistant',
+                          style: RamificaText.label.copyWith(
+                            color: RamificaColors.hotspot,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: RamificaColors.containerLowest.withValues(
+                        alpha: 0.8,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: .stretch,
+                      mainAxisSize: .min,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Describe what happens in this scene and its choices',
+                                style: RamificaText.labelSM.copyWith(
+                                  fontSize: 10,
+                                  color: RamificaColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              key: ValueKey('regen-text-${node.nodeId}'),
+                              onTap: widget.busy ? null : widget.onRegenerate,
+                              child: Row(
+                                mainAxisSize: .min,
+                                children: [
+                                  const Icon(
+                                    Icons.auto_awesome,
+                                    size: 12,
+                                    color: RamificaColors.hotspot,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Autocomplete',
+                                    style: RamificaText.labelSM.copyWith(
+                                      fontSize: 10,
+                                      color: RamificaColors.hotspot,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          key: ValueKey('ai-prompt-${node.nodeId}'),
+                          controller: _prompt,
+                          enabled: !widget.busy,
+                          minLines: 3,
+                          maxLines: 3,
+                          style: RamificaText.bodySM.copyWith(height: 1.6),
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                            contentPadding: .zero,
+                            hintText: 'The protagonist finds an ancient terminal in the derelict ship. Choose: hack the core or overload the shields…',
+                            hintStyle: RamificaText.bodySM.copyWith(
+                              color: RamificaColors.textSecondary.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'MODELS',
+                    style: RamificaText.labelSM.copyWith(
+                      fontSize: 10,
+                      letterSpacing: 0.5,
+                      color: RamificaColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Row(
+                    crossAxisAlignment: .start,
+                    children: [
+                      _ModelPill(
+                        icon: Icons.videocam,
+                        iconColor: RamificaColors.hotspot,
+                        name: 'HeyGen Video',
+                        detail: '9:16 · 6s clips',
+                      ),
+                      SizedBox(width: 4),
+                      _ModelPill(
+                        icon: Icons.image,
+                        iconColor: RamificaColors.nodeActive,
+                        name: 'Muse Image',
+                        detail: '480x854 stills',
+                      ),
+                      SizedBox(width: 4),
+                      _ModelPill(
+                        icon: Icons.bolt,
+                        iconColor: RamificaColors.rewardGold,
+                        name: 'Muse Spark',
+                        detail: 'Script text',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: _GradientCta(
+                      buttonKey: ValueKey('gen-text-${node.nodeId}'),
+                      icon: Icons.auto_awesome,
+                      label: 'Generate Variations with AI',
+                      onPressed: widget.busy || generate == null
+                          ? null
+                          : () => generate(_prompt.text.trim()),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Scrolls the hotspot preview into view. Tune buttons call this; the
+  /// zone itself is edited by drag on the preview.
+  void _scrollToPreview() {
+    final context = _previewKey.currentContext;
+    if (context != null) {
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 300),
+      );
+    }
+  }
+
+  /// Standalone add-branch button: the only action above production.
+  /// Same event as the canvas mini; the author opens the new scene there.
+  Widget _buildAddOption() {
+    return SizedBox(
+      height: 48,
+      child: FilledButton(
+        onPressed: widget.busy ? null : widget.onAddBranch,
+        style: FilledButton.styleFrom(
+          backgroundColor: RamificaColors.containerBase,
+          foregroundColor: RamificaColors.textPrimary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-          const SizedBox(height: 8),
-          if (widget.deleteBlockedReason != null)
-            Text(widget.deleteBlockedReason!, style: RamificaText.meta),
-          if (widget.deleteBlockedReason != null) const SizedBox(height: 4),
-          Align(
-            alignment: .centerRight,
-            child: TextButton(
-              key: ValueKey('delete-node-${node.nodeId}'),
-              onPressed: widget.busy || widget.deleteBlockedReason != null
-                  ? null
-                  : widget.onDelete,
-              child: Text(
-                'Delete node',
-                style: TextStyle(color: RamificaColors.error),
+        ),
+        child: const Row(
+          mainAxisAlignment: .center,
+          mainAxisSize: .min,
+          children: [
+            Icon(Icons.add_circle, size: 20, color: RamificaColors.hotspot),
+            SizedBox(width: 8),
+            Text('Add New Option (+)', style: RamificaText.label),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Full-width red delete at the bottom. The caller skips it on the root
+  /// (which can never be deleted). Tapping asks for confirmation first;
+  /// the reason explains a disabled button on targeted nodes.
+  Widget _buildDelete(DraftNode node) {
+    final blocked = widget.busy || widget.deleteBlockedReason != null;
+    return Column(
+      crossAxisAlignment: .stretch,
+      mainAxisSize: .min,
+      children: [
+        if (widget.deleteBlockedReason != null)
+          Text(widget.deleteBlockedReason!, style: RamificaText.meta),
+        if (widget.deleteBlockedReason != null) const SizedBox(height: 4),
+        SizedBox(
+          height: 48,
+          width: double.infinity,
+          child: FilledButton(
+            key: ValueKey('delete-node-${node.nodeId}'),
+            onPressed: blocked ? null : () => _confirmDelete(node),
+            style: FilledButton.styleFrom(
+              backgroundColor: RamificaColors.danger,
+              foregroundColor: RamificaColors.textPrimary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
+            ),
+            child: const Text('Delete node'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Delete confirmation for a non-root node. Confirming calls
+  /// [onDelete]; dismissing does nothing.
+  Future<void> _confirmDelete(DraftNode node) async {
+    final title = node.title.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete node?'),
+        content: Text(
+          title.isEmpty
+              ? 'Delete this scene? This cannot be undone.'
+              : 'Delete "$title"? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: ValueKey('confirm-delete-${node.nodeId}'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: RamificaColors.danger),
             ),
           ),
         ],
       ),
     );
+    if (confirmed == true) widget.onDelete?.call();
   }
 
   /// One frame row: label, approval [StatusPill], and approve / reject /
@@ -699,13 +1001,20 @@ InputDecoration _inspectorInputDecoration({
   );
 }
 
-/// Gradient CTA reusing the existing generate event: same callback, Stitch
-/// brand-ramp treatment. Disabled state falls back to a flat glass fill.
+/// Gradient CTA reusing the existing generate event: same callback, suite
+/// cyan-to-blue treatment. Disabled state falls back to a flat glass fill.
 class _GradientCta extends StatelessWidget {
-  const _GradientCta({required this.label, required this.onPressed});
+  const _GradientCta({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.buttonKey,
+  });
 
   final String label;
   final VoidCallback? onPressed;
+  final IconData? icon;
+  final Key? buttonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -714,107 +1023,243 @@ class _GradientCta extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: enabled
             ? const LinearGradient(
-                begin: Alignment.bottomLeft,
-                end: Alignment.topRight,
-                colors: ramificaBrandRampColors,
+                colors: [
+                  RamificaColors.hotspot,
+                  Color(0xFF3196E6),
+                  RamificaColors.nodeActive,
+                ],
               )
             : null,
         color: enabled ? null : RamificaColors.glass,
         borderRadius: const BorderRadius.all(Radius.circular(12)),
         boxShadow: enabled
-            ? const [BoxShadow(color: Color(0x8000F2FE), blurRadius: 16)]
+            ? const [
+                BoxShadow(
+                  color: Color(0x6600F2FE),
+                  blurRadius: 24,
+                  offset: Offset(0, 4),
+                ),
+              ]
             : null,
       ),
       child: TextButton(
+        key: buttonKey,
         onPressed: onPressed,
         style: TextButton.styleFrom(
-          foregroundColor: RamificaColors.onSurface,
+          foregroundColor: const Color(0xFF003256),
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(12)),
           ),
         ),
-        child: Text(label, style: RamificaText.labelSM),
+        child: Row(
+          mainAxisAlignment: .center,
+          mainAxisSize: .min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 22),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: RamificaText.display,
+                  fontWeight: .w600,
+                  fontSize: 18,
+                  height: 24 / 18,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 /// Stitch-style decision card: slot badge, editable label, and the target
-/// scene it leads to. Same fields and callbacks as the flat rows it
-/// replaces — only the layout mirrors the reference hotspot cards.
+/// scene it leads to. The tune action scrolls the hotspot preview into
+/// view, where the zone itself is edited by drag.
 class _DecisionCard extends StatelessWidget {
   const _DecisionCard({
     required this.choice,
+    required this.index,
     required this.slot,
     required this.targetLabel,
+    this.targetTitle,
     required this.busy,
     required this.labelController,
     required this.onLabelChanged,
+    this.onTune,
   });
 
   final DraftChoice choice;
+  final int index;
   final String slot;
   final String targetLabel;
+
+  /// Full `Scene M (Title)` destination, or null to show [targetLabel].
+  final String? targetTitle;
   final bool busy;
   final TextEditingController? labelController;
   final ValueChanged<String> onLabelChanged;
 
+  /// Scrolls the hotspot preview into view. Null hides the tune button.
+  final VoidCallback? onTune;
+
+  static const _accents = [RamificaColors.hotspot, RamificaColors.nodeActive];
+
   @override
   Widget build(BuildContext context) {
+    final accent = _accents[index % _accents.length];
+    final icon = choiceIconData(choice.icon, index);
     return Container(
       key: ValueKey('choice-card-${choice.choiceId}'),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: RamificaColors.containerHigh,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RamificaColors.outlineVariant),
+        color: RamificaColors.containerBase,
+        borderRadius: BorderRadius.circular(8),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: RamificaColors.hotspot, width: 1.5),
-                ),
-                child: Center(
-                  child: Text(
-                    slot,
-                    style: RamificaText.labelSM.copyWith(
-                      color: RamificaColors.textPrimary,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accent.withValues(alpha: 0.2),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: choiceIconColor(choice.iconColor, accent),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: .start,
+              mainAxisSize: .min,
+              children: [
+                TextField(
                   key: ValueKey('choice-${choice.choiceId}'),
                   controller: labelController,
                   enabled: !busy,
                   maxLength: 24,
-                  decoration: _inspectorInputDecoration(
-                    labelText: 'Choice',
-                    hintText: 'Enter the temple',
+                  style: const TextStyle(
+                    fontFamily: RamificaText.display,
+                    fontWeight: .w700,
+                    fontSize: 13,
+                    color: RamificaColors.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: .zero,
+                    counterText: '',
+                    hintText: 'Choice ${slot.isEmpty ? '' : slot}',
+                    hintStyle: RamificaText.caption,
                   ),
                   onChanged: onLabelChanged,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '→ $targetLabel',
-            style: RamificaText.caption.copyWith(
-              color: RamificaColors.textSecondary,
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.alt_route,
+                      size: 13,
+                      color: RamificaColors.nodeActive,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Leads to: ${targetTitle ?? targetLabel}',
+                        style: RamificaText.bodySM.copyWith(
+                          fontSize: 12,
+                          color: RamificaColors.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
+          if (onTune != null)
+            IconButton(
+              icon: const Icon(Icons.tune, size: 18),
+              tooltip: 'Edit hotspot',
+              onPressed: busy ? null : onTune,
+              color: RamificaColors.textSecondary,
+              style: IconButton.styleFrom(
+                backgroundColor: RamificaColors.containerHigh,
+                fixedSize: const Size(32, 32),
+                minimumSize: const Size(32, 32),
+                padding: .zero,
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// Static model pill for the AI card: which provider powers what. Display
+/// only — model choice is a deploy-time contract, not a runtime toggle.
+class _ModelPill extends StatelessWidget {
+  const _ModelPill({
+    required this.icon,
+    required this.iconColor,
+    required this.name,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String name;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: RamificaColors.containerBase,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisSize: .min,
+          children: [
+            Row(
+              mainAxisAlignment: .center,
+              mainAxisSize: .min,
+              children: [
+                Icon(icon, size: 16, color: iconColor),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    name,
+                    style: RamificaText.labelSM.copyWith(fontSize: 10),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              detail,
+              style: RamificaText.caption.copyWith(fontSize: 9),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }

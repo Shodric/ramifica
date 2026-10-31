@@ -295,7 +295,10 @@ export const generateImageBytes = async (args: {
 };
 
 /**
- * Submits a first-to-last-frame clip job (S in, S+E morph out).
+ * Submits a clip job. With only a start frame the provider animates
+ * from it (HeyGen supports `first_frame` only); with both ends it
+ * interpolates the morph. Optional fields are omitted when unset —
+ * providers reject unlisted values.
  * @param {Object} args Key, model, prompt, frames, shape, and seams.
  * @return {Promise<Object>} The provider job id.
  */
@@ -304,10 +307,11 @@ export const submitVideo = async (args: {
   model: string;
   prompt: string;
   startUrl: string;
-  endUrl: string;
+  endUrl?: string;
   resolution?: string;
   aspectRatio?: string;
   duration?: number;
+  generateAudio?: boolean;
   fetchFn?: OpenRouterFetch;
 }): Promise<{jobId: string}> => {
   const payload = await postJson(videosUrl, {
@@ -322,11 +326,15 @@ export const submitVideo = async (args: {
           image_url: {url: args.startUrl},
           frame_type: "first_frame",
         },
-        {
-          type: "image_url",
-          image_url: {url: args.endUrl},
-          frame_type: "last_frame",
-        },
+        ...(args.endUrl === undefined ?
+          [] :
+          [
+            {
+              type: "image_url",
+              image_url: {url: args.endUrl},
+              frame_type: "last_frame",
+            },
+          ]),
       ],
       ...(args.resolution === undefined ?
         {} :
@@ -335,7 +343,9 @@ export const submitVideo = async (args: {
         {} :
         {aspect_ratio: args.aspectRatio}),
       ...(args.duration === undefined ? {} : {duration: args.duration}),
-      generate_audio: false,
+      ...(args.generateAudio === undefined ?
+        {} :
+        {generate_audio: args.generateAudio}),
     },
   });
   const id = asRecord(payload)?.id;
@@ -397,10 +407,10 @@ export const checkVideo = async (args: {
 };
 
 /** Default image model; override with OPENROUTER_IMAGE_MODEL. */
-export const defaultImageModel = "google/gemini-2.5-flash-image-preview";
+export const defaultImageModel = "meta/muse-image";
 
 /** Default video model; override with OPENROUTER_VIDEO_MODEL. */
-export const defaultVideoModel = "google/veo-3";
+export const defaultVideoModel = "heygen/heygen-video-1";
 
 /** Vertical still size matching the app's 480x854 canvas. */
 export const stillSize = "480x854";
@@ -408,8 +418,8 @@ export const stillSize = "480x854";
 /** Vertical 9:16 aspect for generated clips. */
 export const videoAspectRatio = "9:16";
 
-/** Default clip resolution; 720p keeps bills low. */
-export const defaultVideoResolution = "720p";
+/** Default clip resolution; HeyGen serves 480p/768p/2K. */
+export const defaultVideoResolution = "768p";
 
 /** Video length cap seconds; matches supported provider durations. */
 export const videoDurationSeconds = 6;

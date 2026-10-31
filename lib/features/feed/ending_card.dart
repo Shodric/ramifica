@@ -40,7 +40,10 @@ class EndingCard extends StatelessWidget {
             name,
             maxLines: 2,
             overflow: .ellipsis,
-            style: RamificaText.screenTitle.copyWith(fontSize: 22, height: 28 / 22),
+            style: RamificaText.screenTitle.copyWith(
+              fontSize: 22,
+              height: 28 / 22,
+            ),
           ),
           const SizedBox(height: 8),
           EndingBadge(type: type),

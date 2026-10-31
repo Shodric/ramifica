@@ -76,13 +76,13 @@ class _VoicePreviewState extends State<VoicePreview> {
   VoicePlayback? _owned;
   var _playing = false;
 
-  VoicePlayback get _player => widget.player ?? (_owned ??= VideoVoicePlayback());
+  VoicePlayback get _player =>
+      widget.player ?? (_owned ??= VideoVoicePlayback());
 
   @override
   void didUpdateWidget(covariant VoicePreview old) {
     super.didUpdateWidget(old);
-    if (old.audioUrl != widget.audioUrl ||
-        old.nodeId != widget.nodeId) {
+    if (old.audioUrl != widget.audioUrl || old.nodeId != widget.nodeId) {
       _stop();
     }
   }
@@ -105,9 +105,8 @@ class _VoicePreviewState extends State<VoicePreview> {
       setState(() => _playing = true);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Voice preview failed.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Voice preview failed.')));
     }
   }
 

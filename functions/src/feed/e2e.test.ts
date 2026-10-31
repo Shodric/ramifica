@@ -67,8 +67,6 @@ async function seed(): Promise<void> {
     isEnding: false,
     videoUrl: "https://example.com/a.mp4",
     durationSeconds: 10,
-    pauseAtSeconds: 9.967,
-    windowSeconds: 6,
     videoFrameLastBlurData: "data:image/webp;base64,abc",
     choices: [
       {
@@ -90,8 +88,6 @@ async function seed(): Promise<void> {
     endingType: "abierto",
     videoUrl: "https://example.com/b.mp4",
     durationSeconds: 10,
-    pauseAtSeconds: 9.967,
-    windowSeconds: 6,
     videoFrameLastBlurData: "data:image/webp;base64,abc",
     choices: [],
   });

@@ -19,7 +19,7 @@ const _png =
     'z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 void main() {
-  test('the window waits windowSeconds, then holds the default', () async {
+  test('holding starts the default portal', () async {
     final clock = _Clock();
     final bloc = _bloc(clock);
     addTearDown(bloc.close);
@@ -31,13 +31,12 @@ void main() {
     clock.fire();
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.window);
 
-    expect(clock.scheduled, const Duration(seconds: 6));
     expect(bloc.prefetcher.urls, [
       'https://example.com/video.mp4',
       'https://example.com/next.mp4',
       'https://example.com/ridge.mp4',
     ]);
-    clock.fire();
+    bloc.add(const HoldStarted('choice_temple'));
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
 
     expect(bloc.state.holdChoiceId, 'choice_temple');
@@ -84,27 +83,6 @@ void main() {
     expect(bloc.prefetcher.urls, contains('https://example.com/ridge.mp4'));
   });
 
-  test('the window ending during a hold keeps that zone', () async {
-    final clock = _Clock();
-    final bloc = _bloc(clock);
-    addTearDown(bloc.close);
-    await _window(bloc, clock);
-    bloc.add(const HoldStarted('choice_ridge'));
-    await bloc.stream.firstWhere(
-      (state) => state.holdChoiceId == 'choice_ridge',
-    );
-
-    clock.fire();
-    await Future<void>.delayed(Duration.zero);
-    expect(bloc.state.phase, FeedPhase.holding);
-    expect(bloc.state.holdChoiceId, 'choice_ridge');
-
-    bloc.add(const HoldCancelled());
-    await bloc.stream.first;
-
-    expect(bloc.state.phase, FeedPhase.holding);
-    expect(bloc.state.holdChoiceId, 'choice_temple');
-  });
 
   test('a finished hold ignores the release', () async {
     final clock = _Clock();
@@ -180,21 +158,6 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
   });
 
-  testWidgets('the timeout opens the default portal', (tester) async {
-    final clock = _Clock();
-    final bloc = _bloc(clock, voice: false);
-    addTearDown(bloc.close);
-    await _showWindow(tester, bloc);
-
-    clock.fire();
-    await tester.pump();
-
-    expect(bloc.state.phase, FeedPhase.holding);
-    expect(bloc.state.holdChoiceId, 'choice_temple');
-    await tester.pump(const Duration(seconds: 1));
-    expect(bloc.state.holdChoiceId, 'choice_temple');
-    expect(find.byType(Image), findsOneWidget);
-  });
 
   testWidgets('releasing outside the ring cancels the hold', (tester) async {
     final clock = _Clock();
@@ -339,8 +302,6 @@ Map<String, dynamic> _playback({required bool voice}) {
       'isEnding': false,
       'videoUrl': 'https://example.com/video.mp4',
       'durationSeconds': 10,
-      'pauseAtSeconds': 9.967,
-      'windowSeconds': 6,
       'ttsText': voice ? 'Enter or climb?' : null,
       'ttsAudioUrl': voice ? 'https://example.com/voice.m4a' : null,
       'ttsDurationSeconds': voice ? 4.1 : null,

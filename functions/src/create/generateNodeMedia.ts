@@ -233,12 +233,12 @@ export const generateNodeImageWith = async (
     );
   }
 
-  const fallback = `Vertical still, ${titleOf(node)}, no text.`;
   const storedPrompt =
     which === "start" ?
       optString(node.startImagePrompt) :
       optString(node.endImagePrompt);
-  const prompt = promptOverride ?? storedPrompt ?? fallback;
+  const prompt =
+    promptOverride ?? storedPrompt ?? buildImagePrompt(story, node, which);
 
   const gen = deps.imageGen ?? defaultImageGen();
   if (!gen) {
@@ -552,6 +552,61 @@ const titleOf = (node: {[field: string]: unknown}): string => {
 };
 
 /**
+ * Trims a raw field to at most `max` chars; blanks and non-strings
+ * become "". Keeps one long field from eating the prompt budget.
+ * @param {unknown} value Raw field.
+ * @param {number} max Character cap.
+ * @return {string} The clipped text.
+ */
+const clip = (value: unknown, max: number): string => {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text.length <= max ? text : text.slice(0, max);
+};
+
+/**
+ * Rich still prompt from the story bible, the narrator line, and the
+ * clip context. Stills anchor the S-to-E morph, so each prompt
+ * describes a stable endpoint: the opening composition for `start`,
+ * the payoff beat for `end`. Stored and author prompts still win —
+ * this only replaces the old one-line title fallback. Pure so tests
+ * pin the copy without a Db.
+ * @param {Object} story Draft story fields.
+ * @param {Object} node Draft node fields.
+ * @param {FrameWhich} which Frame side.
+ * @return {string} The image prompt.
+ */
+export const buildImagePrompt = (
+  story: {[field: string]: unknown},
+  node: {[field: string]: unknown},
+  which: FrameWhich
+): string => {
+  const storyTitle = clip(story.title, 60) || "Untitled story";
+  const synopsis = clip(story.synopsis, 300).replace(/[.\s]+$/, "");
+  const scene = clip(node.title, 60) || "Untitled scene";
+  const line = clip(node.ttsText, 280);
+  const ending = clip(node.endingName, 40);
+  const clipContext = clip(node.videoPrompt, 200);
+  const frame =
+    which === "start" ?
+      "Opening frame: wide establishing composition, " +
+      "subject entering, room for the scene to unfold." :
+      "Closing frame: the payoff beat of the moment below, " +
+      "stable centered composition, suitable as the end anchor " +
+      "of a short video clip.";
+  const parts = [
+    "Vertical 9:16 cinematic film still, 480x854, photorealistic, " +
+    "no text, no watermark, no logo.",
+    `STORY: "${storyTitle}"${synopsis === "" ? "" : ` — ${synopsis}`}.`,
+    `SCENE: "${scene}".`,
+    ...(line === "" ? [] : [`MOMENT (narrator line): "${line}".`]),
+    ...(ending === "" ? [] : [`This is an ending: "${ending}".`]),
+    `FRAME: ${frame}`,
+    ...(clipContext === "" ? [] : [`CLIP CONTEXT: ${clipContext}.`]),
+  ];
+  return parts.join(" ");
+};
+
+/**
  * First 8 hex chars of the sha256: the hash-link version stamp.
  * @param {Buffer} bytes Raw bytes.
  * @return {string} The stamp.
@@ -633,22 +688,23 @@ const defaultStillUpload = (): StillUploadFn => {
 const openRouterJobPrefix = "or_";
 
 /**
- * Default video submitter: OpenRouter Veo when keyed, else null so the
+ * Default video submitter: OpenRouter when keyed, else null so the
  * caller records `pending` instead of throwing without credentials.
+ * Sends the start frame only (HeyGen takes `first_frame` alone) and
+ * omits unset fields — providers reject unlisted values.
  * @return {VideoRequestFn | null} The submitter, or null.
  */
 const defaultRequestVideo = (): VideoRequestFn | null => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
   const model = process.env.OPENROUTER_VIDEO_MODEL ?? defaultVideoModel;
-  return async ({startUrl, endUrl, prompt}) => {
+  return async ({startUrl, prompt}) => {
     try {
       const {jobId} = await submitVideo({
         apiKey,
         model,
         prompt,
         startUrl,
-        endUrl,
         resolution: defaultVideoResolution,
         aspectRatio: videoAspectRatio,
         duration: videoDurationSeconds,
@@ -821,7 +877,6 @@ const resumeVideoJob = async (
         videoUrl,
         videoJobId: storedJob,
         durationSeconds,
-        pauseAtSeconds: durationSeconds - 1 / 30,
       },
       {merge: true}
     );

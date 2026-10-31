@@ -250,7 +250,6 @@ const script = (overrides: Partial<UploadObject> = {}): Script => {
     processed: {
       videoPath: "/tmp/work/video.mp4",
       durationSeconds: 12.5,
-      pauseAtSeconds: 12.5 - 1 / 30,
       firstFramePath: "/tmp/work/first.png",
       lastFramePath: "/tmp/work/last.png",
       firstBlurData: "data:image/webp;base64,AAA",
@@ -349,7 +348,6 @@ test("happy path stores video, E last frame, deletes upload", async () => {
   assert.equal(node.endImageApproved, false);
   assert.equal(node.videoFrameLastUrl, node.endImageSourceUrl);
   assert.equal(node.durationSeconds, 12.5);
-  assert.equal(node.pauseAtSeconds, 12.5 - 1 / 30);
   assert.equal(node.uploadError, null);
   assert.equal(node.uploadObjectName, s.obj.name);
   assert.deepEqual(s.downloaded, [s.obj.name]);

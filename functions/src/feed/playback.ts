@@ -18,6 +18,8 @@ export interface PlaybackChoiceView {
   radius: number;
   targetSecret: boolean;
   target: {nodeId: string; videoUrl: string} | null;
+  icon: string | null;
+  iconColor: string | null;
 }
 
 export interface PlaybackReward {
@@ -35,8 +37,6 @@ export interface PlaybackView {
     isEnding: boolean;
     videoUrl: string;
     durationSeconds: number;
-    pauseAtSeconds: number;
-    windowSeconds: number;
     ttsText: string | null;
     ttsAudioUrl: string | null;
     ttsDurationSeconds: number | null;
@@ -95,10 +95,6 @@ export async function fetchPlayback(
       isEnding: node.isEnding === true,
       videoUrl: reqString(node.videoUrl, "node video"),
       durationSeconds: reqNumber(node.durationSeconds, "node duration"),
-      pauseAtSeconds: reqNumber(node.pauseAtSeconds, "node pause"),
-      windowSeconds: node.isEnding === true ?
-        windowOrDefault(node.windowSeconds) :
-        reqInt(node.windowSeconds, "node window"),
       ttsText: optString(node.ttsText),
       ttsAudioUrl: optString(node.ttsAudioUrl),
       ttsDurationSeconds: optNumber(node.ttsDurationSeconds),
@@ -173,6 +169,8 @@ const buildChoice = async (
         nodeId: targetNodeId,
         videoUrl: reqString(target.videoUrl, "target video"),
       },
+    icon: optString(choice.icon),
+    iconColor: optString(choice.iconColor),
   };
 };
 
@@ -198,22 +196,6 @@ const reqNumber = (value: unknown, field: string): number => {
     throw new HttpsError("invalid-argument", `Node is missing its ${field}.`);
   }
   return value;
-};
-
-const reqInt = (value: unknown, field: string): number => {
-  if (!Number.isInteger(value)) {
-    throw new HttpsError("invalid-argument", `Node is missing its ${field}.`);
-  }
-  return value as number;
-};
-
-/**
- * Endings carry no window; the client contract still needs the number.
- * @param {unknown} value Raw window.
- * @return {number} The window, or the 6 s default.
- */
-const windowOrDefault = (value: unknown): number => {
-  return Number.isInteger(value) ? (value as number) : 6;
 };
 
 const optString = (value: unknown): string | null => {

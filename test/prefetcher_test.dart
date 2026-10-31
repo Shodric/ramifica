@@ -178,8 +178,6 @@ Playback _playback({
       isEnding: false,
       videoUrl: video,
       durationSeconds: 10,
-      pauseAtSeconds: 9.967,
-      windowSeconds: 6,
       videoFrameLastBlurData: 'data:image/webp;base64,abc',
       ttsAudioUrl: 'https://example.com/voice.m4a',
     ),

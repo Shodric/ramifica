@@ -39,7 +39,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
     on<HoldCompleted>(_onHeld, transformer: droppable());
-    on<WindowElapsed>(_onWindow);
     on<OtherPathRequested>(_onOtherPath, transformer: restartable());
     on<MapRequested>(_onMap, transformer: droppable());
   }
@@ -53,7 +52,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   final CueClock _clock;
   final String Function() _newRequestId;
   final Random _random;
-  var _windowSpent = false;
   var _holdSealed = false;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
@@ -70,8 +68,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   /// ignored. Best-effort: a catalog failure keeps the current clip.
   Future<void> _onSwiped(StorySwiped event, Emitter<FeedState> emit) async {
     final current = state;
-    final cardVisible =
-        current.phase == .ending && !current.endingSpeaking;
+    final cardVisible = current.phase == .ending && !current.endingSpeaking;
     if (current.phase != .playing && !cardVisible) return;
     final catalog = this.catalog;
     final storyId = current.storyId;
@@ -88,7 +85,10 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         if (id.trim().isNotEmpty && id != storyId && seen.add(id)) id,
     ];
     if (others.isEmpty || emit.isDone) return;
-    await _loadStory(storyId: others[_random.nextInt(others.length)], emit: emit);
+    await _loadStory(
+      storyId: others[_random.nextInt(others.length)],
+      emit: emit,
+    );
   }
 
   /// Opens [storyId] (or lets the server pick when null) and parks on an
@@ -99,7 +99,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }) async {
     final muted = state.muted;
     final autoMuted = state.autoMuted;
-    _windowSpent = false;
     _holdSealed = false;
     _silence();
     emit(FeedState(phase: .loading, storyId: storyId));
@@ -141,6 +140,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     emit(state.copy(phase: .speaking));
     _startCue();
   }
+
   void _onUserGestured(UserGestured event, Emitter<FeedState> emit) {
     final hadAuto = state.autoMuted;
     final wasHidden = state.hiddenPaused;
@@ -167,6 +167,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     _silence();
     emit(state.copy(hiddenPaused: true));
   }
+
   void _onMute(MuteToggled event, Emitter<FeedState> emit) {
     emit(state.copy(muted: !state.muted, autoMuted: false));
     if (state.phase == .speaking ||
@@ -186,10 +187,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     if (state.phase != .speaking) return;
     _clock.cancel();
     narrator.stop();
-    _windowSpent = false;
     _holdSealed = false;
     emit(state.copy(phase: .window, clearHold: true));
-    _armWindow();
   }
 
   void _onHold(HoldStarted event, Emitter<FeedState> emit) {
@@ -201,13 +200,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   void _onCancel(HoldCancelled event, Emitter<FeedState> emit) {
     if (state.phase != .holding || _holdSealed) return;
-    if (_windowSpent) {
-      final fallback = _defaultChoice;
-      if (fallback != null) {
-        _startHold(fallback, emit);
-        return;
-      }
-    }
     _holdSealed = false;
     emit(state.copy(phase: .window, clearHold: true));
   }
@@ -300,7 +292,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   /// reopens come through `_park`, which leaves it null.
   void _arrive(CommitResult result, Emitter<FeedState> emit) {
     final next = result.playback;
-    _windowSpent = false;
     _holdSealed = false;
     prefetcher.warm(next);
     final voice = next.node.ttsAudioUrl?.trim();
@@ -323,7 +314,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   /// Parks on the current node without playing. Used for reopened `ended`
   /// runs and for `invalid` recoveries that land on an ending.
   void _park(Playback next, Emitter<FeedState> emit) {
-    _windowSpent = false;
     _holdSealed = false;
     prefetcher.warm(next);
     final voice = next.node.ttsAudioUrl?.trim();
@@ -342,18 +332,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     );
   }
 
-  void _onWindow(WindowElapsed event, Emitter<FeedState> emit) {
-    if (state.phase == .holding) {
-      _windowSpent = true;
-      return;
-    }
-    if (state.phase != .window) return;
-    _windowSpent = true;
-    final fallback = _defaultChoice;
-    if (fallback == null) return;
-    _startHold(fallback, emit);
-  }
-
   Future<void> _onOtherPath(
     OtherPathRequested event,
     Emitter<FeedState> emit,
@@ -362,7 +340,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     final storyId = state.storyId;
     final muted = state.muted;
     final autoMuted = state.autoMuted;
-    _windowSpent = false;
     _holdSealed = false;
     _silence();
     emit(FeedState(phase: .loading, storyId: storyId));
@@ -391,30 +368,13 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       );
     } on AppFailure catch (error) {
       if (emit.isDone) return;
-      emit(
-        FeedState(phase: .failed, storyId: storyId, failure: error.phrase),
-      );
+      emit(FeedState(phase: .failed, storyId: storyId, failure: error.phrase));
     }
   }
 
   void _onMap(MapRequested event, Emitter<FeedState> emit) {
     // Navigation belongs to the view: it reads the ShellBloc and opens the
     // map tab for this story. Kept here so the event has a handler.
-  }
-
-  void _armWindow() {
-    final playback = state.playback;
-    if (playback == null || playback.node.isEnding) return;
-    if (playback.choices.isEmpty || playback.node.windowSeconds <= 0) return;
-    _clock.schedule(
-      Duration(milliseconds: playback.node.windowSeconds * 1000),
-      _finishWindow,
-    );
-  }
-
-  void _finishWindow() {
-    if (isClosed) return;
-    add(const WindowElapsed());
   }
 
   void _startHold(PlaybackChoice choice, Emitter<FeedState> emit) {
@@ -435,15 +395,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     if (choices == null) return null;
     for (final choice in choices) {
       if (choice.choiceId == id) return choice;
-    }
-    return null;
-  }
-
-  PlaybackChoice? get _defaultChoice {
-    final choices = state.playback?.choices;
-    if (choices == null) return null;
-    for (final choice in choices) {
-      if (choice.isDefault) return choice;
     }
     return null;
   }

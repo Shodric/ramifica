@@ -33,8 +33,6 @@ const node = (overrides = {}): ValidatableNode => ({
   videoUrl: "https://example.com/video.mp4",
   videoStatus: "ready",
   videoSource: "generated",
-  pauseAtSeconds: 9.967,
-  windowSeconds: 6,
   startImageApproved: true,
   endImageApproved: true,
   endHash: "hash-e1",
@@ -61,7 +59,6 @@ const ending = (overrides = {}): ValidatableNode => ({
   endImageApproved: true,
   startFromNodeId: "node_001",
   startParentEndHash: "hash-e1",
-  pauseAtSeconds: 9.967,
   ttsText: "",
   choices: [],
   ...overrides,
@@ -119,18 +116,16 @@ test("unreachable nodes are reported", () => {
   ]);
 });
 
-test("titles, visibility, video, and pause are required", () => {
+test("titles, visibility, and video are required", () => {
   const bad = node({
     title: "",
     visibility: "hidden",
     videoStatus: "idle",
-    pauseAtSeconds: 0,
   });
   assert.deepEqual(validateStory(story(), [bad, ending()]), [
     "Node node_001 needs a title of 1-40 characters.",
     "Node node_001 needs a valid visibility.",
     "Node node_001 needs a ready video.",
-    "Node node_001 needs pauseAtSeconds from extraction.",
   ]);
 });
 
@@ -154,18 +149,16 @@ test("choices need labels, targets, zones, and one default", () => {
   ]);
 });
 
-test("decisions need a line, a voice, and a window", () => {
+test("decisions need a line and a voice", () => {
   const bad = node({
     lineApproved: false,
     ttsStatus: "idle",
     ttsApproved: false,
-    windowSeconds: 2,
   });
   assert.deepEqual(validateStory(story(), [bad, ending()]), [
     "Node node_001 needs an approved narrator line.",
     "Node node_001 needs a ready narrator voice.",
     "Node node_001 needs an approved narrator voice.",
-    "Node node_001 needs windowSeconds between 3 and 15.",
   ]);
 });
 
@@ -200,16 +193,14 @@ test("a child without a parent link is reported", () => {
   ]);
 });
 
-test("endings need a name, a type, and no choices or window", () => {
+test("endings need a name, a type, and no choices", () => {
   const bad = ending({
     endingName: "",
     endingType: "epic",
-    windowSeconds: 6,
     choices: [goodChoice({choiceId: "choice_x", label: "Out"})],
   });
   assert.deepEqual(validateStory(story(), [node(), bad]), [
     "Ending node_002 must not have choices.",
-    "Ending node_002 must not have windowSeconds.",
     "Ending node_002 needs a name.",
     "Ending node_002 needs a valid type.",
   ]);

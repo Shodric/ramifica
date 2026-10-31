@@ -242,7 +242,6 @@ export const finalizeUploadWith = async (
           videoJobId: `upload_${object.generation ?? "local"}`,
           videoToHash: endHash,
           durationSeconds: out.durationSeconds,
-          pauseAtSeconds: out.pauseAtSeconds,
           videoFrameLastUrl: frameUrl,
           endImageSourceUrl: frameUrl,
           endImageStatus: "ready",

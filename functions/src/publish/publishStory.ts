@@ -165,8 +165,6 @@ const toValidatable = (
     videoSource: asNullableText(data.videoSource),
     videoFrameLastUrl: asNullableText(data.videoFrameLastUrl),
     durationSeconds: asNumber(data.durationSeconds),
-    pauseAtSeconds: asNumber(data.pauseAtSeconds),
-    windowSeconds: asNumber(data.windowSeconds),
     startImageApproved: data.startImageApproved === true,
     startFromNodeId: asNullableText(data.startFromNodeId),
     startParentEndHash: asNullableText(data.startParentEndHash),

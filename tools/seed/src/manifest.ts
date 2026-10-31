@@ -20,7 +20,6 @@ export interface ManifestNode {
   endingType?: string;
   ttsText?: string;
   voiceId?: string;
-  windowSeconds?: number;
   startImagePrompt?: string;
   endImagePrompt?: string;
   choices?: ManifestChoice[];

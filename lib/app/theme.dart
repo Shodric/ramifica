@@ -13,8 +13,10 @@ abstract final class RamificaColors {
 
   /// White at 18%. Glass border.
   static const glassBorder = Color(0x2EFFFFFF);
-
   static const error = Color(0xFFFFB4AB);
+
+  /// Destructive action fill (delete). White text on top.
+  static const danger = Color(0xFFD32F2F);
 
   /// Dark surface ramp. [containerLow] matches [surface];
   /// [containerHighest] matches [nodeLocked].
@@ -67,16 +69,10 @@ abstract final class RamificaColors {
   );
 
   /// [glowCyan] wash, 16 px blur. Active halos.
-  static const glowCyanShadow = Shadow(
-    color: glowCyan,
-    blurRadius: 16,
-  );
+  static const glowCyanShadow = Shadow(color: glowCyan, blurRadius: 16);
 
   /// [glowViolet] wash, 16 px blur. Reward halos.
-  static const glowVioletShadow = Shadow(
-    color: glowViolet,
-    blurRadius: 16,
-  );
+  static const glowVioletShadow = Shadow(color: glowViolet, blurRadius: 16);
 
   /// White at 6%. Creator input fill.
   static const inputFill = Color(0x0FFFFFFF);
@@ -86,15 +82,20 @@ abstract final class RamificaColors {
 
   /// Input edge on focus.
   static const inputFocusedBorder = BorderSide(color: hotspot, width: 2);
+
+  /// Brand Rampcolors
+  static const rampColors = [
+    RamificaColors.hotspot,
+    Color(0xFF38B6FF),
+    RamificaColors.brandViolet,
+  ];
 }
 
 abstract final class RamificaLayout {
   /// Card corner radius.
   static const double cardRadius = 24;
 
-  static const cardBorderRadius = BorderRadius.all(
-    Radius.circular(cardRadius),
-  );
+  static const cardBorderRadius = BorderRadius.all(Radius.circular(cardRadius));
 
   /// Tight grid gutter. Screens keep their 16 px margin.
   static const double compactGutter = 12;
