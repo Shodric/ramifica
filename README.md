@@ -8,6 +8,9 @@ Ramifica is a standalone demo for a Meta hackathon. The first version is a Flutt
 
 Client layers, routes, and theme tokens: [docs/architecture.md](docs/architecture.md). Visual spec: [docs/design.md](docs/design.md).
 
+AI providers, model IDs, endpoint URLs, and local/production credentials:
+[docs/ai-configuration.md](docs/ai-configuration.md).
+
 Code, docs, and UI copy in this repo are English. The web build is `flutter build web` (dart2js, CanvasKit).
 
 ## Play

@@ -7,7 +7,8 @@
 hosting/.cache
 
 # Firebase Functions
-/functions/node_modules/
+**/node_modules/
+**/**/node_modules/
 /functions/.runtimeconfig.json
 
 # Secrets. firebase.json, .firebaserc, rules, and cors.json stay in git.
@@ -23,6 +24,14 @@ hosting/.cache
 .env.*
 **/.env
 **/.env.*
+.secret.local
+.secret.*
+**/.secret.local
+**/.secret.*
+!.env.example
+!**/.env.example
+!.secret.local.example
+!**/.secret.local.example
 
 # Firebase Emulators
 /firebase-*.zip

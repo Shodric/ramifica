@@ -2,16 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
-      // Compila functions y levanta solo los emuladores que usa la app en
-      // modo EMULATOR (ver lib/main.dart). Sin hosting: flutter run ya sirve
-      // la app en :5000 y chocaría con el hosting emulator.
+      // Functions only (local code). Auth, Firestore, and Storage stay real
+      // so login and drafts persist across runs (see lib/main.dart).
+      // No hosting: flutter run already serves the app on :5000 and would
+      // clash with the hosting emulator.
+      // META_API_KEY is the WAV fallback (transcribeVoice). The relay task
+      // loads the same secret for live dictation. It is not printed.
       "label": "firebase-emulators",
       "type": "shell",
-      "command": "npm --prefix functions run build && npx --yes firebase-tools@15 emulators:start --only auth,firestore,functions,storage",
+      "command": "export GOOGLE_APPLICATION_CREDENTIALS=\"${HOME}/secrets/meta-ramifica-dev.json\" META_API_KEY=\"$(gcloud secrets versions access latest --secret=META_API_KEY --project=meta-ramifica)\" && npm --prefix functions run build && npx --yes firebase-tools@15 emulators:start --only functions",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
-          "JAVA_HOME": "/opt/homebrew/opt/openjdk@21"
+          "JAVA_HOME": "/opt/homebrew/opt/openjdk@21",
+          "GOOGLE_APPLICATION_CREDENTIALS": "${env:HOME}/secrets/meta-ramifica-dev.json"
         }
       },
       "isBackground": true,
@@ -30,6 +34,43 @@
         "reveal": "always",
         "panel": "dedicated"
       }
+    },
+    {
+      // Local asr-relay on :8081 against real Auth (verifies RS256 via Google certs).
+      // META_API_KEY is read at start and not printed.
+      "label": "asr-relay",
+      "type": "shell",
+      "command": "test -d node_modules || npm ci && export META_API_KEY=\"$(gcloud secrets versions access latest --secret=META_API_KEY --project=meta-ramifica)\" && export GOOGLE_CLOUD_PROJECT=meta-ramifica GCLOUD_PROJECT=meta-ramifica PORT=8081 && node server.js",
+      "options": {
+        "cwd": "${workspaceFolder}/realtime",
+        "env": {
+          "GCLOUD_PROJECT": "meta-ramifica",
+          "GOOGLE_CLOUD_PROJECT": "meta-ramifica",
+          "PORT": "8081"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "asr-relay",
+        "pattern": {
+          "regexp": "."
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "\\[asr-relay\\] listening"
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "emulators-and-relay",
+      "dependsOn": ["firebase-emulators", "asr-relay"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
     }
   ]
 }

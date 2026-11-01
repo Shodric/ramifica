@@ -13,22 +13,24 @@
       ]
     },
     {
-      // App local (flutter run :5000) + emuladores (task firebase-emulators).
-      // Requiere `--dart-define=EMULATOR=true` para que lib/main.dart use
-      // auth :9099, firestore :8080 y functions :5001 locales.
-      "name": "Ramifica (emuladores)",
+      // Local app (:5000) + emulated Functions (local code); real Auth,
+      // Firestore, and Storage so login and drafts persist.
+      // ASR_RELAY_URL points dictation at the local relay (accepts real
+      // tokens via Google certs as well as emulator ones).
+      "name": "Ramifica (emulators)",
       "request": "launch",
       "type": "dart",
       "program": "lib/main.dart",
       "deviceId": "chrome",
       "args": [
-        "--dart-define=EMULATOR=true"
+        "--dart-define=EMULATOR=true",
+        "--dart-define=ASR_RELAY_URL=ws://localhost:8081"
       ],
       "toolArgs": [
         "--web-hostname=localhost",
         "--web-port=5000"
       ],
-      "preLaunchTask": "firebase-emulators"
+      "preLaunchTask": "emulators-and-relay"
     }
   ]
 }

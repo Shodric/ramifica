@@ -76,7 +76,7 @@ gcloud storage buckets update gs://meta-ramifica.firebasestorage.app --cors-file
 
 Firestore and Storage rules are `firestore.rules` and `storage.rules`. Unmatched paths are denied. Players do not read `nodes` directly. Story media is not readable through the Storage SDK. A signed-in creator may upload one `mp4` or `mov` under `uploads/{uid}/`, under 100 MB.
 
-Functions default to `us-central1` (`setGlobalOptions` in `functions/src/index.ts`). Callables enforce App Check when they are added. `web/index.html` sets `FIREBASE_APPCHECK_DEBUG_TOKEN` only when the hostname is `localhost` or `127.0.0.1`.
+Functions default to `us-central1` (`setGlobalOptions` in `functions/src/index.ts`). Callables enforce App Check when they are added. The client activates App Check right after `Firebase.initializeApp`: reCAPTCHA Enterprise with the site key in `lib/main.dart` (override with `--dart-define=APP_CHECK_SITE_KEY`), and the debug provider on localhost, in debug, or with `EMULATOR`. The reCAPTCHA secret is registered in Firebase App Check, not in the repo or in Secret Manager. `web/index.html` sets `FIREBASE_APPCHECK_DEBUG_TOKEN` only when the hostname is `localhost` or `127.0.0.1`.
 
 ## Layers
 
@@ -400,7 +400,8 @@ Firestore rules let only the story's author read `nodes`. A player does not read
 | Create `users/{uid}` and change name, handle, photo, locale | Client. |
 | Follow or unfollow | Client, at `follows/{uid}/authors/{authorId}`. |
 | Create a `draft` story and edit its story fields | Client. |
-| Nodes, runs, endings, unlocks, codes, `status: published` | Functions. The client does not write those paths. |
+| Edit a draft node's author fields (title, line, choices, approvals) | Client. Rules reject media fields and published stories. |
+| Create or delete a node, runs, endings, unlocks, codes, `status: published` | Functions. |
 
 | Function | Used by |
 |---|---|
@@ -411,7 +412,7 @@ Firestore rules let only the story's author read `nodes`. A player does not read
 | `playApproach` | Map. |
 | `graphStubs` | Map. |
 | `createNode` | Create. |
-| `saveNode` | Create. |
+| `saveNode` | Unused by the client. Draft node edits merge from Firestore. |
 | `generateNodeText` | Create. |
 | `generateNodeImage` | Create. `generateNodeImage({ which: "start" \| "end" })`. E on any node. S only on the root. |
 | `generateNodeVideo` | Create. Inherits S from the parent's approved E and asks for video from S to E. |
@@ -420,8 +421,65 @@ Firestore rules let only the story's author read `nodes`. A player does not read
 | `storyPage` | Hosting, on `/story/**`. HTTP. No session. |
 | `deleteNode` | Create. |
 | `publishStory` | Create. |
+| `transcribeVoice` | Create, premise FAB. Unary. One closed audio blob in, `{text, done: false}` out. |
+| `proposeStoryOutline` | Create, premise sheet. Proposal only. The client writes on apply. |
 
 Callables use `onCall({ enforceAppCheck: true, maxInstances })` in `us-central1`. App Check on the web is reCAPTCHA Enterprise. `storyPage` is plain HTTP for crawlers and does not use App Check.
+
+## Premise dictation
+
+Step 0 records the premise with the FAB (tap starts, tap stops, no hold). The live path is the `asr-relay` Cloud Run service (`realtime/`, outside `functions/`): it holds `wss://api.meta.ai/v1/asr/realtime` per client socket and streams partials back. One client socket = one Meta session on that instance; reconnecting opens a new session.
+
+Realtime flow:
+
+- The browser sends PCM16 LE mono 24 kHz in ~80ms binary frames. There is no `seq`; the relay forwards each frame as it arrives. Frames that land before `ready` are held and flushed in order once the session is live. Each `transcript` from Meta replaces the on-screen text (`partialMode: CUMULATIVE`, whole hypothesis, not a delta), unless the transcript field is focused. `speechComplete` arrives as `final` and always replaces. A mid-take relay error closes the client socket; the take still falls back to one WAV.
+- Releasing the FAB (or the 90s cap) sends `{type:'end'}`; the relay sends `endStream`, waits for `speechComplete`, delivers it as `{type:'final'}`, and closes both sockets clean. Auth is a first-frame `{type:'auth', idToken, appCheckToken}` (4401 without it); `META_API_KEY` lives in Secret Manager, never in the client.
+- If the socket fails to open in 15s or drops, the client builds one WAV (RIFF header + saved PCM) and sends it once via `transcribeVoice` (`format: 'wav'`, `last: true`); that text replaces the field with hint `Live dictation is unavailable. The full take was transcribed.` A failed take shows the server message when there is one. `transcribeVoice` stays as the unary WAV fallback only — it is no longer the live path. The root node opens this as step 0 in the wizard shell, before Script. The root stepper starts with an Idea chip; child nodes do not. It is not a canvas button. The step uses the same filled inputs as Script. Title is its own field. "Tell your idea" fills the height left under the header. Continue saves it as the story synopsis, then advances. Decision narration is authored separately in S4. On later steps Continue stays and names the first missing piece until the step is complete.
+
+## Scene proposals and prompt editing
+
+S1 uses the same `DictationController` and microphone bar as S0: live PCM,
+with one complete WAV transcription when realtime is unavailable. A denied
+microphone, empty take, or transcription error preserves the previous direction.
+Format calls the existing `generateNodeText` after flushing pending node edits.
+It returns an editable proposal; only Apply dispatches `SceneProposalApplied`.
+Apply fills empty author fields and missing A/B branches, preserving existing
+choice IDs, destinations, geometry, and defaults. S1 scene proposals exclude
+narration, and Script requires only a valid scene title to continue.
+S4 owns the decision narration: write or generate the line, approve it, then
+generate and approve voice. This line is heard after the clip, just before the
+player chooses an option; endings use a closing line without inventing choices.
+`generateNodeText` accepts a scene or narration purpose on the existing callable.
+Narration uses the closing-frame prompt and current choices as context, and only
+updates `ttsText`. Editing it invalidates both approvals and the old voice.
+`wizard_gates.dart` requires the approved line in S4, before the audio checks.
+
+All node writes share a client queue. Apply saves pending edits, reloads,
+publishes each proposed link locally before saving it, and merges final reads
+without discarding newer local author edits. A failed read or save leaves the
+local revision available for retry. Each missing branch calls `createNode` with
+`v1:author:story:parent:slot`; the transaction queries that key and parent before
+creating a child. A retry after reload reuses and relinks an orphan. The key is
+stable per slot even when the proposal changes. Occupied slots keep their child.
+This requires no recovery journal or separate idempotency collection.
+
+The text contract caps title/ending name at 40 characters, narration at 280,
+choice labels at 24, and the three media prompts at 2000, with at most two choices.
+Children have no proposed start prompt; endings have no proposed choices. Legacy
+responses with string choices or missing prompts still parse. `catalog.json` is
+the reference for mirror tests against Dart and TypeScript; TS consumers import
+the same lists, and unknown names become null with the usual display fallback.
+
+S2 edits the prompt before Generate or Another take and shows one image per
+frame. A child's start frame and prompt are inherited read-only. S5 edits the
+video prompt; a pending provider job keeps its submitted prompt until resumed.
+For prompts and `endingName`, a null `NodeFieldChanged` value preserves the field;
+a blank value clears it to null. A cleared image prompt uses `buildImagePrompt`.
+Manual node edits stay local, with an Unsaved changes status, until the scene
+Save button or a text/image/voice/video generation request persists them. Typing,
+step changes, and leaving the scene do not schedule writes or automatic retries.
+Frame approval preserves pending author edits without saving them. Apply remains
+an explicit persistence action for proposals. Backend errors stay visible.
 
 ## Errors
 
