@@ -31,6 +31,7 @@ enum StatusPillState {
   ready('Ready'),
   approved('Approved'),
   failed('Failed');
+
   final String label;
 
   const StatusPillState(this.label);

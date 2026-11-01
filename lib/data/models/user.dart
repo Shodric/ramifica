@@ -17,7 +17,6 @@ class UserAccount {
   final List<String> providers;
   final DateTime? createdAt;
 
-
   /// Reads a `users/{uid}` doc. Missing or mistyped fields fall back to
   /// nulls (and [defaultUserLocale]); foreign docs are usually
   /// unreadable under firestore.rules, so callers treat a denied read
@@ -42,7 +41,10 @@ class UserAccount {
       locale: locale is String && locale.trim().isNotEmpty
           ? locale.trim()
           : defaultUserLocale,
-      providers: [for (final entry in providers is List ? providers : const []) if (entry is String) entry],
+      providers: [
+        for (final entry in providers is List ? providers : const [])
+          if (entry is String) entry,
+      ],
     );
   }
 

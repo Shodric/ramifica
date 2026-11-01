@@ -12,6 +12,7 @@ class DraftStory {
     required this.title,
     this.synopsis = '',
     this.rootNodeId,
+    this.revision = 0,
   });
 
   factory DraftStory.fromDoc(String id, Map<String, dynamic> data) {
@@ -22,6 +23,7 @@ class DraftStory {
       title: _optionalString(data['title']) ?? '',
       synopsis: _optionalString(data['synopsis']) ?? '',
       rootNodeId: _optionalString(data['rootNodeId']),
+      revision: (data['revision'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -32,14 +34,21 @@ class DraftStory {
 
   /// The root node id. Null until the first node exists.
   final String? rootNodeId;
+  final int revision;
 
-  DraftStory copy({String? title, String? synopsis, String? Function()? rootNodeId}) {
+  DraftStory copy({
+    String? title,
+    String? synopsis,
+    String? Function()? rootNodeId,
+    int? revision,
+  }) {
     return DraftStory(
       storyId: storyId,
       authorId: authorId,
       title: title ?? this.title,
       synopsis: synopsis ?? this.synopsis,
       rootNodeId: rootNodeId == null ? this.rootNodeId : rootNodeId(),
+      revision: revision ?? this.revision,
     );
   }
 
@@ -50,12 +59,13 @@ class DraftStory {
         other.authorId == authorId &&
         other.title == title &&
         other.synopsis == synopsis &&
-        other.rootNodeId == rootNodeId;
+        other.rootNodeId == rootNodeId &&
+        other.revision == revision;
   }
 
   @override
   int get hashCode =>
-      Object.hash(storyId, authorId, title, synopsis, rootNodeId);
+      Object.hash(storyId, authorId, title, synopsis, rootNodeId, revision);
 }
 
 String _requiredString(Object? value) {

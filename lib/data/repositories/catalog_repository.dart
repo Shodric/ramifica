@@ -37,9 +37,7 @@ class CatalogRepository {
     final fetch = fetchPublishedStories;
     if (fetch != null) return fetch();
     final ids = await fetchPublishedIds();
-    return [
-      for (final id in ids) StorySummary(storyId: id, title: id),
-    ];
+    return [for (final id in ids) StorySummary(storyId: id, title: id)];
   }
 
   /// The featured published story. Without an injected fetch, falls back
@@ -63,6 +61,7 @@ class CatalogRepository {
     return const [];
   }
 }
+
 /// Production source:
 /// * grid: `stories` with `status == published`, newest `publishedAt`
 ///   first (`orderBy('publishedAt', descending: true)`, first page of 50);

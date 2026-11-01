@@ -42,8 +42,7 @@ class FollowRepository {
   /// Never called with an empty list or more than [authorBatchSize] ids.
   /// Null in setups that never show the Following feed (swipe-only tests).
   final Future<List<FollowStoryDoc>> Function(List<String> authorIds)?
-      fetchStoryDocs;
-
+  fetchStoryDocs;
 
   /// Firestore `in` accepts at most 10 values per query.
   static const int authorBatchSize = 10;

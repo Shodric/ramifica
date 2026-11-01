@@ -1,13 +1,14 @@
-import 'package:ramifica/core/functions_client.dart';
+import 'package:ramifica/data/persistence/game_service.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/graph_stub.dart';
 import 'package:ramifica/data/models/playback.dart';
 
 /// Map reads. The view never calls these directly; [GraphBloc] does.
 class GraphRepository {
-  GraphRepository({required this.functions});
+  GraphRepository({required this.execute});
 
-  final FunctionsClient functions;
+  final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)
+  execute;
 
   /// Every node of the story. Visited nodes carry title and counts;
   /// unvisited secret nodes carry only an id.
@@ -18,7 +19,7 @@ class GraphRepository {
     final story = storyId.trim();
     final run = runId.trim();
     if (story.isEmpty || run.isEmpty) throw const AppFailure(.invalid);
-    final payload = await functions.call('graphStubs', {
+    final payload = await execute('graphStubs', {
       'storyId': story,
       'runId': run,
     });
@@ -34,7 +35,7 @@ class GraphRepository {
     final run = runId.trim();
     final node = nodeId.trim();
     if (run.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
-    final payload = await functions.call('playApproach', {
+    final payload = await execute('playApproach', {
       'runId': run,
       'nodeId': node,
     });
@@ -46,7 +47,7 @@ class GraphRepository {
   Future<Playback> rewind(String runId) async {
     final run = runId.trim();
     if (run.isEmpty) throw const AppFailure(.invalid);
-    final payload = await functions.call('rewindRun', {'runId': run});
+    final payload = await execute('rewindRun', {'runId': run});
     return Playback.fromJson(payload);
   }
 }
@@ -54,5 +55,5 @@ class GraphRepository {
 /// Production source: the `graphStubs`, `playApproach`, and `rewindRun`
 /// callables in `us-central1`.
 GraphRepository createFirebaseGraphRepository() {
-  return GraphRepository(functions: FunctionsClient());
+  return GraphRepository(execute: ClientGameService.shared.execute);
 }

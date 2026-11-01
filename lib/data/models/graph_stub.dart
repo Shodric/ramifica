@@ -66,9 +66,7 @@ class GraphStub {
       choiceCount: _optionalCount(json['choiceCount']),
       childIds: childIds == null
           ? const []
-          : [
-              for (final id in (childIds as List)) _requiredString(id),
-            ],
+          : [for (final id in (childIds as List)) _requiredString(id)],
       choices: _optionalChoices(json['choices']),
     );
   }
@@ -127,8 +125,7 @@ class GraphStubsResult {
     if (rawNodes is! List) throw const AppFailure(.invalid);
     return GraphStubsResult(
       nodes: [
-        for (final node in rawNodes)
-          GraphStub.fromJson(_objectMap(node)),
+        for (final node in rawNodes) GraphStub.fromJson(_objectMap(node)),
       ],
       currentNodeId: _requiredString(json['currentNodeId']),
     );

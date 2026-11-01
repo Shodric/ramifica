@@ -128,10 +128,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
     try {
       final playback = await repository.rewind(run);
       if (emit.isDone) return;
-      final refreshed = await repository.fetchStubs(
-        storyId: story,
-        runId: run,
-      );
+      final refreshed = await repository.fetchStubs(storyId: story, runId: run);
       if (emit.isDone) return;
       emit(
         state.copy(

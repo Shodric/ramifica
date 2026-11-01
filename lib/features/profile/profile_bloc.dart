@@ -15,11 +15,8 @@ import 'package:ramifica/features/profile/profile_state.dart';
 /// and saves go through [users] (`users/{uid}`); follow state goes
 /// through [follows] (`follows/{uid}/authors/{authorId}`).
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
-  ProfileBloc({
-    required this.auth,
-    required this.users,
-    required this.follows,
-  }) : super(const ProfileState()) {
+  ProfileBloc({required this.auth, required this.users, required this.follows})
+    : super(const ProfileState()) {
     on<ProfileRequested>(_onRequested, transformer: restartable());
     on<FollowToggled>(_onToggled);
     on<ProfileSaved>(_onSaved);
@@ -47,14 +44,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       return;
     }
     final own = target == uid;
-    emit(
-      ProfileState(
-        phase: .loading,
-        uid: uid,
-        authorId: target,
-        isOwn: own,
-      ),
-    );
+    emit(ProfileState(phase: .loading, uid: uid, authorId: target, isOwn: own));
     try {
       if (own) {
         final account = await users.read(target);
@@ -82,10 +72,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
           ),
         );
       } else {
-        final following = await follows.isFollowing(
-          uid: uid,
-          authorId: target,
-        );
+        final following = await follows.isFollowing(uid: uid, authorId: target);
         if (emit.isDone) return;
         // Foreign user docs are owner-readable only, so denial is the
         // common case and still a loaded (minimal) profile.
@@ -112,14 +99,10 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       }
     } on AppFailure catch (error) {
       if (emit.isDone) return;
-      emit(
-        state.copy(phase: () => .failed, failure: () => error.phrase),
-      );
+      emit(state.copy(phase: () => .failed, failure: () => error.phrase));
     } on AuthException catch (error) {
       if (emit.isDone) return;
-      emit(
-        state.copy(phase: () => .failed, failure: () => error.phrase),
-      );
+      emit(state.copy(phase: () => .failed, failure: () => error.phrase));
     }
   }
 
@@ -152,15 +135,10 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     }
   }
 
-  Future<void> _onSaved(
-    ProfileSaved event,
-    Emitter<ProfileState> emit,
-  ) async {
+  Future<void> _onSaved(ProfileSaved event, Emitter<ProfileState> emit) async {
     // Foreign saves are rejected: no write, just the phrase.
     if (!state.isOwn || state.uid.isEmpty) {
-      emit(
-        state.copy(failure: () => const AppFailure(.denied).phrase),
-      );
+      emit(state.copy(failure: () => const AppFailure(.denied).phrase));
       return;
     }
     if (state.saving) return;
@@ -171,6 +149,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       final keep = fallback?.trim();
       return keep == null || keep.isEmpty ? null : keep;
     }
+
     final locale = event.locale?.trim();
     emit(state.copy(saving: true, failure: () => null));
     try {

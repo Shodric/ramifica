@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:ramifica/data/models/draft_node.dart';
+
 sealed class CreateEvent {
   const CreateEvent();
 }
@@ -45,7 +49,8 @@ final class NodeAdded extends CreateEvent {
 
 /// Manual edit in the inspector. Writes bloc state only — nothing is
 /// sent until [NodeSaved]. Only non-null fields change; choice labels
-/// replace by choice id, leaving other choices alone.
+/// replace by choice id, leaving other choices alone. Prompt/ending
+/// fields: null keeps, blank after trim clears to null on save.
 final class NodeFieldChanged extends CreateEvent {
   const NodeFieldChanged({
     required this.nodeId,
@@ -57,6 +62,10 @@ final class NodeFieldChanged extends CreateEvent {
     this.visibility,
     this.lineApproved,
     this.ttsApproved,
+    this.startImagePrompt,
+    this.endImagePrompt,
+    this.videoPrompt,
+    this.endingName,
   });
 
   final String nodeId;
@@ -87,12 +96,30 @@ final class NodeFieldChanged extends CreateEvent {
   /// unapproved; the author approves after listening. Persists through
   /// `saveNode`.
   final bool? ttsApproved;
+
+  /// S-frame prompt override (root only), or null to leave it. Blank
+  /// clears to null so generation falls back to `buildImagePrompt`.
+  final String? startImagePrompt;
+
+  /// E-frame prompt override, or null to leave it. Blank clears to null.
+  final String? endImagePrompt;
+
+  /// Clip prompt override, or null to leave it. Blank clears to null so
+  /// generation falls back to its default.
+  final String? videoPrompt;
+
+  /// Ending name (endings only), or null to leave it. Blank clears.
+  final String? endingName;
 }
 
-/// Persists the open node through `saveNode`. `droppable`: a second save
-/// while one is in flight is dropped.
+/// Persists the selected node, or the open node when no id is supplied.
+/// Saves share the bloc write queue; [completion] resolves after the
+/// latest local revision is persisted, or with false on failure.
 final class NodeSaved extends CreateEvent {
-  const NodeSaved();
+  const NodeSaved({this.nodeId, this.completion});
+
+  final String? nodeId;
+  final Completer<bool>? completion;
 }
 
 /// Asks Spark for proposed text via `generateNodeText`. `restartable`.
@@ -106,16 +133,31 @@ final class TextGenerateRequested extends CreateEvent {
   final bool regenerate;
 }
 
+/// Generates only the decision narration in S4, then saves it unapproved.
+final class NarrationGenerateRequested extends CreateEvent {
+  const NarrationGenerateRequested(this.nodeId);
+
+  final String nodeId;
+}
+
 /// Asks for a node frame via `generateNodeImage`. [which] is `start`
 /// (root only — the backend rejects it elsewhere) or `end` (any node).
-/// `restartable`: a second tap cancels the first.
+/// [prompt] is the revised prompt override; null or blank falls back to
+/// `buildImagePrompt`. `restartable`: a second tap cancels the first.
 final class ImageGenerateRequested extends CreateEvent {
-  const ImageGenerateRequested({required this.nodeId, required this.which});
+  const ImageGenerateRequested({
+    required this.nodeId,
+    required this.which,
+    this.prompt,
+  });
 
   final String nodeId;
 
   /// `start` or `end`.
   final String which;
+
+  /// Revised prompt override, or null to use the backend fallback.
+  final String? prompt;
 }
 
 /// Approves (`approved: true`) or rejects (`approved: false`) one node
@@ -138,11 +180,15 @@ final class ImageApprovalChanged extends CreateEvent {
 
 /// Asks for the node video via `generateNodeVideo`. GATED server-side:
 /// the root needs its own S approved, any other node needs its parent E
-/// approved; the call inherits the parent E as S. `restartable`.
+/// approved; the call inherits the parent E as S. [prompt] is the revised
+/// clip prompt; null or blank keeps the backend fallback. `restartable`.
 final class VideoGenerateRequested extends CreateEvent {
-  const VideoGenerateRequested(this.nodeId);
+  const VideoGenerateRequested(this.nodeId, {this.prompt});
 
   final String nodeId;
+
+  /// Revised clip prompt override, or null to use the fallback.
+  final String? prompt;
 }
 
 /// Uploads a picked video for one node to `uploads/{uid}/`. The bloc
@@ -256,4 +302,175 @@ final class NodeDeleted extends CreateEvent {
 /// second publish while one is in flight is dropped.
 final class StoryPublished extends CreateEvent {
   const StoryPublished();
+}
+
+/// Adds a child node under [nodeId] on branch [slot] (`A` or `B`) and
+/// links it as a choice — the hotspot path. Unlike [NodeAdded] there is no
+/// navigation: the author stays on the parent while the new choice gets
+/// focus (see `CreateState.focusChoiceId`). The link carries an empty
+/// label with the slot's default icon and color. The 2-choice cap in
+/// `_linkChoice` still applies; past it the event is ignored.
+final class HotspotAdded extends CreateEvent {
+  const HotspotAdded({required this.nodeId, required this.slot});
+
+  /// Parent node that gains the choice.
+  final String nodeId;
+
+  /// Branch slot for the new child (`A` or `B`).
+  final String slot;
+}
+
+/// Applies a voice-proposed story outline: story title/synopsis plus the
+/// root's narrator line and up to two option labels with icons. The bloc
+/// updates the story doc, sets the root fields, creates one child per
+/// option and links it on its slot — without navigating. Malformed option
+/// entries are skipped; lengths are clamped (title 40, line 280, label
+/// 24) and icons fall back to the catalog in `choice_icon.dart`.
+final class OutlineApplied extends CreateEvent {
+  const OutlineApplied({
+    this.title,
+    this.synopsis,
+    this.narratorLine,
+    this.options = const [],
+  });
+
+  final String? title;
+  final String? synopsis;
+  final String? narratorLine;
+  final List<OutlineOption> options;
+}
+
+/// One proposed option for [OutlineApplied]: label plus optional icon
+/// and color names from the shared catalog.
+final class OutlineOption {
+  const OutlineOption({required this.label, this.icon, this.iconColor});
+
+  final String label;
+  final String? icon;
+  final String? iconColor;
+}
+
+/// One proposed branch for [SceneProposal]: label plus optional icon
+/// and color names from the shared catalog (`choice_icon.dart`).
+/// Unknown names normalize to null in the bloc via `_catalogIcon` /
+/// `_catalogColor` and draw the index fallback.
+final class SceneProposalChoice {
+  const SceneProposalChoice({required this.label, this.icon, this.iconColor});
+
+  final String label;
+  final String? icon;
+  final String? iconColor;
+}
+
+/// A reviewable S1 scene proposal: text plus visual prompts plus up to
+/// two branches. Proposal-only: the S1 accordion edits this outside the
+/// node until [SceneProposalApplied] completes solo-vacíos. All fields
+/// nullable; absent/blank/invalid normalize to null in the bloc.
+/// Children proposals carry `startImagePrompt: null` (S is inherited);
+/// endings carry `choices: []` with an optional [endingName].
+/// Accepts legacy shapes via [SceneProposal.fromJson]: plain-string
+/// choices and `choiceLabels` maps, missing prompts.
+final class SceneProposal {
+  const SceneProposal({
+    this.title,
+    this.ttsText,
+    this.startImagePrompt,
+    this.endImagePrompt,
+    this.videoPrompt,
+    this.endingName,
+    this.choices = const [],
+  });
+
+  /// Compat reader for backend proposal payloads: `choices` may hold
+  /// `{label, icon, iconColor}` maps or plain strings; `choiceLabels`
+  /// (list of strings or `{label}` maps) is accepted as a fallback.
+  /// Malformed entries are skipped; lengths are clamped by the bloc.
+  factory SceneProposal.fromJson(Map<String, dynamic> json) {
+    String? text(Object? value) {
+      if (value is String && value.trim().isNotEmpty) return value;
+      return null;
+    }
+
+    final choices = <SceneProposalChoice>[];
+    final raw = json['choices'];
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is String && item.trim().isNotEmpty) {
+          choices.add(SceneProposalChoice(label: item));
+        } else if (item is Map) {
+          final map = item.map((key, value) => MapEntry(key.toString(), value));
+          final label = text(map['label']);
+          if (label == null) continue;
+          choices.add(
+            SceneProposalChoice(
+              label: label,
+              icon: text(map['icon']),
+              iconColor: text(map['iconColor'] ?? map['color']),
+            ),
+          );
+        }
+      }
+    } else {
+      final fallback = json['choiceLabels'];
+      if (fallback is List) {
+        for (final item in fallback) {
+          if (item is String && item.trim().isNotEmpty) {
+            choices.add(SceneProposalChoice(label: item));
+          } else if (item is Map) {
+            final label = text(
+              (item.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))['label'],
+            );
+            if (label != null) choices.add(SceneProposalChoice(label: label));
+          }
+        }
+      }
+    }
+    return SceneProposal(
+      title: text(json['title']),
+      ttsText: text(json['ttsText'] ?? json['narratorLine']),
+      startImagePrompt: text(json['startImagePrompt']),
+      endImagePrompt: text(json['endImagePrompt']),
+      videoPrompt: text(json['videoPrompt']),
+      endingName: text(json['endingName']),
+      choices: choices,
+    );
+  }
+
+  final String? title;
+  final String? ttsText;
+  final String? startImagePrompt;
+  final String? endImagePrompt;
+  final String? videoPrompt;
+  final String? endingName;
+
+  /// Proposed branches in slot order (index 0 → A, 1 → B, max two).
+  final List<SceneProposalChoice> choices;
+}
+
+/// Applies a reviewed S1 [proposal] to [nodeId]: flushes pending edits,
+/// reloads, then completes solo-vacíos plus missing branches — staying
+/// on the same scene. `droppable`: a second Apply while one is in flight
+/// is dropped. Occupied slots keep ids/target/geometry/default and only
+/// fill empty style; free slots create via `createNode` with the
+/// reproducible `v1:author:story:parent:slot` key and link with
+/// `_linkChoice`. A narration change invalidates approvals + voice.
+/// Never approves nor generates media.
+final class SceneProposalApplied extends CreateEvent {
+  const SceneProposalApplied({required this.nodeId, required this.proposal});
+
+  /// Scene that gains the proposal.
+  final String nodeId;
+
+  /// Reviewed proposal from the S1 accordion.
+  final SceneProposal proposal;
+}
+
+/// A live draft snapshot; stale-story events are ignored by the bloc.
+final class DraftNodesObserved extends CreateEvent {
+  const DraftNodesObserved(this.storyId, this.nodes, {this.error});
+  final String storyId;
+  final List<DraftNode> nodes;
+  final Object? error;
 }

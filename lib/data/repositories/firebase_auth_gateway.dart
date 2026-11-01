@@ -165,4 +165,3 @@ AuthRepository createFirebaseAuthRepository() {
     preferGoogleRedirect: currentPagePrefersGoogleRedirect(),
   );
 }
-

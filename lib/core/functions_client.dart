@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 
 const functionsRegion = 'us-central1';
@@ -26,7 +27,17 @@ class FunctionsClient {
     } on AppFailure {
       rethrow;
     } on FirebaseFunctionsException catch (error) {
-      throw AppFailure(appFailureCodeFor(error.code), cause: error);
+      final message = error.message?.trim();
+      debugPrint(
+        'callable $name ${error.code}: '
+        '${message == null || message.isEmpty ? '(no message)' : message}'
+        '${error.details == null ? '' : ' details=${error.details}'}',
+      );
+      throw AppFailure(
+        appFailureCodeFor(error.code),
+        cause: error,
+        detail: message == null || message.isEmpty ? null : message,
+      );
     } catch (error) {
       throw AppFailure(.failed, cause: error);
     }

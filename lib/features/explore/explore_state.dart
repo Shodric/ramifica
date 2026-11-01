@@ -34,8 +34,7 @@ class ExploreState {
   List<StorySummary> get followingStories {
     return [
       for (final story in stories)
-        if (story.authorId != null &&
-            followingIds.contains(story.authorId))
+        if (story.authorId != null && followingIds.contains(story.authorId))
           story,
     ];
   }

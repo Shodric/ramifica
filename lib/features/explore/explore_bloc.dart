@@ -8,11 +8,8 @@ import 'package:ramifica/features/explore/explore_event.dart';
 import 'package:ramifica/features/explore/explore_state.dart';
 
 class ExploreBloc extends Bloc<ExploreEvent, ExploreState> {
-  ExploreBloc({
-    required this.catalog,
-    required this.follows,
-    this.uid,
-  }) : super(const ExploreState()) {
+  ExploreBloc({required this.catalog, required this.follows, this.uid})
+    : super(const ExploreState()) {
     on<CatalogRequested>(_onRequested, transformer: restartable());
     on<CatalogTabSelected>(_onTabSelected);
     on<QueryChanged>(_onQueryChanged);
@@ -81,8 +78,6 @@ class ExploreBloc extends Bloc<ExploreEvent, ExploreState> {
 
   void _onStoryStart(StoryStartRequested event, Emitter<ExploreState> emit) {
     final storyId = event.storyId.trim();
-    emit(
-      state.copy(pendingStoryId: () => storyId.isEmpty ? null : storyId),
-    );
+    emit(state.copy(pendingStoryId: () => storyId.isEmpty ? null : storyId));
   }
 }

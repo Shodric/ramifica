@@ -1,11 +1,12 @@
-import 'package:ramifica/core/functions_client.dart';
+import 'package:ramifica/data/persistence/game_service.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/playback.dart';
 
 class RunRepository {
-  RunRepository({required this.functions});
+  RunRepository({required this.execute});
 
-  final FunctionsClient functions;
+  final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)
+  execute;
 
   /// Opens the current run, or lets the server pick a story when [storyId]
   /// is null. With [restart] true, starts a new run at the root and marks
@@ -16,14 +17,14 @@ class RunRepository {
       if (id != null && id.isNotEmpty) 'storyId': id,
       if (restart) 'restart': true,
     };
-    final payload = await functions.call('startRun', data);
+    final payload = await execute('startRun', data);
     return RunStart.fromJson(payload);
   }
 
   Future<Playback> loadPlayback(String runId) async {
     final id = runId.trim();
     if (id.isEmpty) throw const AppFailure(.invalid);
-    final payload = await functions.call('loadPlayback', {'runId': id});
+    final payload = await execute('loadPlayback', {'runId': id});
     return Playback.fromJson(payload);
   }
 
@@ -42,7 +43,7 @@ class RunRepository {
     if (run.isEmpty || from.isEmpty || choice.isEmpty || request.isEmpty) {
       throw const AppFailure(.invalid);
     }
-    final payload = await functions.call('commitChoice', {
+    final payload = await execute('commitChoice', {
       'runId': run,
       'fromNodeId': from,
       'choiceId': choice,
@@ -51,3 +52,6 @@ class RunRepository {
     return CommitResult.fromJson(payload);
   }
 }
+
+RunRepository createFirebaseRunRepository() =>
+    RunRepository(execute: ClientGameService.shared.execute);

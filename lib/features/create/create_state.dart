@@ -15,9 +15,12 @@ class CreateState {
     this.openNodeId,
     this.job = CreateJob.none,
     this.jobNodeId,
+    this.operationKind,
+    this.operationPhase,
     this.uploadProgress,
     this.failure,
     this.publishedStoryId,
+    this.focusChoiceId,
   });
 
   final DraftStory? story;
@@ -32,6 +35,14 @@ class CreateState {
   /// The node the [job] works on, if it targets one node.
   final String? jobNodeId;
 
+  /// The exact active action: startImage, endImage, voice, video, or text.
+  /// Set before saving so the indicator starts at the first tap.
+  final String? operationKind;
+  final String? operationPhase;
+
+  bool generating(String nodeId, String kind) =>
+      job != CreateJob.none && jobNodeId == nodeId && operationKind == kind;
+
   /// Upload progress 0..1 while [job] is [CreateJob.uploading], else null.
   final double? uploadProgress;
 
@@ -42,6 +53,11 @@ class CreateState {
   /// The story id once `publishStory` succeeds, or null while a draft.
   /// The view navigates to Explore exactly once per value.
   final String? publishedStoryId;
+
+  /// The choice id that just gained focus — set by HotspotAdded so the
+  /// hotspots step can focus the new label field. Cleared on the next
+  /// field/zone/choice edit. Null while nothing needs focus.
+  final String? focusChoiceId;
 
   /// True once a draft is open.
   bool get hasDraft => story != null;
@@ -184,16 +200,25 @@ class CreateState {
     List<DraftNode>? nodes,
     String? Function()? openNodeId,
     CreateJob? job,
+    String? operationKind,
+    String? operationPhase,
     String? Function()? jobNodeId,
     double? Function()? uploadProgress,
     String? Function()? failure,
     String? Function()? publishedStoryId,
+    String? Function()? focusChoiceId,
   }) {
     return CreateState(
       story: story == null ? this.story : story(),
       nodes: nodes ?? this.nodes,
       openNodeId: openNodeId == null ? this.openNodeId : openNodeId(),
       job: job ?? this.job,
+      operationKind: job == CreateJob.none
+          ? null
+          : operationKind ?? this.operationKind,
+      operationPhase: job == CreateJob.none
+          ? null
+          : operationPhase ?? this.operationPhase,
       jobNodeId: jobNodeId == null ? this.jobNodeId : jobNodeId(),
       uploadProgress: uploadProgress == null
           ? this.uploadProgress
@@ -202,6 +227,9 @@ class CreateState {
       publishedStoryId: publishedStoryId == null
           ? this.publishedStoryId
           : publishedStoryId(),
+      focusChoiceId: focusChoiceId == null
+          ? this.focusChoiceId
+          : focusChoiceId(),
     );
   }
 
@@ -211,11 +239,14 @@ class CreateState {
         other.story == story &&
         _sameNodes(other.nodes, nodes) &&
         other.openNodeId == openNodeId &&
+        other.operationKind == operationKind &&
+        other.operationPhase == operationPhase &&
         other.job == job &&
         other.jobNodeId == jobNodeId &&
         other.uploadProgress == uploadProgress &&
         other.failure == failure &&
-        other.publishedStoryId == publishedStoryId;
+        other.publishedStoryId == publishedStoryId &&
+        other.focusChoiceId == focusChoiceId;
   }
 
   @override
@@ -224,10 +255,13 @@ class CreateState {
     Object.hashAll(nodes),
     openNodeId,
     job,
+    operationKind,
+    operationPhase,
     jobNodeId,
     uploadProgress,
     failure,
     publishedStoryId,
+    focusChoiceId,
   );
 
   /// Why [nodeId] cannot be deleted, or null when `deleteNode` may run.
@@ -245,7 +279,7 @@ class CreateState {
     }
     return null;
   }
-  }
+}
 
 /// The publish checklist for one node, shared by the state and the tests.
 /// Mirrors functions/src/publish/validateStory.ts per node, minus the

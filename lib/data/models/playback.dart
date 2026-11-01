@@ -476,15 +476,6 @@ double? _optionalDouble(Object? value) {
   return _requiredDouble(value);
 }
 
-int _requiredInt(Object? value) {
-  if (value is! num) throw const AppFailure(.invalid);
-  final number = value.toDouble();
-  if (!number.isFinite || number != number.roundToDouble()) {
-    throw const AppFailure(.invalid);
-  }
-  return number.toInt();
-}
-
 bool _requiredBool(Object? value) {
   if (value is! bool) throw const AppFailure(.invalid);
   return value;

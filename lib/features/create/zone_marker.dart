@@ -34,8 +34,13 @@ class ZoneMarker extends StatefulWidget {
     this.onLabelChanged,
     this.onIconChanged,
     this.onIconColorChanged,
+    this.choiceDestinations,
+    this.onTune,
+    this.onAddOption,
+    this.onOpenChild,
+    this.errorChoiceIds,
+    this.focusChoiceId,
   });
-
   final String nodeId;
 
   /// The node's choices; each carries its zone (`x`, `y`, `radius`).
@@ -67,6 +72,30 @@ class ZoneMarker extends StatefulWidget {
   /// Picked hotspot icon color name for a choice, from the shared palette.
   final void Function(String choiceId, String color)? onIconColorChanged;
 
+  /// Full `Scene M (Title)` destination per choice id, shown on the
+  /// fused option card. Null reads as the bare `Scene —` fallback.
+  final Map<String, String>? choiceDestinations;
+
+  /// Scrolls the choice preview into view (the tune action on the fused
+  /// card). Null hides the tune button.
+  final void Function(String choiceId)? onTune;
+
+  /// Creates a child on the free branch [slot] (`A` or `B`) — the hotspot
+  /// path. Null keeps the legacy target-picker row instead.
+  final void Function(String slot)? onAddOption;
+
+  /// Opens the existing child of an occupied slot. Null hides the
+  /// `Option X ✓` shortcut on occupied slots.
+  final void Function(String targetNodeId)? onOpenChild;
+
+  /// Choice ids whose label fails the 1-24 rule while errors show: those
+  /// cards draw a red border plus a ⚠ hint under the name field.
+  final Set<String>? errorChoiceIds;
+
+  /// Choice id that just gained focus (HotspotAdded): the label field
+  /// requests focus once when this changes to a non-null id.
+  final String? focusChoiceId;
+
   @override
   State<ZoneMarker> createState() => _ZoneMarkerState();
 }
@@ -76,11 +105,15 @@ class _ZoneMarkerState extends State<ZoneMarker> {
   Offset? _dragging;
   var _showGrid = true;
   final Map<String, TextEditingController> _labels = {};
+  final Map<String, FocusNode> _foci = {};
 
   @override
   void dispose() {
     for (final controller in _labels.values) {
       controller.dispose();
+    }
+    for (final focus in _foci.values) {
+      focus.dispose();
     }
     super.dispose();
   }
@@ -101,21 +134,36 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         controller.dispose();
       }
       _labels.clear();
+      for (final focus in _foci.values) {
+        focus.dispose();
+      }
+      _foci.clear();
     } else if (_selectedId != null &&
         !widget.choices.any((choice) => choice.choiceId == _selectedId)) {
       _selectedId = null;
       _dragging = null;
     }
     _syncLabels();
+    if (old.focusChoiceId != widget.focusChoiceId &&
+        widget.focusChoiceId != null &&
+        _foci.containsKey(widget.focusChoiceId)) {
+      final target = _foci[widget.focusChoiceId]!;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => target.requestFocus(),
+      );
+    }
   }
 
-  /// Choice label controllers follow the choice list like the inspector:
-  /// new choices get a controller, removed ones are disposed. Values
-  /// resync only when the text differs, so typing keeps its caret.
+  /// Choice label controllers and focus nodes follow the choice list:
+  /// new choices get both, removed ones are disposed. Values resync
+  /// only when the text differs, so typing keeps its caret.
   void _syncLabels() {
     final ids = {for (final choice in widget.choices) choice.choiceId};
     for (final id in _labels.keys.toList()) {
       if (!ids.contains(id)) _labels.remove(id)?.dispose();
+    }
+    for (final id in _foci.keys.toList()) {
+      if (!ids.contains(id)) _foci.remove(id)?.dispose();
     }
     for (final choice in widget.choices) {
       final controller = _labels.putIfAbsent(
@@ -123,6 +171,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         () => TextEditingController(text: choice.label),
       );
       if (controller.text != choice.label) controller.text = choice.label;
+      _foci.putIfAbsent(choice.choiceId, FocusNode.new);
     }
   }
 
@@ -180,9 +229,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
   Widget _gridToggle() {
     return GestureDetector(
       key: const ValueKey('zone-grid-toggle'),
-      onTap: widget.busy
-          ? null
-          : () => setState(() => _showGrid = !_showGrid),
+      onTap: widget.busy ? null : () => setState(() => _showGrid = !_showGrid),
       child: Container(
         width: 28,
         height: 28,
@@ -376,16 +423,25 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     );
   }
 
+  /// One fused card per option: preview mini, slot badge, editable label
+  /// with a live 24-char counter, icon picker, destination
+  /// (`Scene M (Title)`), tune shortcut, and zone delete. Editing never
+  /// depends on which zone is selected on the frame — the card number and
+  /// accent match the puck badge, so the pairing stays obvious.
   Widget _choiceCard(DraftChoice choice, int index) {
     final accent = index % 2 == 0
         ? RamificaColors.hotspot
         : RamificaColors.nodeActive;
+    final slot = choice.slot ?? String.fromCharCode(65 + index);
+    final dest = widget.choiceDestinations?[choice.choiceId] ?? 'Scene —';
+    final hasError = widget.errorChoiceIds?.contains(choice.choiceId) ?? false;
     return Container(
       key: ValueKey('zone-card-${choice.choiceId}'),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: RamificaColors.containerBase,
         borderRadius: BorderRadius.circular(8),
+        border: hasError ? Border.all(color: RamificaColors.error) : null,
       ),
       child: Column(
         crossAxisAlignment: .stretch,
@@ -393,50 +449,64 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         children: [
           Row(
             children: [
-              Container(
-                width: 22,
-                height: 22,
-                alignment: .center,
-                decoration: BoxDecoration(
-                  shape: .circle,
-                  color: accent.withValues(alpha: 0.2),
-                ),
-                child: Text(
-                  '${index + 1}',
-                  style: RamificaText.labelSM.copyWith(
-                    fontSize: 11,
-                    color: accent,
-                  ),
-                ),
-              ),
+              _previewMini(accent),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  'Hotspot ${index + 1}',
-                  style: RamificaText.labelSM,
-                  maxLines: 1,
-                  overflow: .ellipsis,
+                child: Column(
+                  crossAxisAlignment: .start,
+                  mainAxisSize: .min,
+                  children: [
+                    Text(
+                      'Option $slot',
+                      style: RamificaText.labelSM.copyWith(color: accent),
+                      maxLines: 1,
+                      overflow: .ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.alt_route,
+                          size: 13,
+                          color: RamificaColors.nodeActive,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            dest,
+                            style: RamificaText.bodySM.copyWith(
+                              fontSize: 12,
+                              color: RamificaColors.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
               Text(
                 '(${choice.x.toStringAsFixed(2)}, ${choice.y.toStringAsFixed(2)})',
                 style: RamificaText.meta,
               ),
-              TextButton(
-                key: ValueKey('zone-delete-${choice.choiceId}'),
-                onPressed: widget.busy
-                    ? null
-                    : () {
-                        setState(() {
-                          if (_selectedId == choice.choiceId) {
-                            _selectedId = null;
-                            _dragging = null;
-                          }
-                        });
-                        widget.onZoneRemoved?.call(choice.choiceId);
-                      },
-                child: const Text('Delete zone'),
-              ),
+              if (widget.onTune != null)
+                IconButton(
+                  key: ValueKey('zone-tune-${choice.choiceId}'),
+                  icon: const Icon(Icons.tune, size: 18),
+                  tooltip: 'Edit hotspot',
+                  onPressed: widget.busy
+                      ? null
+                      : () => widget.onTune?.call(choice.choiceId),
+                  color: RamificaColors.textSecondary,
+                  style: IconButton.styleFrom(
+                    backgroundColor: RamificaColors.containerHigh,
+                    fixedSize: const Size(32, 32),
+                    minimumSize: const Size(32, 32),
+                    padding: .zero,
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -450,26 +520,82 @@ class _ZoneMarkerState extends State<ZoneMarker> {
               _iconButton(choice, index, accent),
               const SizedBox(width: 8),
               Expanded(
-                child: TextField(
-                  key: ValueKey('zone-label-${choice.choiceId}'),
-                  controller: _labels[choice.choiceId],
-                  enabled: !widget.busy,
-                  maxLength: 24,
-                  maxLengthEnforcement: .enforced,
-                  buildCounter: (
-                    _, {
-                    required int currentLength,
-                    required bool isFocused,
-                    required int? maxLength,
-                  }) => Text('$currentLength/24', style: RamificaText.meta),
-                  decoration: _zoneInputDecoration(),
-                  onChanged: (label) =>
-                      widget.onLabelChanged?.call(choice.choiceId, label),
+                child: Column(
+                  crossAxisAlignment: .stretch,
+                  mainAxisSize: .min,
+                  children: [
+                    TextField(
+                      key: ValueKey('zone-label-${choice.choiceId}'),
+                      controller: _labels[choice.choiceId],
+                      focusNode: _foci[choice.choiceId],
+                      enabled: !widget.busy,
+                      maxLength: 24,
+                      maxLengthEnforcement: .enforced,
+                      buildCounter: (
+                        _, {
+                        required int currentLength,
+                        required bool isFocused,
+                        required int? maxLength,
+                      }) => Text('$currentLength/24', style: RamificaText.meta),
+                      decoration: _zoneInputDecoration(),
+                      onChanged: (label) =>
+                          widget.onLabelChanged?.call(choice.choiceId, label),
+                    ),
+                    if (hasError) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '⚠ The Option needs a name (1-24)',
+                        style: RamificaText.meta.copyWith(
+                          color: RamificaColors.error,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
           ),
+          Align(
+            alignment: .centerRight,
+            child: TextButton(
+              key: ValueKey('zone-delete-${choice.choiceId}'),
+              onPressed: widget.busy
+                  ? null
+                  : () {
+                      setState(() {
+                        if (_selectedId == choice.choiceId) {
+                          _selectedId = null;
+                          _dragging = null;
+                        }
+                      });
+                      widget.onZoneRemoved?.call(choice.choiceId);
+                    },
+              child: const Text('Delete zone'),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  /// 40px frame thumb for the fused card: the end frame when present, a
+  /// hotspot glyph placeholder otherwise.
+  Widget _previewMini(Color accent) {
+    final url = widget.endImageUrl;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 40,
+        height: 40,
+        color: RamificaColors.containerLowest,
+        child: url == null
+            ? Icon(Icons.image, size: 20, color: accent)
+            : Image.network(
+                url,
+                fit: .cover,
+                errorBuilder: (_, _, _) =>
+                    Icon(Icons.image_not_supported, size: 20, color: accent),
+              ),
       ),
     );
   }
@@ -663,9 +789,52 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     );
   }
 
-  /// New zones while the node has fewer than two choices (the publish
-  /// max). The target picker lists every candidate node by title.
+  /// One row per branch slot: free slots show `Add Option A/B` (the
+  /// hotspot path — a tap creates the child and focuses its label),
+  /// occupied slots show `Option X ✓` opening the existing child. The
+  /// two-choice cap hides the row once both slots are taken. Without an
+  /// [onAddOption] callback the legacy target picker renders instead, so
+  /// callers that never wired the hotspot path keep working.
   Widget _addRow(String nodeId) {
+    final add = widget.onAddOption;
+    if (add == null) return _legacyAddRow(nodeId);
+    final open = widget.onOpenChild;
+    final taken = <String, DraftChoice>{
+      for (final choice in widget.choices)
+        if (choice.slot == 'A' || choice.slot == 'B') choice.slot!: choice,
+    };
+    if (taken.length >= 2) return const SizedBox.shrink();
+    return Row(
+      children: [
+        for (final slot in const ['A', 'B'])
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: slot == 'B' ? 4 : 0,
+                right: slot == 'A' ? 4 : 0,
+              ),
+              child: taken.containsKey(slot)
+                  ? OutlinedButton(
+                      key: ValueKey('open-option-$nodeId-$slot'),
+                      onPressed: widget.busy || open == null
+                          ? null
+                          : () => open(taken[slot]!.targetNodeId),
+                      child: Text('Option $slot ✓'),
+                    )
+                  : OutlinedButton(
+                      key: ValueKey('add-option-$nodeId-$slot'),
+                      onPressed: widget.busy ? null : () => add(slot),
+                      child: Text('Add Option $slot'),
+                    ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Legacy new-zone row: picks an existing target node for the zone.
+  /// Renders only when no [onAddOption] callback is wired.
+  Widget _legacyAddRow(String nodeId) {
     if (widget.choices.length >= 2) return const SizedBox.shrink();
     if (widget.targets.isEmpty) {
       return const Text(
@@ -717,7 +886,6 @@ InputDecoration _zoneInputDecoration() {
     ),
   );
 }
-
 
 /// Faint coordinate dot grid over the frame (24px pitch, suite style).
 /// Static paint only: no controllers, so tests settle freely.

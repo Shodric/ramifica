@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/create_node_card.dart';
 import 'package:ramifica/features/create/create_plus_node.dart';
@@ -19,11 +20,27 @@ class DraftEdge {
     required this.from,
     required this.to,
     required this.returns,
+    this.iconName,
+    this.iconColorName,
+    this.accent,
   });
 
   final String from;
   final String to;
   final bool returns;
+
+  /// Persisted hotspot icon name of the parent choice leading to [to],
+  /// or null for legacy/unset icons (the badge falls back to the
+  /// per-slot glyph).
+  final String? iconName;
+
+  /// Persisted hotspot icon color name of that choice, or null for the
+  /// per-slot accent fallback.
+  final String? iconColorName;
+
+  /// Resolved edge tint: the choice color, or the per-slot accent when
+  /// unset. Null on minis and return edges, which stay neutral.
+  final Color? accent;
 }
 
 class DraftLayout {
@@ -136,11 +153,23 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
   for (final node in nodes) {
     for (final child in node.childIds) {
       if (!positions.containsKey(child)) continue;
+      final choice = _edgeChoice(node, child);
+      final slotAccent = choice?.slot == 'B'
+          ? RamificaColors.nodeActive
+          : RamificaColors.hotspot;
+      final returns = (depth[child] ?? 0) <= (depth[node.nodeId] ?? 0);
       edges.add(
         DraftEdge(
           from: node.nodeId,
           to: child,
-          returns: (depth[child] ?? 0) <= (depth[node.nodeId] ?? 0),
+          returns: returns,
+          iconName: choice?.icon,
+          iconColorName: choice?.iconColor,
+          // Return edges stay neutral (null accent); real forward edges
+          // carry the resolved choice tint.
+          accent: returns
+              ? null
+              : choiceIconColor(choice?.iconColor, slotAccent),
         ),
       );
     }
@@ -162,6 +191,27 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
     positions: positions,
     edges: edges,
     size: Size(maxX + _pad + 120, deepest * _vGap + _pad * 2 + 200),
+  );
+}
+
+/// The parent choice leading to [childId], or null when no choice points
+/// there (orphan links drawn from `childIds` alone).
+DraftChoice? _edgeChoice(DraftNode node, String childId) {
+  for (final choice in node.choices) {
+    if (choice.targetNodeId == childId) return choice;
+  }
+  return null;
+}
+
+/// Midpoint of the forward-edge cubic at t=1/2: P=(P0+3·C1+3·C2+P3)/8
+/// with C1=(from.x,from.y+60) and C2=(to.x,to.y-60) — the same curve
+/// [_CanvasPainter] strokes. Badge widgets center here.
+Offset edgeBadgeCenter(Offset from, Offset to) {
+  final c1 = Offset(from.dx, from.dy + 60);
+  final c2 = Offset(to.dx, to.dy - 60);
+  return Offset(
+    (from.dx + 3 * c1.dx + 3 * c2.dx + to.dx) / 8,
+    (from.dy + 3 * c1.dy + 3 * c2.dy + to.dy) / 8,
   );
 }
 
@@ -389,6 +439,20 @@ class DraftCanvas extends StatelessWidget {
                     onTap: () => onSelect(node.nodeId),
                   ),
                 ),
+            for (final edge in layout.edges)
+              if (!edge.returns &&
+                  !virtualIds.contains(edge.to) &&
+                  positions.containsKey(edge.from) &&
+                  positions.containsKey(edge.to))
+                _EdgeBadge(
+                  key: ValueKey('edge-badge-${edge.from}-${edge.to}'),
+                  center: edgeBadgeCenter(
+                    positions[edge.from]!,
+                    positions[edge.to]!,
+                  ),
+                  edge: edge,
+                  index: _badgeIndex(nodes, edge),
+                ),
             for (final mini in minis)
               Positioned(
                 left: positions[mini.id]!.dx - createMiniWidth / 2,
@@ -401,6 +465,64 @@ class DraftCanvas extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Choice index of the parent choice leading along [edge], for the legacy
+/// icon fallback in [choiceIconData]. Unknown links read as the first.
+int _badgeIndex(List<DraftNode> nodes, DraftEdge edge) {
+  for (final node in nodes) {
+    if (node.nodeId != edge.from) continue;
+    for (var i = 0; i < node.choices.length; i++) {
+      if (node.choices[i].targetNodeId == edge.to) return i;
+    }
+  }
+  return 0;
+}
+
+/// Mid-edge hotspot badge: a tinted circle with the choice glyph at the
+/// cubic midpoint. Display-only ([IgnorePointer]) — the curve carries no
+/// hit testing and fonts never enter the painter.
+class _EdgeBadge extends StatelessWidget {
+  const _EdgeBadge({
+    super.key,
+    required this.center,
+    required this.edge,
+    required this.index,
+  });
+
+  final Offset center;
+  final DraftEdge edge;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = edge.accent ?? RamificaColors.nodeActive;
+    return Positioned(
+      left: center.dx - 14,
+      top: center.dy - 14,
+      width: 28,
+      height: 28,
+      child: IgnorePointer(
+        child: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: accent,
+            border: Border.all(
+              color: RamificaColors.containerLowest.withValues(alpha: 0.9),
+              width: 2,
+            ),
+          ),
+          child: Icon(
+            choiceIconData(edge.iconName, index),
+            size: 14,
+            color: accent.computeLuminance() > 0.6
+                ? Colors.black87
+                : Colors.white,
+          ),
         ),
       ),
     );
@@ -422,12 +544,6 @@ class _CanvasPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final edgePaint = Paint()
-      ..shader = LinearGradient(
-        colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..strokeWidth = 2
-      ..style = .stroke;
     final returnPaint = Paint()
       ..color = RamificaColors.textSecondary.withValues(alpha: 0.6)
       ..strokeWidth = 2
@@ -455,13 +571,19 @@ class _CanvasPainter extends CustomPainter {
           returnPaint,
         );
       } else {
+        // Real forward edges draw in the choice tint: the resolved icon
+        // color, or the per-slot accent when unset.
+        final accent = edge.accent ?? RamificaColors.nodeActive;
         canvas.drawPath(
           Path()
             ..moveTo(from.dx, from.dy)
             ..cubicTo(from.dx, from.dy + 60, to.dx, to.dy - 60, to.dx, to.dy),
-          edgePaint,
+          Paint()
+            ..color = accent
+            ..strokeWidth = 2
+            ..style = .stroke,
         );
-        _arrow(canvas, from, to, Paint()..color = RamificaColors.nodeActive);
+        _arrow(canvas, from, to, Paint()..color = accent);
       }
     }
   }

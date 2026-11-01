@@ -127,8 +127,8 @@ class DraftChoice {
 /// A draft node: `stories/{storyId}/nodes/{nodeId}`. Secrets included —
 /// the author owns the whole draft, unlike players on the map.
 ///
-/// Field names match the server node doc (seed + validateStory) so
-/// `saveNode` can send [toJson] back unchanged.
+/// Field names match the server node doc (seed + validateStory).
+/// A save merges the author fields only; [toJson] is the full doc.
 class DraftNode {
   const DraftNode({
     required this.nodeId,
@@ -143,6 +143,19 @@ class DraftNode {
     this.videoFromHash,
     this.videoToHash,
     this.videoJobId,
+    this.requestId,
+    this.videoWidth,
+    this.videoHeight,
+    this.durationSeconds,
+    this.videoFrameLastUrl,
+    this.videoFrameLastBlurData,
+    this.thumbnailUrl,
+    this.startImageWidth,
+    this.startImageHeight,
+    this.endImageWidth,
+    this.endImageHeight,
+    this.generationKind,
+    this.generationPhase,
     this.videoPrompt,
     this.startImageSourceUrl,
     this.startImageStatus = 'idle',
@@ -186,6 +199,19 @@ class DraftNode {
       videoFromHash: _optionalString(data['videoFromHash']),
       videoToHash: _optionalString(data['videoToHash']),
       videoJobId: _optionalString(data['videoJobId']),
+      requestId: _optionalString(data['requestId']),
+      videoWidth: _optionalInt(data['videoWidth']),
+      videoHeight: _optionalInt(data['videoHeight']),
+      durationSeconds: _optionalDouble(data['durationSeconds']),
+      videoFrameLastUrl: _optionalString(data['videoFrameLastUrl']),
+      videoFrameLastBlurData: _optionalString(data['videoFrameLastBlurData']),
+      thumbnailUrl: _optionalString(data['thumbnailUrl']),
+      startImageWidth: _optionalInt(data['startImageWidth']),
+      startImageHeight: _optionalInt(data['startImageHeight']),
+      endImageWidth: _optionalInt(data['endImageWidth']),
+      endImageHeight: _optionalInt(data['endImageHeight']),
+      generationKind: _optionalString(data['generationKind']),
+      generationPhase: _optionalString(data['generationPhase']),
       videoPrompt: _optionalString(data['videoPrompt']),
       startImageSourceUrl: _optionalString(data['startImageSourceUrl']),
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
@@ -232,6 +258,19 @@ class DraftNode {
   final String? videoFromHash;
   final String? videoToHash;
   final String? videoJobId;
+  final String? requestId;
+  final int? videoWidth;
+  final int? videoHeight;
+  final double? durationSeconds;
+  final String? videoFrameLastUrl;
+  final String? videoFrameLastBlurData;
+  final String? thumbnailUrl;
+  final int? startImageWidth;
+  final int? startImageHeight;
+  final int? endImageWidth;
+  final int? endImageHeight;
+  final String? generationKind;
+  final String? generationPhase;
   final String? videoPrompt;
 
   /// S frame (root only): the source URL, generation status, content
@@ -306,6 +345,19 @@ class DraftNode {
       'videoFromHash': videoFromHash,
       'videoToHash': videoToHash,
       'videoJobId': videoJobId,
+      'requestId': requestId,
+      'videoWidth': videoWidth,
+      'videoHeight': videoHeight,
+      'durationSeconds': durationSeconds,
+      'videoFrameLastUrl': videoFrameLastUrl,
+      'videoFrameLastBlurData': videoFrameLastBlurData,
+      'thumbnailUrl': thumbnailUrl,
+      'startImageWidth': startImageWidth,
+      'startImageHeight': startImageHeight,
+      'endImageWidth': endImageWidth,
+      'endImageHeight': endImageHeight,
+      'generationKind': generationKind,
+      'generationPhase': generationPhase,
       'videoPrompt': videoPrompt,
       'startImageSourceUrl': startImageSourceUrl,
       'startImageStatus': startImageStatus,
@@ -342,6 +394,19 @@ class DraftNode {
     String? Function()? videoFromHash,
     String? Function()? videoToHash,
     String? Function()? videoJobId,
+    String? Function()? requestId,
+    int? Function()? videoWidth,
+    int? Function()? videoHeight,
+    double? Function()? durationSeconds,
+    String? Function()? videoFrameLastUrl,
+    String? Function()? videoFrameLastBlurData,
+    String? Function()? thumbnailUrl,
+    int? Function()? startImageWidth,
+    int? Function()? startImageHeight,
+    int? Function()? endImageWidth,
+    int? Function()? endImageHeight,
+    String? Function()? generationKind,
+    String? Function()? generationPhase,
     String? Function()? videoPrompt,
     String? Function()? startImageSourceUrl,
     String? startImageStatus,
@@ -379,6 +444,37 @@ class DraftNode {
           : videoFromHash(),
       videoToHash: videoToHash == null ? this.videoToHash : videoToHash(),
       videoJobId: videoJobId == null ? this.videoJobId : videoJobId(),
+      requestId: requestId == null ? this.requestId : requestId(),
+      videoWidth: videoWidth == null ? this.videoWidth : videoWidth(),
+      videoHeight: videoHeight == null ? this.videoHeight : videoHeight(),
+      durationSeconds: durationSeconds == null
+          ? this.durationSeconds
+          : durationSeconds(),
+      videoFrameLastUrl: videoFrameLastUrl == null
+          ? this.videoFrameLastUrl
+          : videoFrameLastUrl(),
+      videoFrameLastBlurData: videoFrameLastBlurData == null
+          ? this.videoFrameLastBlurData
+          : videoFrameLastBlurData(),
+      thumbnailUrl: thumbnailUrl == null ? this.thumbnailUrl : thumbnailUrl(),
+      startImageWidth: startImageWidth == null
+          ? this.startImageWidth
+          : startImageWidth(),
+      startImageHeight: startImageHeight == null
+          ? this.startImageHeight
+          : startImageHeight(),
+      endImageWidth: endImageWidth == null
+          ? this.endImageWidth
+          : endImageWidth(),
+      endImageHeight: endImageHeight == null
+          ? this.endImageHeight
+          : endImageHeight(),
+      generationKind: generationKind == null
+          ? this.generationKind
+          : generationKind(),
+      generationPhase: generationPhase == null
+          ? this.generationPhase
+          : generationPhase(),
       videoPrompt: videoPrompt == null ? this.videoPrompt : videoPrompt(),
       startImageSourceUrl: startImageSourceUrl == null
           ? this.startImageSourceUrl
@@ -434,6 +530,19 @@ class DraftNode {
         other.videoFromHash == videoFromHash &&
         other.videoToHash == videoToHash &&
         other.videoJobId == videoJobId &&
+        other.requestId == requestId &&
+        other.videoWidth == videoWidth &&
+        other.videoHeight == videoHeight &&
+        other.durationSeconds == durationSeconds &&
+        other.videoFrameLastUrl == videoFrameLastUrl &&
+        other.videoFrameLastBlurData == videoFrameLastBlurData &&
+        other.thumbnailUrl == thumbnailUrl &&
+        other.startImageWidth == startImageWidth &&
+        other.startImageHeight == startImageHeight &&
+        other.endImageWidth == endImageWidth &&
+        other.endImageHeight == endImageHeight &&
+        other.generationKind == generationKind &&
+        other.generationPhase == generationPhase &&
         other.videoPrompt == videoPrompt &&
         other.startImageSourceUrl == startImageSourceUrl &&
         other.startImageStatus == startImageStatus &&
@@ -471,6 +580,19 @@ class DraftNode {
     videoFromHash,
     videoToHash,
     videoJobId,
+    requestId,
+    videoWidth,
+    videoHeight,
+    durationSeconds,
+    videoFrameLastUrl,
+    videoFrameLastBlurData,
+    thumbnailUrl,
+    startImageWidth,
+    startImageHeight,
+    endImageWidth,
+    endImageHeight,
+    generationKind,
+    generationPhase,
     videoPrompt,
     startImageSourceUrl,
     startImageStatus,

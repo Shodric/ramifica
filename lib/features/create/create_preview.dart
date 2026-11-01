@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/create_node_card.dart';
-import 'package:video_player/video_player.dart';
+
+import 'clip_preview.dart';
 
 /// Opens the Simulate preview for the open node. Plays the node's video
 /// (or shows its end image) with the choice labels listed statically.
@@ -33,37 +34,6 @@ class CreatePreview extends StatefulWidget {
 }
 
 class _CreatePreviewState extends State<CreatePreview> {
-  VideoPlayerController? _controller;
-  bool _ready = false;
-  bool _failed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final url = widget.node?.videoUrl;
-    if (url == null || url.isEmpty) return;
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
-    _controller = controller;
-    controller
-        .initialize()
-        .then((_) {
-          if (!mounted) return;
-          controller.setLooping(true);
-          controller.play();
-          setState(() => _ready = true);
-        })
-        .catchError((Object _) {
-          if (!mounted) return;
-          setState(() => _failed = true);
-        });
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final node = widget.node;
@@ -129,16 +99,12 @@ class _CreatePreviewState extends State<CreatePreview> {
 
   Widget _media(DraftNode? node) {
     final url = node?.videoUrl;
-    if (url != null && url.isNotEmpty && !_failed) {
-      if (!_ready) {
-        return const SizedBox(
-          height: 200,
-          child: Center(child: CircularProgressIndicator()),
-        );
-      }
-      return AspectRatio(
-        aspectRatio: _controller!.value.aspectRatio,
-        child: VideoPlayer(_controller!),
+    if (url != null && url.isNotEmpty) {
+      return ClipPreview(
+        url: url,
+        width: node?.videoWidth,
+        height: node?.videoHeight,
+        durationSeconds: node?.durationSeconds,
       );
     }
     final image = node?.endImageSourceUrl;

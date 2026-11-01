@@ -228,6 +228,7 @@ class _CreateViewState extends State<CreateView> {
           crossAxisAlignment: .stretch,
           children: [
             const Text('Create', style: RamificaText.screenTitle),
+            if (state.failure != null) FailureText(message: state.failure!),
             Expanded(
               child: Center(
                 child: EmptyState(

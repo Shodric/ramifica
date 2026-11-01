@@ -8,9 +8,7 @@ class AppRouteInformationParser extends RouteInformationParser<AppLocation> {
   const AppRouteInformationParser();
 
   @override
-  Future<AppLocation> parseRouteInformation(
-    RouteInformation routeInformation,
-  ) {
+  Future<AppLocation> parseRouteInformation(RouteInformation routeInformation) {
     return SynchronousFuture(parseLocation(routeInformation.uri.path));
   }
 
