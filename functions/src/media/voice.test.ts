@@ -1,5 +1,5 @@
 import {execFile} from "child_process";
-import {mkdtemp, rm} from "fs/promises";
+import {mkdtemp, rm, writeFile} from "fs/promises";
 import {tmpdir} from "os";
 import {existsSync} from "fs";
 import {join} from "path";
@@ -36,6 +36,54 @@ test("convertVoiceToM4a normalizes a wav take", async () => {
     await rm(dir, {recursive: true, force: true});
   }
 });
+
+test("raw PCM decoding honors the configured sample rate", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ramifica-pcm-"));
+  try {
+    const src = join(dir, "take.pcm");
+    await writeFile(src, Buffer.alloc(16000 * 2));
+    const out = await convertVoiceToM4a(src, dir, 16000);
+    assert.ok(Math.abs(out.durationSeconds - 1) < 0.05);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+});
+
+test("TTS uses the configured URL and model without a hardcoded bypass",
+  async () => {
+    const env = {
+      OPENROUTER_TTS_MODEL: "vendor/custom-tts",
+      OPENROUTER_SPEECH_URL: "https://speech.example/v2/speak",
+    };
+    const before = Object.fromEntries(
+      Object.keys(env).map((key) => [key, process.env[key]])
+    );
+    try {
+      Object.assign(process.env, env);
+      let seenUrl = "";
+      let seenBody: Record<string, unknown> = {};
+      await synthesizePcm({
+        apiKey: "test-key", voice: "custom-voice", text: "Hola.",
+        fetchFn: async (url, init) => {
+          seenUrl = url;
+          seenBody = JSON.parse(init.body ?? "{}");
+          return {
+            ok: true, status: 200, json: async () => ({}),
+            arrayBuffer: async () => new ArrayBuffer(2),
+          };
+        },
+      });
+      assert.equal(seenUrl, "https://speech.example/v2/speak");
+      assert.equal(seenBody.model, "vendor/custom-tts");
+      assert.equal(seenBody.voice, "custom-voice");
+      assert.equal(seenBody.response_format, "pcm");
+    } finally {
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 
 test(
   "synthesizePcm needs credentials",

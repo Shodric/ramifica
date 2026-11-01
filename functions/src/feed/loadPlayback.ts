@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {fetchPlayback, PlaybackView} from "./playback";
 import {cleanId, Db, docData, isEmulator, requireUid, toRecord} from "./shared";
 
@@ -8,7 +9,7 @@ import {cleanId, Db, docData, isEmulator, requireUid, toRecord} from "./shared";
  * destinations travel as id and label only. On an ended run the earner's
  * reward code travels with the playback, read from their reward doc.
  */
-export const loadPlayback = onCall(
+export const loadPlayback = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

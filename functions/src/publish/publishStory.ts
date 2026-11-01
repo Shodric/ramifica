@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {
   cleanId,
   Db,
@@ -34,7 +35,7 @@ export interface PublishStoryResult {
  * it — the client rules forbid writing `status`, so this Admin-SDK path
  * is the single writer. This never touches other stories or runs.
  */
-export const publishStory = onCall(
+export const publishStory = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

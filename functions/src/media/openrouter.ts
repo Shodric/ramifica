@@ -1,4 +1,5 @@
 import {asRecord} from "../feed/shared";
+import {aiDefaults, openRouterConfig} from "../config/ai";
 
 /**
  * Shared OpenRouter transport for all Ramifica generations (text, images,
@@ -37,18 +38,6 @@ export class OpenRouterHttpError extends Error {
     this.status = status;
   }
 }
-
-/** Chat completions endpoint backing text proposals. */
-const chatUrl = "https://openrouter.ai/api/v1/chat/completions";
-
-/** Speech endpoint backing narrator takes. */
-const speechUrl = "https://openrouter.ai/api/v1/audio/speech";
-
-/** Images endpoint backing still generation. */
-const imagesUrl = "https://openrouter.ai/api/v1/images/generations";
-
-/** Video jobs endpoint backing clip generation. */
-const videosUrl = "https://openrouter.ai/api/v1/videos";
 
 /**
  * Auth + attribution headers every OpenRouter call carries.
@@ -173,7 +162,7 @@ export const downloadBytes = async (
 ): Promise<Buffer> => {
   const response = await (args.fetchFn ?? defaultFetch)(url, {
     method: "GET",
-    headers: headers(args.apiKey, args.title ?? "Ramifica create"),
+    headers: args.apiKey ? headers(args.apiKey, args.title ?? "Ramifica create") : {},
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
@@ -212,7 +201,7 @@ export const completeChat = async (args: {
   maxTokens?: number;
   fetchFn?: OpenRouterFetch;
 }): Promise<string> => {
-  const payload = await postJson(chatUrl, {
+  const payload = await postJson(openRouterConfig().chatUrl, {
     apiKey: args.apiKey,
     fetchFn: args.fetchFn,
     body: {
@@ -241,7 +230,7 @@ export const speakText = async (args: {
   instructions?: string;
   fetchFn?: OpenRouterFetch;
 }): Promise<Buffer> =>
-  postBytes(speechUrl, {
+  postBytes(openRouterConfig().speechUrl, {
     apiKey: args.apiKey,
     fetchFn: args.fetchFn,
     title: "Ramifica seed",
@@ -282,7 +271,7 @@ export const generateImageBytes = async (args: {
   size: string;
   fetchFn?: OpenRouterFetch;
 }): Promise<Buffer> => {
-  const payload = await postJson(imagesUrl, {
+  const payload = await postJson(openRouterConfig().imagesUrl, {
     apiKey: args.apiKey,
     fetchFn: args.fetchFn,
     body: {model: args.model, prompt: args.prompt, size: args.size},
@@ -314,7 +303,7 @@ export const submitVideo = async (args: {
   generateAudio?: boolean;
   fetchFn?: OpenRouterFetch;
 }): Promise<{jobId: string}> => {
-  const payload = await postJson(videosUrl, {
+  const payload = await postJson(openRouterConfig().videosUrl, {
     apiKey: args.apiKey,
     fetchFn: args.fetchFn,
     body: {
@@ -377,7 +366,8 @@ const firstUnsignedUrl = (payload: {
  * @return {string} The content URL.
  */
 export const videoContentUrl = (jobId: string, index = 0): string =>
-  `${videosUrl}/${jobId}/content?index=${index}`;
+  `${openRouterConfig().videosUrl}/${encodeURIComponent(jobId)}` +
+  `/content?index=${index}`;
 
 /**
  * Polls one video job: raw provider status plus the download URL once
@@ -390,7 +380,9 @@ export const checkVideo = async (args: {
   jobId: string;
   fetchFn?: OpenRouterFetch;
 }): Promise<{status: string; videoUrl?: string}> => {
-  const payload = await getJson(`${videosUrl}/${args.jobId}`, {
+  const jobUrl = `${openRouterConfig().videosUrl}/` +
+    encodeURIComponent(args.jobId);
+  const payload = await getJson(jobUrl, {
     apiKey: args.apiKey,
     fetchFn: args.fetchFn,
   });
@@ -407,19 +399,19 @@ export const checkVideo = async (args: {
 };
 
 /** Default image model; override with OPENROUTER_IMAGE_MODEL. */
-export const defaultImageModel = "meta/muse-image";
+export const defaultImageModel = aiDefaults.openRouter.imageModel;
 
 /** Default video model; override with OPENROUTER_VIDEO_MODEL. */
-export const defaultVideoModel = "heygen/heygen-video-1";
+export const defaultVideoModel = aiDefaults.openRouter.videoModel;
 
 /** Vertical still size matching the app's 480x854 canvas. */
-export const stillSize = "480x854";
+export const stillSize = aiDefaults.stillSize;
 
 /** Vertical 9:16 aspect for generated clips. */
-export const videoAspectRatio = "9:16";
+export const videoAspectRatio = aiDefaults.video.aspectRatio;
 
 /** Default clip resolution; HeyGen serves 480p/768p/2K. */
-export const defaultVideoResolution = "768p";
+export const defaultVideoResolution = aiDefaults.video.resolution;
 
 /** Video length cap seconds; matches supported provider durations. */
-export const videoDurationSeconds = 6;
+export const videoDurationSeconds = aiDefaults.video.durationSeconds;

@@ -1,8 +1,11 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {
   cleanId,
   Db,
+  DbDoc,
+  DbQuery,
   docData,
   isEmulator,
   isoNow,
@@ -11,7 +14,9 @@ import {
   requireUid,
   toRecord,
 } from "../feed/shared";
-import {asFields} from "./generateNodeText";
+import {
+  asFields, knownChoiceIcons, knownChoiceIconColors,
+} from "./generateNodeText";
 
 /** Result of `createNode`: the new node id. */
 export interface CreateNodeResult {
@@ -32,6 +37,9 @@ const maxLabelChars = 24;
 /** Narrator lines past this are rejected; the player reads them verbatim. */
 const maxTtsChars = 1000;
 
+/** Author media prompts past this are rejected; stored verbatim for imaging. */
+const maxPromptChars = 2000;
+
 /** Decisions carry one or two choices, like the publish checklist. */
 const maxChoices = 2;
 
@@ -39,55 +47,17 @@ const maxChoices = 2;
  * Hotspot icon names an author may store on a choice. Mirrors the client
  * catalog (`lib/core/widgets/choice_icon.dart`); keep the two in sync.
  */
-const choiceIconNames: Record<string, true> = {
-  mountain: true,
-  forest: true,
-  lightning: true,
-  key: true,
-  unlock: true,
-  shield: true,
-  fingerprint: true,
-  compass: true,
-  door: true,
-  star: true,
-  heart: true,
-  eye: true,
-  sun: true,
-  moon: true,
-  fire: true,
-  water: true,
-  castle: true,
-  anchor: true,
-  ship: true,
-  plane: true,
-  car: true,
-  run: true,
-  walk: true,
-  diamond: true,
-  flag: true,
-  map: true,
-  home: true,
-  beach: true,
-  snow: true,
-  trophy: true,
-};
+export const choiceIconNames: Record<string, true> = Object.fromEntries(
+  knownChoiceIcons.map((name) => [name, true as const])
+);
 
 /**
  * Hotspot icon color names an author may store on a choice. Mirrors the
  * client palette (`lib/core/widgets/choice_icon.dart`); keep in sync.
  */
-const choiceIconColorNames: Record<string, true> = {
-  cyan: true,
-  blue: true,
-  violet: true,
-  pink: true,
-  red: true,
-  orange: true,
-  gold: true,
-  green: true,
-  mint: true,
-  white: true,
-};
+export const choiceIconColorNames: Record<string, true> = Object.fromEntries(
+  knownChoiceIconColors.map((name) => [name, true as const])
+);
 
 /** Ending types from the publish checklist. */
 const endingTypes = ["abierto", "tragico", "secreto"];
@@ -102,10 +72,13 @@ const endingTypes = ["abierto", "tragico", "secreto"];
  * callable first, which keeps the orphan-story failure mode (story
  * written, root call lost) unreachable. Linking is explicit: pass
  * `parentNodeId` to record the parent link, then point a choice at the
- * new id with `saveNode` on the parent. This never touches other
- * stories, runs, or published docs.
+ * new id with `saveNode` on the parent. Pass `requestId` (the client
+ * builds `v1:{author}:{story}:{parent}:{slot}`) to make the call
+ * idempotent: a child already stored with that key is returned untouched
+ * instead of creating another. This never touches other stories, runs,
+ * or published docs.
  */
-export const createNode = onCall(
+export const createNode = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
@@ -119,8 +92,9 @@ export const createNode = onCall(
 
 /**
  * Persists the author's node edits. Field whitelist: title, visibility,
- * isEnding, endingName, endingType, ttsText, choices, and the line/voice
- * approvals. Everything else in the payload — nodeId routing aside — is
+ * isEnding, endingName, endingType, ttsText, choices, the author media
+ * prompts (startImagePrompt, endImagePrompt, videoPrompt), and the
+ * line/voice approvals. Everything else in the payload — nodeId routing
  * ignored, so pipeline-owned media fields and story-level authorId,
  * status, and rootNodeId can never escalate through this path. New words
  * idle the stored voice and clear both approvals unless the same save
@@ -129,7 +103,7 @@ export const createNode = onCall(
  * point at a node created next, and the publish checklist reports dangling
  * targets. This never touches other stories, runs, or published docs.
  */
-export const saveNode = onCall(
+export const saveNode = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
@@ -145,9 +119,12 @@ export const saveNode = onCall(
  * Testable core of `createNode`.
  * @param {Db} db Firestore.
  * @param {string} uid Caller.
- * @param {unknown} data Raw `{storyId, parentNodeId?, title?, synopsis?}`.
- * `title`/`synopsis` seed the story only when it is created here.
- * @return {Promise<CreateNodeResult>} The new node id.
+ * @param {unknown} data Raw `{storyId, parentNodeId?, title?, synopsis?,
+ * requestId?}`. `title`/`synopsis` seed the story only when it is created
+ * here. `requestId` is an opaque idempotency key: when present and a
+ * child with that key already exists, its id is returned without touching
+ * it; otherwise the new child stores the key.
+ * @return {Promise<CreateNodeResult>} The new (or reused) node id.
  */
 export const createNodeWith = async (
   db: Db,
@@ -162,20 +139,15 @@ export const createNodeWith = async (
   const parentNodeId = optionalId(fields.parentNodeId);
   const title = optString(fields.title);
   const synopsis = optString(fields.synopsis);
+  const requestId = optString(fields.requestId);
   return db.runTransaction(async (tx) => {
+    // Reads land before writes: transactions reject reads that follow a
+    // write, so authorship, parent, and the idempotency lookup run first.
     const storyRef = db.doc(`stories/${storyId}`);
     const storySnap = await tx.get(storyRef);
     let rootNodeId: string | null = null;
     if (!storySnap.exists) {
-      tx.set(storyRef, {
-        authorId: uid,
-        title: title ?? "Untitled story",
-        synopsis: synopsis ?? "",
-        status: "draft",
-        rootNodeId: null,
-        createdAt: isoNow(),
-        updatedAt: isoNow(),
-      });
+      // Created below, after the reads; the caller becomes the author.
     } else {
       const story = docData(storySnap, "Story");
       if (story.authorId !== uid) {
@@ -197,6 +169,35 @@ export const createNodeWith = async (
         throw new HttpsError("not-found", "Parent node not found.");
       }
     }
+    if (requestId !== null) {
+      // Real Firestore serves collection queries inside transactions
+      // through the same `get`; the Db surface stays single-ref, so this
+      // rides a narrow cast like `deleteNode`'s delete.
+      const txQuery = tx as unknown as {
+        get(query: DbQuery): Promise<{empty: boolean; docs: DbDoc[]}>;
+      };
+      const found = await txQuery.get(
+        db
+          .collection(`stories/${storyId}/nodes`)
+          .where("requestId", "==", requestId)
+          .where("startFromNodeId", "==", parentNodeId)
+          .limit(1)
+      );
+      if (!found.empty) {
+        return {nodeId: found.docs[0].id};
+      }
+    }
+    if (!storySnap.exists) {
+      tx.set(storyRef, {
+        authorId: uid,
+        title: title ?? "Untitled story",
+        synopsis: synopsis ?? "",
+        status: "draft",
+        rootNodeId: null,
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      });
+    }
     const nodeRef = db.collection(`stories/${storyId}/nodes`).doc();
     tx.set(nodeRef, {
       title: "",
@@ -213,6 +214,7 @@ export const createNodeWith = async (
       ttsDurationSeconds: null,
       ttsApproved: false,
       choices: [],
+      ...(requestId !== null ? {requestId} : {}),
       startFromNodeId: parentNodeId,
       startParentEndHash: null,
     });
@@ -303,6 +305,27 @@ const parseNodeUpdate = (
       nodeFields.endingName,
       "endingName",
       maxTitleChars
+    );
+  }
+  if ("startImagePrompt" in nodeFields) {
+    update.startImagePrompt = parseNullableText(
+      nodeFields.startImagePrompt,
+      "startImagePrompt",
+      maxPromptChars
+    );
+  }
+  if ("endImagePrompt" in nodeFields) {
+    update.endImagePrompt = parseNullableText(
+      nodeFields.endImagePrompt,
+      "endImagePrompt",
+      maxPromptChars
+    );
+  }
+  if ("videoPrompt" in nodeFields) {
+    update.videoPrompt = parseNullableText(
+      nodeFields.videoPrompt,
+      "videoPrompt",
+      maxPromptChars
     );
   }
   if ("endingType" in nodeFields) {
@@ -570,7 +593,7 @@ export interface DeleteNodeResult {
  * orphaned bytes is out of scope (no media GC here). This never touches
  * other stories, runs, or published docs.
  */
-export const deleteNode = onCall(
+export const deleteNode = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

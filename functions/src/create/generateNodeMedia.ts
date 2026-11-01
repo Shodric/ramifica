@@ -1,6 +1,11 @@
 import * as admin from "firebase-admin";
 import {createHash} from "crypto";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
+import {
+  imageProvider, mediaProfile, metaApiKey, metaConfig, openRouterApiKey,
+  openRouterConfig, videoConfig,
+} from "../config/ai";
 import {
   cleanId,
   Db,
@@ -11,23 +16,21 @@ import {
   toRecord,
 } from "../feed/shared";
 import {ComfyClient} from "../media/comfy";
-import {mkdtemp, rm, writeFile} from "fs/promises";
-import {tmpdir} from "os";
-import {join} from "path";
 import {
   checkVideo,
-  defaultImageModel,
-  defaultVideoModel,
-  defaultVideoResolution,
   downloadBytes,
-  generateImageBytes,
   OpenRouterHttpError,
   stillSize,
   submitVideo,
-  videoAspectRatio,
-  videoDurationSeconds,
 } from "../media/openrouter";
-import {probeDuration} from "../media/processVideo";
+import {
+  generateImageMeta,
+} from "../media/meta";
+import {
+  NormalizedStill, NormalizedVideo, normalizeStill, normalizeGeneratedVideo,
+} from "../media/processVideo";
+import {draftTransaction, writeMedia} from "../media/draftWrites";
+import {readableStorageUrl} from "../media/storageUrl";
 
 /** Which frame a still belongs to: `start` (root only) or `end`. */
 export type FrameWhich = "start" | "end";
@@ -97,7 +100,8 @@ export interface NodeMediaDeps {
   requestVideo?: VideoRequestFn;
   checkVideo?: VideoCheckFn;
   downloadVideo?: VideoDownloadFn;
-  probeVideo?: VideoProbeFn;
+  normalizeImage?: (bytes: Buffer) => Promise<NormalizedStill>;
+  normalizeVideo?: (bytes: Buffer) => Promise<NormalizedVideo>;
   uploadVideo?: VideoStoreFn;
   now?: () => number;
 }
@@ -110,6 +114,8 @@ export interface GenerateNodeImageResult {
   imageUrl: string | null;
   endHash: string | null;
   desyncedNodeIds: string[];
+  width?: number;
+  height?: number;
 }
 
 /** Result of `approveNodeImage`. */
@@ -128,14 +134,17 @@ export interface GenerateNodeVideoResult {
   videoJobId: string;
   videoUrl: string | null;
   poll: boolean;
+  videoWidth?: number;
+  videoHeight?: number;
+  durationSeconds?: number;
 }
 
 /** Cost guard: one still prompt cannot smuggle a novel into the bill. */
 const maxPromptChars = 2000;
 
 /** Still size matches the seed covers: 480x854 vertical. */
-const stillWidth = 480;
-const stillHeight = 854;
+const stillWidth = mediaProfile.width;
+const stillHeight = mediaProfile.height;
 
 /**
  * Generates the S or E still for a draft node. S is root-only; E fits
@@ -146,8 +155,11 @@ const stillHeight = 854;
  * node's own video drops too when its `videoToHash` no longer fits.
  * @param {unknown} _req Unused callable wrapper slot.
  */
-export const generateNodeImage = onCall(
-  {enforceAppCheck: !isEmulator(), maxInstances: 10},
+export const generateNodeImage = onCallSafe(
+  {
+    enforceAppCheck: !isEmulator(), maxInstances: 10,
+    secrets: [metaApiKey],
+  },
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeImageWith(
@@ -165,7 +177,7 @@ export const generateNodeImage = onCall(
  * approved S. Rejecting flips approval back without regen; it does not
  * cascade, since the bytes (and hashes) are unchanged.
  */
-export const approveNodeImage = onCall(
+export const approveNodeImage = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);
@@ -183,8 +195,11 @@ export const approveNodeImage = onCall(
  * the node's own approved S for the root. Without a video provider it
  * records the job as `pending`; it never keeps a stale video quietly.
  */
-export const generateNodeVideo = onCall(
-  {enforceAppCheck: !isEmulator(), maxInstances: 10},
+export const generateNodeVideo = onCallSafe(
+  {
+    enforceAppCheck: !isEmulator(), maxInstances: 10,
+    secrets: [openRouterApiKey],
+  },
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeVideoWith(
@@ -241,42 +256,25 @@ export const generateNodeImageWith = async (
     promptOverride ?? storedPrompt ?? buildImagePrompt(story, node, which);
 
   const gen = deps.imageGen ?? defaultImageGen();
-  if (!gen) {
-    const pending = await markImagePending(
-      db,
-      storyId,
-      nodeId,
-      which,
-      prompt,
-      story.rootNodeId === null ? {adoptRoot: true} : {}
-    );
-    return {...pending, desyncedNodeIds: []};
-  }
-
-  let bytes: Buffer;
+  if (!gen) throw new HttpsError("failed-precondition", "Image provider credentials are missing.");
+  await markImagePending(db, storyId, nodeId, which, prompt);
   try {
-    bytes = (await gen(prompt)).bytes;
+    const raw = (await gen(prompt)).bytes;
+    await writeMedia(db, storyId, nodeId, {generationPhase: "processing"});
+    const result = await (deps.normalizeImage ?? normalizeStill)(raw);
+    const bytes = result.bytes;
+    const hash = sha8(bytes);
+    const url = await (deps.uploadStill ?? defaultStillUpload())({storyId, nodeId, which, hash, bytes});
+    const still = {prompt, url, hash, width: result.width, height: result.height};
+    return which === "start" ? await applyStartReady(db, storyId, nodeId, still) :
+      await applyEndReady(db, storyId, nodeId, node, still);
   } catch (error) {
-    await db.doc(`stories/${storyId}/nodes/${nodeId}`).set(
-      {
-        [which === "start" ? "startImageStatus" : "endImageStatus"]:
-          "failed",
-      },
-      {merge: true}
-    );
-    throw new HttpsError(
-      "internal",
-      `Still generation failed: ${(error as Error).message}`
-    );
+    await writeMedia(db, storyId, nodeId, {
+      [`${which}ImageStatus`]: "failed", generationKind: null,
+      generationPhase: null, mediaError: (error as Error).message,
+    }).catch(() => undefined);
+    throw new HttpsError("internal", `Still generation failed: ${(error as Error).message}`);
   }
-  const hash = sha8(bytes);
-  const upload = deps.uploadStill ?? defaultStillUpload();
-  const url = await upload({storyId, nodeId, which, hash, bytes});
-
-  if (which === "start") {
-    return applyStartReady(db, storyId, nodeId, {prompt, url, hash});
-  }
-  return applyEndReady(db, storyId, nodeId, node, {prompt, url, hash});
 };
 
 /**
@@ -418,6 +416,11 @@ export const generateNodeVideoWith = async (
     storedJob.startsWith(openRouterJobPrefix) &&
     optString(node.videoStatus) === "pending"
   ) {
+    if ((node.videoFromHash != null && node.videoFromHash !== fromHash) ||
+        (node.videoToHash != null && node.videoToHash !== endHash)) {
+      await failVideo(db, storyId, nodeId, "Frames changed during video generation.");
+      throw new HttpsError("failed-precondition", "Frames changed; generate a new video.");
+    }
     return resumeVideoJob(
       db,
       storyId,
@@ -429,45 +432,31 @@ export const generateNodeVideoWith = async (
     );
   }
   const request = deps.requestVideo ?? defaultRequestVideo();
-  const now = deps.now ?? (() => Date.now());
-  let jobId = `pending_${nodeId}_${now()}`;
-  let videoUrl: string | null = null;
-  let videoStatus = "pending";
-  if (request) {
-    const job = await request({startUrl: fromUrl, endUrl, prompt});
-    jobId = job.jobId;
-    if (job.videoUrl) {
-      videoUrl = job.videoUrl;
-      videoStatus = "ready";
-    }
-  }
-  const poll =
-    jobId.startsWith(openRouterJobPrefix) && videoStatus === "pending";
+  if (!request) throw new HttpsError("failed-precondition", "Video provider credentials are missing.");
   const update: Record<string, unknown> = {
-    videoStatus,
-    videoSource: "generated",
-    videoUrl,
-    videoFromHash: fromHash,
-    videoToHash: endHash,
-    videoJobId: jobId,
-    videoPrompt: prompt,
+    videoStatus: "pending", videoSource: "generated", videoPrompt: prompt,
+    videoFromHash: fromHash, videoToHash: endHash,
+    generationKind: "video", generationPhase: "generating", mediaError: null,
   };
-  if (!isRoot) {
-    update.startFromNodeId = optString(node.startFromNodeId);
-    update.startParentEndHash = fromHash;
-    update.startImageSourceUrl = fromUrl;
-    update.startImageStatus = "ready";
+  if (!isRoot) Object.assign(update, {
+    startParentEndHash: fromHash, startImageSourceUrl: fromUrl,
+    startImageStatus: "ready", startImageWidth: mediaProfile.width,
+    startImageHeight: mediaProfile.height,
+  });
+  await writeMedia(db, storyId, nodeId, update);
+  try {
+    const job = await request({startUrl: fromUrl, endUrl, prompt});
+    await writeMedia(db, storyId, nodeId, {videoJobId: job.jobId});
+    if (job.videoUrl) {
+      return await finishVideo(db, storyId, nodeId, job.jobId, fromHash, endHash, job.videoUrl, deps);
+    }
+    return {nodeId, videoStatus: "pending", videoFromHash: fromHash,
+      videoToHash: endHash, videoJobId: job.jobId,
+      videoUrl: optString(node.videoUrl), poll: job.jobId.startsWith(openRouterJobPrefix)};
+  } catch (error) {
+    await failVideo(db, storyId, nodeId, (error as Error).message);
+    throw error;
   }
-  await db.doc(`stories/${storyId}/nodes/${nodeId}`).set(update, {merge: true});
-  return {
-    nodeId,
-    videoStatus,
-    videoFromHash: fromHash,
-    videoToHash: endHash,
-    videoJobId: jobId,
-    videoUrl,
-    poll,
-  };
 };
 
 /**
@@ -616,31 +605,26 @@ const sha8 = (bytes: Buffer): string => {
 };
 
 /**
- * Still provider preference: an OpenRouter key wins (no GPU to reach),
+ * Still provider preference: a Meta key wins (no GPU to reach),
  * ComfyUI is the fallback, else null so the caller records `pending`.
  * Pure env read so tests pin the ordering without billing a provider.
  * @return {string | null} The provider kind, or null.
  */
-export const imageProviderKind = (): "openrouter" | "comfy" | null => {
-  if (process.env.OPENROUTER_API_KEY) return "openrouter";
-  if (process.env.COMFYUI_URL) return "comfy";
-  return null;
-};
+export const imageProviderKind = imageProvider;
 
 /**
- * Default still provider: OpenRouter first, ComfyUI fallback, else null
+ * Default still provider: Meta first, ComfyUI fallback, else null
  * so the caller records `pending` instead of billing what it cannot reach.
  * @return {ImageGenFn | null} The provider, or null.
  */
 const defaultImageGen = (): ImageGenFn | null => {
   const kind = imageProviderKind();
-  if (kind === "openrouter") {
-    const apiKey = process.env.OPENROUTER_API_KEY ?? "";
-    const model = process.env.OPENROUTER_IMAGE_MODEL ?? defaultImageModel;
+  if (kind === "meta") {
+    const config = metaConfig();
     return async (prompt: string) => ({
-      bytes: await generateImageBytes({
-        apiKey,
-        model,
+      bytes: await generateImageMeta({
+        apiKey: config.apiKey,
+        model: config.imageModel,
         prompt,
         size: stillSize,
       }),
@@ -673,11 +657,7 @@ const defaultStillUpload = (): StillUploadFn => {
     const bucket = admin.storage().bucket();
     const file = bucket.file(path);
     await file.save(args.bytes, {metadata: {contentType: "image/png"}});
-    const [url] = await file.getSignedUrl({
-      action: "read",
-      expires: "2100-01-01",
-    });
-    return url;
+    return readableStorageUrl(file);
   };
 };
 
@@ -690,24 +670,26 @@ const openRouterJobPrefix = "or_";
 /**
  * Default video submitter: OpenRouter when keyed, else null so the
  * caller records `pending` instead of throwing without credentials.
- * Sends the start frame only (HeyGen takes `first_frame` alone) and
- * omits unset fields — providers reject unlisted values.
+ * Sends the start frame by default (HeyGen); optionally includes the end
+ * frame when OPENROUTER_VIDEO_USE_END_FRAME enables a compatible model.
  * @return {VideoRequestFn | null} The submitter, or null.
  */
 const defaultRequestVideo = (): VideoRequestFn | null => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const config = openRouterConfig();
+  const apiKey = config.apiKey;
   if (!apiKey) return null;
-  const model = process.env.OPENROUTER_VIDEO_MODEL ?? defaultVideoModel;
-  return async ({startUrl, prompt}) => {
+  const video = videoConfig();
+  return async ({startUrl, endUrl, prompt}) => {
     try {
       const {jobId} = await submitVideo({
         apiKey,
-        model,
+        model: config.videoModel,
         prompt,
         startUrl,
-        resolution: defaultVideoResolution,
-        aspectRatio: videoAspectRatio,
-        duration: videoDurationSeconds,
+        ...(video.useEndFrame ? {endUrl} : {}),
+        resolution: video.resolution,
+        aspectRatio: video.aspectRatio,
+        duration: video.duration,
       });
       return {jobId: `${openRouterJobPrefix}${jobId}`};
     } catch (error) {
@@ -730,8 +712,8 @@ const defaultRequestVideo = (): VideoRequestFn | null => {
  */
 const defaultCheckVideo = (): VideoCheckFn => {
   return async (jobId: string) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) return {status: "pending"};
+    const apiKey = openRouterConfig().apiKey;
+    if (!apiKey) throw new HttpsError("failed-precondition", "Video provider credentials are missing.");
     return checkVideo({apiKey, jobId});
   };
 };
@@ -742,25 +724,9 @@ const defaultCheckVideo = (): VideoCheckFn => {
  */
 const defaultDownloadVideo = (): VideoDownloadFn => {
   return async (url: string) => {
-    const apiKey = process.env.OPENROUTER_API_KEY ?? "";
-    return downloadBytes(url, {apiKey});
-  };
-};
-
-/**
- * Default clip reviewer: probes the playable seconds through a temp file.
- * @return {VideoProbeFn} The reviewer.
- */
-const defaultProbeVideo = (): VideoProbeFn => {
-  return async (bytes: Buffer) => {
-    const dir = await mkdtemp(join(tmpdir(), "ramifica-video-"));
-    try {
-      const path = join(dir, "clip.mp4");
-      await writeFile(path, bytes);
-      return await probeDuration(path);
-    } finally {
-      await rm(dir, {recursive: true, force: true});
-    }
+    const apiKey = openRouterConfig().apiKey;
+    return downloadBytes(url, {apiKey: new URL(url).origin ===
+      new URL(openRouterConfig().videosUrl).origin ? apiKey : ""});
   };
 };
 
@@ -776,11 +742,7 @@ const defaultUploadVideo = (): VideoStoreFn => {
     const bucket = admin.storage().bucket();
     const file = bucket.file(path);
     await file.save(args.bytes, {metadata: {contentType: "video/mp4"}});
-    const [url] = await file.getSignedUrl({
-      action: "read",
-      expires: "2100-01-01",
-    });
-    return url;
+    return readableStorageUrl(file);
   };
 };
 
@@ -808,87 +770,60 @@ const resumeVideoJob = async (
   endHash: string,
   deps: NodeMediaDeps
 ): Promise<GenerateNodeVideoResult> => {
-  const rawId = storedJob.slice(openRouterJobPrefix.length);
-  const check = deps.checkVideo ?? defaultCheckVideo();
-  let outcome: {status: string; videoUrl?: string};
   try {
-    outcome = await check(rawId);
+    const outcome = await (deps.checkVideo ?? defaultCheckVideo())(
+      storedJob.slice(openRouterJobPrefix.length));
+    if (["pending", "queued", "in_progress", "processing"].includes(outcome.status)) {
+      return {nodeId, videoStatus: "pending", videoFromHash: fromHash,
+        videoToHash: endHash, videoJobId: storedJob, videoUrl: null, poll: true};
+    }
+    if (outcome.status !== "completed" || !outcome.videoUrl) {
+      throw new HttpsError("internal", "Video generation failed.");
+    }
+    return await finishVideo(db, storyId, nodeId, storedJob, fromHash, endHash, outcome.videoUrl, deps);
   } catch (error) {
+    // Transient service errors can be resumed with the same provider job.
+    if (error instanceof OpenRouterHttpError && error.status >= 500) {
+      throw new HttpsError("unavailable", `Video status check failed: ${error.status}.`);
+    }
+    await failVideo(db, storyId, nodeId, (error as Error).message);
     if (error instanceof OpenRouterHttpError && error.status === 404) {
-      await db
-        .doc(`stories/${storyId}/nodes/${nodeId}`)
-        .set({videoJobId: null}, {merge: true});
-      throw new HttpsError(
-        "internal",
-        "The video job expired before finishing."
-      );
-    }
-    if (error instanceof OpenRouterHttpError) {
-      throw new HttpsError(
-        "unavailable",
-        `Video status check failed: ${error.status}.`
-      );
+      throw new HttpsError("internal", "The video job expired before finishing.");
     }
     throw error;
   }
-  if (outcome.status === "pending" || outcome.status === "in_progress") {
-    return {
-      nodeId,
-      videoStatus: "pending",
-      videoFromHash: fromHash,
-      videoToHash: endHash,
-      videoJobId: storedJob,
-      videoUrl: null,
-      poll: true,
-    };
-  }
-  if (outcome.status !== "completed" || !outcome.videoUrl) {
-    await db
-      .doc(`stories/${storyId}/nodes/${nodeId}`)
-      .set({videoJobId: null}, {merge: true});
-    throw new HttpsError("internal", "Video generation failed.");
-  }
-  const download = deps.downloadVideo ?? defaultDownloadVideo();
-  const probe = deps.probeVideo ?? defaultProbeVideo();
-  const store = deps.uploadVideo ?? defaultUploadVideo();
-  let bytes: Buffer;
-  try {
-    bytes = await download(outcome.videoUrl);
-  } catch (error) {
-    if (error instanceof OpenRouterHttpError) {
-      throw new HttpsError(
-        "unavailable",
-        `Video download failed: ${error.status}.`
-      );
+};
+
+const failVideo = async (db: Db, storyId: string, nodeId: string, message: string): Promise<void> => {
+  await writeMedia(db, storyId, nodeId, {videoStatus: "failed", videoJobId: null,
+    generationKind: null, generationPhase: null, mediaError: message}).catch(() => undefined);
+};
+
+const finishVideo = async (
+  db: Db, storyId: string, nodeId: string, jobId: string, fromHash: string,
+  endHash: string, sourceUrl: string, deps: NodeMediaDeps
+): Promise<GenerateNodeVideoResult> => {
+  await writeMedia(db, storyId, nodeId, {generationPhase: "processing"});
+  const raw = await (deps.downloadVideo ?? defaultDownloadVideo())(sourceUrl);
+  const out = await (deps.normalizeVideo ?? normalizeGeneratedVideo)(raw);
+  const hash = sha8(out.bytes);
+  const videoUrl = await (deps.uploadVideo ?? defaultUploadVideo())({storyId, nodeId, hash, bytes: out.bytes});
+  const frameUrl = await (deps.uploadStill ?? defaultStillUpload())({storyId, nodeId,
+    which: "end", hash: sha8(out.lastFrame), bytes: out.lastFrame});
+  await writeMedia(db, storyId, nodeId, {videoStatus: "ready", videoUrl,
+    videoJobId: jobId, videoWidth: out.width, videoHeight: out.height,
+    durationSeconds: out.durationSeconds, videoFrameLastUrl: frameUrl,
+    videoFrameLastBlurData: out.lastBlurData, generationKind: null,
+    generationPhase: null, mediaError: null}, (fresh) => {
+    if (fresh.videoJobId !== jobId ||
+        (fresh.videoFromHash != null && fresh.videoFromHash !== fromHash) ||
+        (fresh.videoToHash != null && fresh.videoToHash !== endHash) || fresh.endHash !== endHash) {
+      throw new HttpsError("aborted", "Frames or video request changed while processing.");
     }
-    throw error;
-  }
-  const durationSeconds = await probe(bytes);
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    throw new HttpsError("internal", "Video has no playable length.");
-  }
-  const hash = sha8(bytes);
-  const videoUrl = await store({storyId, nodeId, hash, bytes});
-  await db
-    .doc(`stories/${storyId}/nodes/${nodeId}`)
-    .set(
-      {
-        videoStatus: "ready",
-        videoUrl,
-        videoJobId: storedJob,
-        durationSeconds,
-      },
-      {merge: true}
-    );
-  return {
-    nodeId,
-    videoStatus: "ready",
-    videoFromHash: fromHash,
-    videoToHash: endHash,
-    videoJobId: storedJob,
-    videoUrl,
-    poll: false,
-  };
+  });
+  return {nodeId, videoStatus: "ready", videoFromHash: fromHash, videoToHash: endHash,
+    videoJobId: jobId, videoUrl, poll: false, videoWidth: out.width,
+    videoHeight: out.height, durationSeconds: out.durationSeconds};
 };
 
 /**
@@ -908,20 +843,17 @@ const markImagePending = async (
   storyId: string,
   nodeId: string,
   which: FrameWhich,
-  prompt: string,
-  opts: {adoptRoot?: boolean} = {}
+  prompt: string
 ): Promise<Omit<GenerateNodeImageResult, "desyncedNodeIds">> => {
   const prefix = which === "start" ? "start" : "end";
   const update: Record<string, unknown> = {
     [`${prefix}ImageStatus`]: "pending",
     [`${prefix}ImagePrompt`]: prompt,
     [`${prefix}ImageApproved`]: false,
+    generationKind: `${prefix}Image`, generationPhase: "generating", mediaError: null,
   };
   if (which === "end") update.endImageSource = "muse";
-  if (opts.adoptRoot) {
-    await db.doc(`stories/${storyId}`).set({rootNodeId: nodeId}, {merge: true});
-  }
-  await db.doc(`stories/${storyId}/nodes/${nodeId}`).set(update, {merge: true});
+  await writeMedia(db, storyId, nodeId, update);
   const snap = await db.doc(`stories/${storyId}/nodes/${nodeId}`).get();
   const node = docData(snap, "Node");
   return {
@@ -948,7 +880,7 @@ const applyStartReady = async (
   db: Db,
   storyId: string,
   nodeId: string,
-  still: {prompt: string; url: string; hash: string}
+  still: {prompt: string; url: string; hash: string; width: number; height: number}
 ): Promise<GenerateNodeImageResult> => {
   const ref = db.doc(`stories/${storyId}/nodes/${nodeId}`);
   const snap = await ref.get();
@@ -959,18 +891,21 @@ const applyStartReady = async (
     startHash: still.hash,
     startImagePrompt: still.prompt,
     startImageApproved: false,
+    startImageWidth: still.width, startImageHeight: still.height,
+    generationKind: null, generationPhase: null, mediaError: null,
   };
   const fromHash = optString(node.videoFromHash);
   if (fromHash !== null && fromHash !== still.hash) {
     update.videoStatus = "idle";
     update.videoUrl = null;
   }
-  await ref.set(update, {merge: true});
+  await writeMedia(db, storyId, nodeId, update);
   return {
     nodeId,
     which: "start",
     imageStatus: "ready",
     imageUrl: still.url,
+    width: still.width, height: still.height,
     endHash: optString(node.endHash),
     desyncedNodeIds: [],
   };
@@ -993,7 +928,7 @@ const applyEndReady = async (
   storyId: string,
   nodeId: string,
   node: {[field: string]: unknown},
-  still: {prompt: string; url: string; hash: string}
+  still: {prompt: string; url: string; hash: string; width: number; height: number}
 ): Promise<GenerateNodeImageResult> => {
   const query = await db
     .collection(`stories/${storyId}/nodes`)
@@ -1005,8 +940,12 @@ const applyEndReady = async (
       return optString(child.fields.startParentEndHash) !== still.hash;
     })
     .map((child) => child.id);
-  await db.runTransaction(async (tx) => {
+  await draftTransaction(db, storyId, async (tx) => {
     const ref = db.doc(`stories/${storyId}/nodes/${nodeId}`);
+    const fresh = await tx.get(ref);
+    if (!fresh.exists) throw new HttpsError("not-found", "Node was deleted.");
+    node = docData(fresh, "Node");
+    const children = await Promise.all(desynced.map((id) => tx.get(db.doc(`stories/${storyId}/nodes/${id}`))));
     const update: Record<string, unknown> = {
       endImageSourceUrl: still.url,
       endImageStatus: "ready",
@@ -1014,6 +953,8 @@ const applyEndReady = async (
       endImagePrompt: still.prompt,
       endImageSource: "muse",
       endImageApproved: false,
+      endImageWidth: still.width, endImageHeight: still.height,
+      generationKind: null, generationPhase: null, mediaError: null,
     };
     const toHash = optString(node.videoToHash);
     if (toHash !== null && toHash !== still.hash) {
@@ -1021,7 +962,7 @@ const applyEndReady = async (
       update.videoUrl = null;
     }
     tx.set(ref, update, {merge: true});
-    for (const childId of desynced) {
+    for (const childId of desynced.filter((_, i) => children[i].exists)) {
       tx.set(
         db.doc(`stories/${storyId}/nodes/${childId}`),
         {videoStatus: "idle", videoUrl: null},
@@ -1034,6 +975,7 @@ const applyEndReady = async (
     which: "end",
     imageStatus: "ready",
     imageUrl: still.url,
+    width: still.width, height: still.height,
     endHash: still.hash,
     desyncedNodeIds: desynced,
   };

@@ -1,61 +1,262 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function storyOf(id) {
+      return get(/databases/$(database)/documents/stories/$(id)).data;
+    }
+    function afterStory(id) {
+      return getAfter(/databases/$(database)/documents/stories/$(id)).data;
+    }
+    function author(id) {
+      return signedIn() && storyOf(id).authorId == request.auth.uid;
+    }
+    function authorOwnsDraft(id) { return author(id) && storyOf(id).status == 'draft'; }
+    function revisionAdvanced(id) {
+      return afterStory(id).revision == storyOf(id).get('revision', 0) + 1;
+    }
+    function draftWrite(id) {
+      return signedIn() && afterStory(id).authorId == request.auth.uid
+        && afterStory(id).status == 'draft';
+    }
+    function ownProgress(uid) { return signedIn() && request.auth.uid == uid; }
+    function activePublication(id, publication) {
+      return signedIn() && storyOf(id).status == 'published'
+        && storyOf(id).get('activePublicationId', '') == publication;
+    }
+    function visited(id, node) {
+      return signedIn() && node in get(/databases/$(database)/documents/users/$(request.auth.uid)/storyState/$(id)).data.get('visitedNodeIds', []);
+    }
+    function optionalText(data, key, max) {
+      return data.get(key, null) == null || (data[key] is string && data[key].size() <= max);
+    }
+    function unit(value) { return value is number && value >= 0 && value <= 1; }
+    function validChoice(c) {
+      return c.keys().hasOnly(['choiceId', 'targetNodeId', 'label', 'isDefault',
+        'slot', 'icon', 'iconColor', 'x', 'y', 'radius'])
+        && c.choiceId is string && c.choiceId.size() > 0
+        && c.targetNodeId is string && c.targetNodeId.size() > 0
+        && c.label is string && c.label.size() <= 24 && c.isDefault is bool
+        && c.get('slot', null) in [null, 'A', 'B']
+        && optionalText(c, 'icon', 40) && optionalText(c, 'iconColor', 40)
+        && unit(c.x) && unit(c.y) && unit(c.radius);
+    }
+    function validNode(n) {
+      return n.title is string && n.title.size() <= 40
+        && n.visibility in ['visible', 'secret'] && n.isEnding is bool
+        && optionalText(n, 'endingName', 40)
+        && n.get('endingType', null) in [null, 'abierto', 'tragico', 'secreto']
+        && n.ttsText is string && n.ttsText.size() <= 1000
+        && n.lineApproved is bool && n.ttsApproved is bool
+        && optionalText(n, 'startImagePrompt', 2000)
+        && optionalText(n, 'endImagePrompt', 2000)
+        && optionalText(n, 'videoPrompt', 2000)
+        && n.choices is list && n.choices.size() <= 2
+        && (!n.isEnding || n.choices.size() == 0)
+        && (n.choices.size() == 0 || validChoice(n.choices[0]))
+        && (n.choices.size() < 2 || (validChoice(n.choices[1])
+          && n.choices[0].choiceId != n.choices[1].choiceId
+          && (n.choices[0].get('slot', null) == null
+            || n.choices[0].get('slot', null) != n.choices[1].get('slot', null))));
+    }
+    function authorNodeKeys() {
+      return ['title', 'visibility', 'isEnding', 'endingName', 'endingType',
+        'ttsText', 'lineApproved', 'ttsApproved', 'choices',
+        'startImagePrompt', 'endImagePrompt', 'videoPrompt',
+        'startImageApproved', 'endImageApproved'];
+    }
+    function initialNode(n) {
+      return validNode(n) && n.keys().hasOnly(authorNodeKeys().concat([
+        'requestId', 'startFromNodeId', 'startParentEndHash',
+        'videoUrl', 'videoStatus', 'videoSource', 'videoFromHash', 'videoToHash',
+        'videoJobId', 'videoWidth', 'videoHeight', 'durationSeconds',
+        'videoFrameLastUrl', 'videoFrameLastBlurData', 'thumbnailUrl',
+        'startImageSourceUrl', 'startImageStatus', 'startHash',
+        'startImageWidth', 'startImageHeight',
+        'endImageSourceUrl', 'endImageStatus', 'endHash', 'endImageSource',
+        'endImageWidth', 'endImageHeight',
+        'ttsAudioUrl', 'ttsStatus', 'ttsDurationSeconds',
+        'generationKind', 'generationPhase']))
+        && n.get('videoUrl', null) == null && n.get('videoStatus', 'idle') == 'idle'
+        && n.get('videoSource', null) == null && n.get('videoJobId', null) == null
+        && n.get('videoFromHash', null) == null && n.get('videoToHash', null) == null
+        && n.get('videoWidth', null) == null && n.get('videoHeight', null) == null
+        && n.get('durationSeconds', null) == null
+        && n.get('videoFrameLastUrl', null) == null && n.get('videoFrameLastBlurData', null) == null
+        && n.get('thumbnailUrl', null) == null
+        && n.get('startImageSourceUrl', null) == null && n.get('startHash', null) == null
+        && n.get('startImageStatus', 'idle') == 'idle' && n.get('startImageApproved', false) == false
+        && n.get('startImageWidth', null) == null && n.get('startImageHeight', null) == null
+        && n.get('endImageSourceUrl', null) == null && n.get('endHash', null) == null
+        && n.get('endImageStatus', 'idle') == 'idle' && n.get('endImageApproved', false) == false
+        && n.get('endImageSource', null) == null
+        && n.get('endImageWidth', null) == null && n.get('endImageHeight', null) == null
+        && n.get('ttsAudioUrl', null) == null && n.get('ttsStatus', 'idle') == 'idle'
+        && n.get('ttsDurationSeconds', null) == null && n.ttsApproved == false
+        && n.get('startParentEndHash', null) == null
+        && n.get('generationKind', null) == null && n.get('generationPhase', null) == null
+        && optionalText(n, 'requestId', 1500);
+    }
+    function lineChanged() {
+      return request.resource.data.ttsText != resource.data.get('ttsText', '');
+    }
+    function voiceIdled() {
+      return request.resource.data.ttsStatus == 'idle'
+        && request.resource.data.ttsAudioUrl == null
+        && request.resource.data.ttsDurationSeconds == null
+        && request.resource.data.ttsApproved == false;
+    }
+    function nodeUpdateKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+        lineChanged() ? authorNodeKeys().concat(['ttsStatus', 'ttsAudioUrl', 'ttsDurationSeconds']) : authorNodeKeys())
+        && (!lineChanged() || voiceIdled());
+    }
+    function approvalsValid() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (!changed.hasAny(['startImageApproved'])
+          || (request.resource.data.startImageApproved is bool
+            && resource.data.get('startImageStatus', '') == 'ready'
+            && resource.data.get('startHash', null) is string))
+        && (!changed.hasAny(['endImageApproved'])
+          || (request.resource.data.endImageApproved is bool
+            && resource.data.get('endImageStatus', '') == 'ready'
+            && resource.data.get('endHash', null) is string));
     }
 
     match /stories/{storyId} {
-      allow read: if signedIn() && (
-        resource.data.status == "published"
-        || request.auth.uid == resource.data.authorId
-      );
-      allow create: if signedIn()
-        && request.resource.data.authorId == request.auth.uid
-        && request.resource.data.status == "draft";
-      allow update: if signedIn()
-        && request.auth.uid == resource.data.authorId
-        && resource.data.status == "draft"
-        && request.resource.data.status == "draft"
-        && request.resource.data.authorId == resource.data.authorId;
-      allow delete: if signedIn()
-        && request.auth.uid == resource.data.authorId
-        && resource.data.status == "draft";
+      allow read: if signedIn() && (resource.data.status == 'published'
+        || resource.data.authorId == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.status == 'draft' && request.resource.data.revision == 0
+        && request.resource.data.keys().hasOnly(['authorId', 'title', 'synopsis',
+          'status', 'rootNodeId', 'revision', 'createdAt', 'updatedAt'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 40
+        && request.resource.data.rootNodeId is string
+        && existsAfter(/databases/$(database)/documents/stories/$(storyId)/nodes/$(request.resource.data.rootNodeId));
+      allow update: if authorOwnsDraft(storyId)
+        && request.resource.data.authorId == resource.data.authorId
+        && request.resource.data.rootNodeId == resource.data.rootNodeId
+        && request.resource.data.revision == resource.data.get('revision', 0) + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'synopsis', 'coverUrl', 'tags', 'updatedAt', 'revision',
+          'status', 'activePublicationId', 'publishedAt', 'authorName'])
+        && (request.resource.data.status == 'draft'
+          || (request.resource.data.status == 'published'
+            && request.resource.data.activePublicationId is string
+            && getAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)).data.sourceRevision == resource.data.get('revision', 0)
+            && existsAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)/nodes/$(resource.data.rootNodeId))));
+      allow delete: if authorOwnsDraft(storyId);
 
-      // Only the author reads nodes directly (Create).
-      // Players use loadPlayback and graphStubs.
       match /nodes/{nodeId} {
-        allow read: if signedIn()
-          && get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid;
-        allow write: if false;
+        // Prompts and generation metadata never become player-readable.
+        allow read: if author(storyId);
+        allow create: if draftWrite(storyId) && initialNode(request.resource.data)
+          && ((!exists(/databases/$(database)/documents/stories/$(storyId))
+              && afterStory(storyId).rootNodeId == nodeId && afterStory(storyId).revision == 0)
+            || (authorOwnsDraft(storyId) && revisionAdvanced(storyId)))
+          && (request.resource.data.get('startFromNodeId', null) == null
+            || (request.resource.data.startImagePrompt == null
+              && existsAfter(/databases/$(database)/documents/stories/$(storyId)/nodes/$(request.resource.data.startFromNodeId))));
+        allow update: if authorOwnsDraft(storyId) && draftWrite(storyId)
+          && revisionAdvanced(storyId) && nodeUpdateKeys()
+          && validNode(request.resource.data) && approvalsValid();
+        allow delete: if authorOwnsDraft(storyId) && draftWrite(storyId)
+          && revisionAdvanced(storyId) && storyOf(storyId).rootNodeId != nodeId;
+      }
+
+      match /publications/{publicationId} {
+        allow read: if author(storyId) || activePublication(storyId, publicationId);
+        allow create, update, delete: if authorOwnsDraft(storyId);
+        match /nodes/{nodeId} {
+          allow get: if author(storyId)
+            || (activePublication(storyId, publicationId) && visited(storyId, nodeId));
+          allow list: if author(storyId);
+          allow write: if authorOwnsDraft(storyId);
+        }
+        match /map/{nodeId} {
+          allow read: if author(storyId) || activePublication(storyId, publicationId);
+          allow write: if authorOwnsDraft(storyId)
+            && (request.resource.data.secret == false
+              || request.resource.data.keys().hasOnly(['secret']));
+        }
+        match /stats/{nodeId} {
+          function countValid(id) {
+            let before = resource.data.choiceCounts.get(id, 0);
+            let after = request.resource.data.choiceCounts.get(id, 0);
+            return before is int && after is int && after >= 0
+              && (after == before || after == before + 1);
+          }
+          function incrementValid() {
+            let choices = get(/databases/$(database)/documents/stories/$(storyId)/publications/$(publicationId)/nodes/$(nodeId)).data.choices;
+            let first = choices[0].choiceId;
+            let second = choices.size() > 1 ? choices[1].choiceId : first;
+            let changed = request.resource.data.choiceCounts.diff(resource.data.choiceCounts).affectedKeys();
+            return changed.size() == 1 && changed.hasOnly([first, second])
+              && request.resource.data.choiceCounts.keys().hasOnly(resource.data.choiceCounts.keys())
+              && request.resource.data.choiceCounts.keys().hasAll(resource.data.choiceCounts.keys())
+              && countValid(first) && countValid(second);
+          }
+          allow read: if author(storyId) || (activePublication(storyId, publicationId)
+            && (resource.data.visibility == 'visible' || visited(storyId, nodeId)));
+          allow create, delete: if authorOwnsDraft(storyId);
+          allow update: if authorOwnsDraft(storyId)
+            || (activePublication(storyId, publicationId) && visited(storyId, nodeId)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['choiceCounts'])
+              && incrementValid());
+        }
       }
     }
 
     match /users/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow create: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(["displayName", "handle", "photoUrl", "locale", "providers", "createdAt"]);
-      allow update: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(["displayName", "handle", "photoUrl", "locale"]);
+      allow read: if ownProgress(uid);
+      allow create: if ownProgress(uid) && request.resource.data.keys().hasOnly([
+        'displayName', 'handle', 'photoUrl', 'locale', 'providers', 'createdAt']);
+      allow update: if ownProgress(uid) && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['displayName', 'handle', 'photoUrl', 'locale']);
+      match /runs/{runId} {
+        allow read: if ownProgress(uid);
+        allow create, update: if ownProgress(uid)
+          && request.resource.data.storyId is string
+          && request.resource.data.currentNodeId is string
+          && request.resource.data.status in ['active', 'ended']
+          && request.resource.data.choices is list
+          && (storyOf(request.resource.data.storyId).status == 'published'
+            || storyOf(request.resource.data.storyId).authorId == uid)
+          && (resource == null || request.resource.data.storyId == resource.data.storyId)
+          && request.resource.data.keys().hasOnly(['storyId', 'currentNodeId', 'status',
+            'choices', 'createdAt', 'updatedAt', 'lastCommit', 'endedAt', 'endingNodeId', 'endingOutcome']);
+      }
+      match /storyState/{storyId} {
+        allow read: if ownProgress(uid);
+        // Progress is intentionally trusted, but only for this account.
+        allow create, update: if ownProgress(uid)
+          && request.resource.data.keys().hasOnly(['activeRunId', 'activeRunStatus',
+            'visitedNodeIds', 'endings', 'sagaUnlocked', 'updatedAt'])
+          && request.resource.data.get('visitedNodeIds', []) is list
+          && request.resource.data.get('endings', []) is list
+          && request.resource.data.get('sagaUnlocked', false) is bool;
+      }
+      match /rewards/{rewardId} {
+        allow read: if ownProgress(uid);
+        allow create: if ownProgress(uid) && request.resource.data.keys().hasOnly([
+          'storyId', 'endingNodeId', 'sagaId', 'code', 'grantedAt', 'requestId'])
+          && request.resource.data.storyId is string
+          && request.resource.data.endingNodeId is string && request.resource.data.code is string;
+        allow update: if ownProgress(uid) && resource.data.get('code', null) == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['code'])
+          && request.resource.data.code is string;
+      }
+      match /{document=**} {
+        allow read: if ownProgress(uid);
+      }
     }
-
     match /follows/{uid}/authors/{authorId} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read, write: if ownProgress(uid);
     }
-
-    match /users/{uid}/{document=**} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
-    }
-
     match /sagas/{sagaId} {
       allow read: if signedIn();
       allow write: if false;
     }
-
     match /campaigns/{campaignId} {
       allow read: if signedIn() && resource.data.active == true;
       allow write: if false;

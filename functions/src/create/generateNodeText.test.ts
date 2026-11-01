@@ -1,9 +1,15 @@
+import {choiceIconNames, choiceIconColorNames} from "./nodes";
+import {knownIcons, knownIconColors} from "./proposeOutline";
 import {strict as assert} from "assert";
+import * as fs from "fs";
 import {test} from "node:test";
+import * as path from "path";
 import {Db, DbCol, DbDoc, DbRef, DbTx} from "../feed/shared";
 import {
   generateNodeTextWith,
   GenerateNodeTextResult,
+  knownChoiceIconColors,
+  knownChoiceIcons,
   TextFetch,
 } from "./generateNodeText";
 
@@ -223,6 +229,13 @@ const seedDraft = async (db: MemDb): Promise<void> => {
     ttsText: "",
     choices: [],
   });
+  await db.doc("stories/story_draft/nodes/node_003").set({
+    title: "The fork",
+    isEnding: false,
+    ttsText: "",
+    choices: [],
+    startFromNodeId: "node_001",
+  });
   await db.doc("stories/story_pub").set({
     authorId: "u1",
     title: "Published",
@@ -259,9 +272,75 @@ test("proposes decision text without writing", async () => {
   );
   assert.equal(result.title, "The storm door");
   assert.equal(result.ttsText, "Thunder rolls. Do you enter, or climb?");
-  assert.deepEqual(result.choices, [{label: "Enter"}, {label: "Climb"}]);
+  assert.deepEqual(result.choices, [
+    {label: "Enter", icon: null, iconColor: null},
+    {label: "Climb", icon: null, iconColor: null},
+  ]);
   assert.equal(result.endingName, null);
+  assert.equal(result.startImagePrompt, null);
+  assert.equal(result.endImagePrompt, null);
+  assert.equal(result.videoPrompt, null);
   assert.equal(snapshot(db), before);
+});
+
+test("scene purpose excludes provider narration", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeTextWith(
+    db, "u1",
+    {storyId: "story_draft", nodeId: "node_001", purpose: "scene"},
+    {apiKey: "test", fetchFn: stubFetch(JSON.stringify({
+      title: "The gate", ttsText: "You must choose.",
+      endImagePrompt: "A closed gate", choices: ["Enter", "Wait"],
+    }))}
+  );
+  assert.equal(result.ttsText, null);
+  assert.equal(result.title, "The gate");
+  assert.equal(result.endImagePrompt, "A closed gate");
+  assert.equal(result.choices.length, 2);
+});
+
+test("narration uses the closing frame and options without changing the scene",
+  async () => {
+    const db = new MemDb();
+    await seedDraft(db);
+    await db.doc("stories/story_draft/nodes/node_001").set({
+      endImagePrompt: "A red gate in the rain",
+      choices: [{label: "Enter"}, {label: "Wait"}],
+    }, {merge: true});
+    const before = snapshot(db);
+    let request = "";
+    const fetchFn: TextFetch = async (url, init) => {
+      request = String(init.body);
+      return stubFetch(JSON.stringify({
+        ttsText: "Do you enter the gate or wait?",
+        title: "Unasked change", choices: ["Replace"],
+        endImagePrompt: "Unasked frame",
+      }))(url, init);
+    };
+    const result = await generateNodeTextWith(
+      db, "u1",
+      {storyId: "story_draft", nodeId: "node_001", purpose: "narration"},
+      {apiKey: "test", fetchFn}
+    );
+    assert.match(request, /A red gate in the rain/);
+    assert.match(request, /Enter \/ Wait/);
+    assert.match(request, /just before/);
+    assert.deepEqual(result, {
+      title: null, ttsText: "Do you enter the gate or wait?", choices: [],
+      endingName: null, startImagePrompt: null, endImagePrompt: null,
+      videoPrompt: null,
+    });
+    assert.equal(snapshot(db), before);
+  });
+
+test("rejects unknown text purposes", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await assert.rejects(generateNodeTextWith(db, "u1", {
+    storyId: "story_draft", nodeId: "node_001", purpose: "video",
+  }), (error: unknown) =>
+    (error as {code?: string}).code === "invalid-argument");
 });
 
 test("proposes an ending name for ending nodes", async () => {
@@ -286,6 +365,9 @@ test("proposes an ending name for ending nodes", async () => {
   );
   assert.equal(result.endingName, "Dawn");
   assert.deepEqual(result.choices, []);
+  assert.equal(result.startImagePrompt, null);
+  assert.equal(result.endImagePrompt, null);
+  assert.equal(result.videoPrompt, null);
   assert.equal(snapshot(db), before);
 });
 
@@ -328,7 +410,10 @@ test("clamps overlong provider fields", async () => {
   );
   assert.equal(result.title?.length, 40);
   assert.equal(result.ttsText?.length, 280);
-  assert.deepEqual(result.choices, [{label: "z".repeat(24)}, {label: "ok"}]);
+  assert.deepEqual(result.choices, [
+    {label: "z".repeat(24), icon: null, iconColor: null},
+    {label: "ok", icon: null, iconColor: null},
+  ]);
 });
 
 test("rejects callers without a session", async () => {
@@ -427,10 +512,194 @@ test("rejects unreadable provider answers", async () => {
 test("needs a configured provider key", async () => {
   const db = new MemDb();
   await seedDraft(db);
-  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.META_API_KEY;
   await assert.rejects(
     generateNodeTextWith(db, "u1", {storyId: "story_draft"}),
     (error: unknown) =>
       (error as {code?: string}).code === "failed-precondition"
   );
+});
+
+test("mirrors the shared icon/color catalog", async () => {
+  const catalogPath = path.resolve(__dirname, "../../../catalog.json");
+  const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as {
+    icons: string[];
+    iconColors: string[];
+    limits: {title: number; ttsText: number; label: number; prompt: number};
+  };
+  assert.deepEqual([...knownChoiceIcons], catalog.icons);
+  assert.deepEqual([...knownChoiceIconColors], catalog.iconColors);
+  assert.deepEqual(Object.keys(choiceIconNames), catalog.icons);
+  assert.deepEqual(Object.keys(choiceIconColorNames), catalog.iconColors);
+  assert.deepEqual(Object.keys(knownIcons), catalog.icons);
+  assert.deepEqual(Object.keys(knownIconColors), catalog.iconColors);
+  assert.equal(catalog.limits.title, 40);
+  assert.equal(catalog.limits.ttsText, 280);
+  assert.equal(catalog.limits.label, 24);
+  assert.equal(catalog.limits.prompt, 2000);
+  assert.ok(catalog.icons.length > 0);
+  assert.ok(catalog.iconColors.length > 0);
+});
+
+test("proposes full media prompts with styled choices on roots", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const before = snapshot(db);
+  const result = await generateNodeTextWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001"},
+    {
+      apiKey: "test-key",
+      fetchFn: stubFetch(
+        JSON.stringify({
+          title: "The storm door",
+          ttsText: "Thunder rolls.",
+          choices: [
+            {label: "Enter", icon: "door", iconColor: "cyan"},
+            {label: "Climb", icon: "mountain", iconColor: "gold"},
+          ],
+          endingName: null,
+          startImagePrompt: "Wide 9:16 hall, door ajar.",
+          endImagePrompt: "Close 9:16 frame, hand on the door.",
+          videoPrompt: "Slow morph from S to E.",
+        })
+      ),
+    }
+  );
+  assert.deepEqual(result.choices, [
+    {label: "Enter", icon: "door", iconColor: "cyan"},
+    {label: "Climb", icon: "mountain", iconColor: "gold"},
+  ]);
+  assert.equal(result.startImagePrompt, "Wide 9:16 hall, door ajar.");
+  assert.equal(result.endImagePrompt, "Close 9:16 frame, hand on the door.");
+  assert.equal(result.videoPrompt, "Slow morph from S to E.");
+  assert.equal(snapshot(db), before);
+});
+
+test("drops the start prompt on child nodes", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const before = snapshot(db);
+  const result = await generateNodeTextWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_003"},
+    {
+      apiKey: "test-key",
+      fetchFn: stubFetch(
+        JSON.stringify({
+          title: "The fork",
+          ttsText: "Two paths.",
+          choices: [{label: "Left", icon: "forest", iconColor: "green"}],
+          endingName: null,
+          startImagePrompt: "Should be dropped.",
+          endImagePrompt: "Kept end frame.",
+          videoPrompt: "Kept clip.",
+        })
+      ),
+    }
+  );
+  assert.deepEqual(result.choices, [
+    {label: "Left", icon: "forest", iconColor: "green"},
+  ]);
+  assert.equal(result.startImagePrompt, null);
+  assert.equal(result.endImagePrompt, "Kept end frame.");
+  assert.equal(result.videoPrompt, "Kept clip.");
+  assert.equal(snapshot(db), before);
+});
+
+test("drops choices on endings even when proposed", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeTextWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_002"},
+    {
+      apiKey: "test-key",
+      fetchFn: stubFetch(
+        JSON.stringify({
+          title: "The quiet ridge",
+          ttsText: "The wind settles.",
+          choices: [{label: "Stay", icon: "moon", iconColor: "blue"}],
+          endingName: "Dawn",
+          startImagePrompt: "Should be dropped.",
+          endImagePrompt: "Last light on the ridge.",
+          videoPrompt: "Slow drift to stillness.",
+        })
+      ),
+    }
+  );
+  assert.deepEqual(result.choices, []);
+  assert.equal(result.endingName, "Dawn");
+  assert.equal(result.startImagePrompt, null);
+  assert.equal(result.endImagePrompt, "Last light on the ridge.");
+  assert.equal(result.videoPrompt, "Slow drift to stillness.");
+});
+
+test("reads legacy proposals without prompts or styled choices", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const before = snapshot(db);
+  const result = await generateNodeTextWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001"},
+    {
+      apiKey: "test-key",
+      fetchFn: stubFetch(
+        JSON.stringify({
+          title: "The storm door",
+          ttsText: "Thunder rolls.",
+          choices: ["Enter", "Climb"],
+          endingName: null,
+        })
+      ),
+    }
+  );
+  assert.deepEqual(result.choices, [
+    {label: "Enter", icon: null, iconColor: null},
+    {label: "Climb", icon: null, iconColor: null},
+  ]);
+  assert.equal(result.startImagePrompt, null);
+  assert.equal(result.endImagePrompt, null);
+  assert.equal(result.videoPrompt, null);
+  assert.equal(snapshot(db), before);
+});
+
+test("nulls unknown styling and clamps malformed proposals", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeTextWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001"},
+    {
+      apiKey: "test-key",
+      fetchFn: stubFetch(
+        JSON.stringify({
+          title: "The storm door",
+          ttsText: "Thunder rolls.",
+          choices: [
+            {label: "Enter", icon: "neon", iconColor: "rainbow"},
+            {label: "   ", icon: "door", iconColor: "cyan"},
+            {label: "Climb", icon: "mountain", iconColor: "gold"},
+            {label: "Extra"},
+          ],
+          endingName: null,
+          startImagePrompt: "s".repeat(2500),
+          endImagePrompt: "",
+          videoPrompt: "v".repeat(2500),
+        })
+      ),
+    }
+  );
+  assert.deepEqual(result.choices, [
+    {label: "Enter", icon: null, iconColor: null},
+    {label: "Climb", icon: "mountain", iconColor: "gold"},
+  ]);
+  assert.equal(result.startImagePrompt?.length, 2000);
+  assert.equal(result.endImagePrompt, null);
+  assert.equal(result.videoPrompt?.length, 2000);
 });

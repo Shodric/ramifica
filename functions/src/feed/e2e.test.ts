@@ -10,7 +10,7 @@ import {commitChoice} from "./commitChoice";
 import {loadPlayback} from "./loadPlayback";
 import {startRun} from "./startRun";
 
-process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
+const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 
 if (admin.apps.length === 0) {
   admin.initializeApp({projectId: "demo-ramifica"});
@@ -93,7 +93,9 @@ async function seed(): Promise<void> {
   });
 }
 
-test("plays a story end to end through the real handlers", async () => {
+test("plays a story through the real handlers", {
+  skip: !emulatorHost,
+}, async () => {
   await seed();
 
   const started = (await call(startRun, "u1", {})) as {
@@ -135,4 +137,5 @@ test("plays a story end to end through the real handlers", async () => {
     runId: fresh.runId,
   })) as {node: {nodeId: string}};
   assert.equal(parked.node.nodeId, "node_1");
+  await db.terminate();
 });

@@ -203,6 +203,12 @@ const sha8 = (text: string): string => {
 const mockDeps = (overrides: NodeMediaDeps = {}): NodeMediaDeps => ({
   imageGen: async (prompt: string) => ({bytes: Buffer.from(`still:${prompt}`)}),
   uploadStill: async (args) => `https://cdn.example/${args.hash}.png`,
+  normalizeImage: async (bytes) => ({bytes, width: 480, height: 854}),
+  requestVideo: async () => ({jobId: "or_test-job"}),
+  downloadVideo: async () => Buffer.from("normalized-clip"),
+  normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854,
+    durationSeconds: 10, lastFrame: Buffer.from("last-frame"), lastBlurData: "blur"}),
+  uploadVideo: async () => "https://cdn.example/v-new.mp4",
   now: () => 1234,
   ...overrides,
 });
@@ -363,21 +369,13 @@ test("image gates: auth, owner, draft", async () => {
   assert.equal(snapshot(db), before);
 });
 
-test("no provider records pending and keeps last good bytes", async () => {
+test("missing image credentials fail immediately and preserve the last take", async () => {
   const db = new MemDb();
   await seedDraft(db);
-  const result = await generateNodeImageWith(db, "u1", {
-    storyId: "story_draft",
-    nodeId: "node_002",
-    which: "end",
-  });
-  assert.equal(result.imageStatus, "pending");
-  assert.equal(result.imageUrl, "https://cdn.example/e2.png");
-  assert.equal(result.endHash, "hash-e2");
-  assert.deepEqual(result.desyncedNodeIds, []);
+  await rejectsWith(generateNodeImageWith(db, "u1", {
+    storyId: "story_draft", nodeId: "node_002", which: "end",
+  }), "failed-precondition");
   const node = await db.doc("stories/story_draft/nodes/node_002").get();
-  assert.equal(node.data()?.endImageStatus, "pending");
-  assert.equal(node.data()?.endImageApproved, false);
   assert.equal(node.data()?.endHash, "hash-e2");
 });
 
@@ -492,9 +490,9 @@ test("video inherits the parent E as S and records a pending job", async () => {
   assert.equal(result.videoStatus, "pending");
   assert.equal(result.videoFromHash, "hash-e1");
   assert.equal(result.videoToHash, "hash-e2");
-  assert.equal(result.videoJobId, "pending_node_002_1234");
-  assert.equal(result.poll, false);
-  assert.equal(result.videoUrl, null);
+  assert.equal(result.videoJobId, "or_test-job");
+  assert.equal(result.poll, true);
+  assert.equal(result.videoUrl, "https://cdn.example/v2.mp4");
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.startParentEndHash, "hash-e1");
   assert.equal(
@@ -572,20 +570,20 @@ test("re-inheriting after a regen re-links the child", async () => {
   assert.equal(child.data()?.videoStatus, "pending");
 });
 
-test("image prefers OpenRouter over Comfy when the key is set", async () => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+test("image prefers Meta over Comfy when the key is set", async () => {
+  const apiKey = process.env.META_API_KEY;
   const comfyUrl = process.env.COMFYUI_URL;
   try {
-    process.env.OPENROUTER_API_KEY = "key-1";
+    process.env.META_API_KEY = "key-1";
     process.env.COMFYUI_URL = "http://comfy.example";
-    assert.equal(imageProviderKind(), "openrouter");
-    delete process.env.OPENROUTER_API_KEY;
+    assert.equal(imageProviderKind(), "meta");
+    delete process.env.META_API_KEY;
     assert.equal(imageProviderKind(), "comfy");
     delete process.env.COMFYUI_URL;
     assert.equal(imageProviderKind(), null);
   } finally {
-    if (apiKey === undefined) delete process.env.OPENROUTER_API_KEY;
-    else process.env.OPENROUTER_API_KEY = apiKey;
+    if (apiKey === undefined) delete process.env.META_API_KEY;
+    else process.env.META_API_KEY = apiKey;
     if (comfyUrl === undefined) delete process.env.COMFYUI_URL;
     else process.env.COMFYUI_URL = comfyUrl;
   }
@@ -604,11 +602,64 @@ test("video provider submit asks the client to poll", async () => {
   );
   assert.equal(result.videoStatus, "pending");
   assert.equal(result.videoJobId, "or_job-9");
-  assert.equal(result.videoUrl, null);
+  assert.equal(result.videoUrl, "https://cdn.example/v2.mp4");
   assert.equal(result.poll, true);
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.videoJobId, "or_job-9");
 });
+
+test("configured video model uses both frames and resumes at the same endpoint",
+  async (t) => {
+    const env = {
+      OPENROUTER_API_KEY: "test-key",
+      OPENROUTER_VIDEOS_URL: "https://router.example/video-jobs",
+      OPENROUTER_VIDEO_MODEL: "vendor/two-frame-video",
+      OPENROUTER_VIDEO_USE_END_FRAME: "true",
+      OPENROUTER_VIDEO_RESOLUTION: "480p",
+      OPENROUTER_VIDEO_ASPECT_RATIO: "9:16",
+      OPENROUTER_VIDEO_DURATION_SECONDS: "10",
+    };
+    const before = Object.fromEntries(
+      Object.keys(env).map((key) => [key, process.env[key]])
+    );
+    try {
+      Object.assign(process.env, env);
+      const seen: Array<{url: string; init?: RequestInit}> = [];
+      t.mock.method(globalThis, "fetch", async (
+        url: string | URL | Request, init?: RequestInit
+      ) => {
+        seen.push({url: String(url), init});
+        return new Response(JSON.stringify(init?.method === "POST" ?
+          {id: "job-config"} : {status: "pending"}), {status: 200});
+      });
+      const db = new MemDb();
+      await seedDraft(db);
+      const args = {storyId: "story_draft", nodeId: "node_002"};
+      const first = await generateNodeVideoWith(db, "u1", args);
+      const second = await generateNodeVideoWith(db, "u1", args);
+      assert.equal(first.videoJobId, "or_job-config");
+      assert.equal(second.videoJobId, first.videoJobId);
+      assert.deepEqual(seen.map((request) => request.url), [
+        "https://router.example/video-jobs",
+        "https://router.example/video-jobs/job-config",
+      ]);
+      const body = JSON.parse(String(seen[0].init?.body));
+      assert.equal(body.model, "vendor/two-frame-video");
+      assert.equal(body.duration, 10);
+      assert.equal(body.resolution, "480p");
+      assert.deepEqual(body.frame_images.map((frame: {
+        frame_type: string; image_url: {url: string};
+      }) => [frame.frame_type, frame.image_url.url]), [
+        ["first_frame", "https://cdn.example/e1.png"],
+        ["last_frame", "https://cdn.example/e2.png"],
+      ]);
+    } finally {
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 
 test("video resumes a stored job without resubmitting", async () => {
   const db = new MemDb();
@@ -660,7 +711,7 @@ test("video completion stores the finished clip", async () => {
         seen.push(url);
         return Buffer.from("fake-clip");
       },
-      probeVideo: async () => 6,
+      normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854, durationSeconds: 10, lastFrame: Buffer.from("frame"), lastBlurData: "blur"}),
       uploadVideo: async (args) => {
         assert.equal(args.storyId, "story_draft");
         assert.equal(args.nodeId, "node_002");
@@ -679,7 +730,7 @@ test("video completion stores the finished clip", async () => {
   assert.equal(result.poll, false);
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.videoStatus, "ready");
-  assert.equal(child.data()?.durationSeconds, 6);
+  assert.equal(child.data()?.durationSeconds, 10);
 });
 
 test("video failure clears the job and fails", async () => {
@@ -778,4 +829,20 @@ test("image generation falls back to the story-grounded prompt", async () => {
   assert.match(seen, /The temple/);
   assert.match(seen, /The stones remember your name/);
   assert.match(seen, /Opening frame/);
+});
+
+test("image metadata and hash refer to normalized bytes and advance draft revision", async () => {
+  const db = new MemDb(); await seedDraft(db);
+  const normalized = Buffer.from("normalized-480x854");
+  let stored: Buffer | undefined;
+  const result = await generateNodeImageWith(db, "u1", {
+    storyId: "story_draft", nodeId: "node_001", which: "end",
+  }, mockDeps({normalizeImage: async () => ({bytes: normalized, width: 480, height: 854}),
+    uploadStill: async (args) => { stored = args.bytes; return `https://cdn.example/${args.hash}.png`; }}));
+  assert.deepEqual(stored, normalized);
+  assert.equal(result.endHash, sha8(normalized.toString()));
+  const node = (await db.doc("stories/story_draft/nodes/node_001").get()).data();
+  assert.equal(node?.endImageWidth, 480); assert.equal(node?.endImageHeight, 854);
+  assert.equal(node?.generationKind, null);
+  assert.ok(Number((await db.doc("stories/story_draft").get()).data()?.revision) >= 1);
 });

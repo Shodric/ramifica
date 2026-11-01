@@ -1,3 +1,5 @@
+import {comfyConfig} from "../config/ai";
+
 export interface ComfyOptions {
   baseUrl: string;
   checkpoint?: string;
@@ -55,20 +57,19 @@ export class ComfyClient {
     options: {baseUrl?: string; fetchFn?: FetchFn} &
       Partial<ComfyOptions> = {}
   ) {
-    const base = options.baseUrl ?? process.env.COMFYUI_URL ?? "";
+    const config = comfyConfig();
+    const base = options.baseUrl ?? config.baseUrl;
     if (base === "") {
       throw new Error("COMFYUI_URL is not set.");
     }
-    const env = process.env;
     this.baseUrl = base.replace(/\/+$/, "");
     this.checkpoint =
       options.checkpoint ??
-      env.COMFYUI_CKPT ??
-      "v1-5-pruned-emaonly.safetensors";
-    this.steps = options.steps ?? Number(env.COMFYUI_STEPS ?? 20);
-    this.cfg = options.cfg ?? Number(env.COMFYUI_CFG ?? 7);
-    this.sampler = options.sampler ?? env.COMFYUI_SAMPLER ?? "euler";
-    this.scheduler = options.scheduler ?? env.COMFYUI_SCHEDULER ?? "normal";
+      config.checkpoint;
+    this.steps = options.steps ?? config.steps;
+    this.cfg = options.cfg ?? config.cfg;
+    this.sampler = options.sampler ?? config.sampler;
+    this.scheduler = options.scheduler ?? config.scheduler;
     this.fetchFn =
       options.fetchFn ?? ((url, init) => fetch(url, init));
   }

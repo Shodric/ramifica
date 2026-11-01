@@ -3,7 +3,8 @@ import {createHash} from "crypto";
 import {mkdtemp, readFile, rm, writeFile} from "fs/promises";
 import {tmpdir} from "os";
 import {join} from "path";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {
   cleanId,
   Db,
@@ -13,7 +14,12 @@ import {
   requireUid,
   toRecord,
 } from "../feed/shared";
-import {convertVoiceToM4a, defaultTtsModel, synthesizePcm} from "./voice";
+import {writeMedia} from "./draftWrites";
+import {readableStorageUrl} from "./storageUrl";
+import {convertVoiceToM4a, synthesizePcm} from "./voice";
+import {
+  openRouterApiKey, openRouterConfig, ttsPcmSampleRate,
+} from "../config/ai";
 
 /** Raw PCM take from the TTS provider. */
 export interface VoiceTake {
@@ -47,23 +53,17 @@ export interface GenerateNodeVoiceResult {
   ttsApproved: boolean;
 }
 
-/** Default TTS voice, matching the seed fixtures. */
-const defaultVoice = "Kore";
-
-/** Narrator direction sent with every take. */
-const defaultInstructions =
-  "Off-screen narrator, one take. " +
-  "Do not add, translate, or repeat words. " +
-  "Speak natural American English.";
-
 /**
  * Synthesizes the approved narrator line into a voice take. Gated on the
  * approved line: the line must be approved first, and every take (including
  * another take of the same line) stores fresh bytes and clears the voice
  * approval, so the author previews before the take counts.
  */
-export const generateNodeVoice = onCall(
-  {enforceAppCheck: !isEmulator(), maxInstances: 10},
+export const generateNodeVoice = onCallSafe(
+  {
+    enforceAppCheck: !isEmulator(), maxInstances: 10,
+    secrets: [openRouterApiKey],
+  },
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeVoiceWith(
@@ -127,22 +127,15 @@ export const generateNodeVoiceWith = async (
   }
 
   const synthesize = deps.synthesize ?? defaultSynthesize();
-  if (!synthesize) {
-    await nodeRef.set({ttsStatus: "pending"}, {merge: true});
-    return {
-      nodeId,
-      ttsStatus: "pending",
-      ttsAudioUrl: optString(node.ttsAudioUrl),
-      ttsDurationSeconds: optDuration(node.ttsDurationSeconds),
-      ttsApproved: node.ttsApproved === true,
-    };
-  }
+  if (!synthesize) throw new HttpsError("failed-precondition", "TTS provider credentials are missing.");
+  await writeMedia(db, storyId, nodeId, {ttsStatus: "pending", generationKind: "voice",
+    generationPhase: "generating", mediaError: null});
 
   let pcm: Buffer;
   try {
     pcm = (await synthesize(text)).pcm;
   } catch (error) {
-    await nodeRef.set({ttsStatus: "failed"}, {merge: true});
+    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
     throw new HttpsError(
       "internal",
       `Voice generation failed: ${(error as Error).message}`
@@ -151,31 +144,41 @@ export const generateNodeVoiceWith = async (
   const convert = deps.convertTake ?? defaultConvertTake;
   let take: ConvertedTake;
   try {
+    await writeMedia(db, storyId, nodeId, {generationPhase: "processing"});
     take = await convert(pcm);
   } catch (error) {
-    await nodeRef.set({ttsStatus: "failed"}, {merge: true});
+    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
     throw new HttpsError(
       "internal",
       `Voice conversion failed: ${(error as Error).message}`
     );
   }
   if (!optDuration(take.durationSeconds)) {
-    await nodeRef.set({ttsStatus: "failed"}, {merge: true});
+    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
     throw new HttpsError("internal", "Voice take has no duration.");
   }
   const hash = createHash("sha256")
     .update(take.bytes).digest("hex").slice(0, 8);
   const upload = deps.uploadVoice ?? defaultUploadVoice();
-  const url = await upload({storyId, nodeId, hash, bytes: take.bytes});
+  let url: string;
+  try { url = await upload({storyId, nodeId, hash, bytes: take.bytes}); }
+  catch (error) {
+    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null,
+      generationPhase: null, mediaError: (error as Error).message});
+    throw error;
+  }
 
-  await nodeRef.set(
+  await writeMedia(db, storyId, nodeId,
     {
       ttsAudioUrl: url,
       ttsStatus: "ready",
       ttsDurationSeconds: take.durationSeconds,
-      ttsApproved: false,
-    },
-    {merge: true}
+      ttsApproved: false, generationKind: null, generationPhase: null, mediaError: null,
+    }, (fresh) => {
+      if (fresh.ttsText !== text || fresh.lineApproved !== true) {
+        throw new HttpsError("aborted", "The narrator line changed while generating voice.");
+      }
+    }
   );
   return {
     nodeId,
@@ -194,17 +197,16 @@ export const generateNodeVoiceWith = async (
 const defaultSynthesize = ():
   | ((text: string) => Promise<VoiceTake>)
   | null => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const config = openRouterConfig();
+  const apiKey = config.apiKey;
   if (!apiKey) return null;
-  const voice = process.env.OPENROUTER_TTS_VOICE ?? defaultVoice;
-  const model = process.env.OPENROUTER_TTS_MODEL ?? defaultTtsModel;
   return async (text: string) => ({
     pcm: await synthesizePcm({
       apiKey,
-      model,
-      voice,
+      model: config.ttsModel,
+      voice: config.ttsVoice,
       text,
-      instructions: defaultInstructions,
+      instructions: config.ttsInstructions || undefined,
     }),
   });
 };
@@ -219,7 +221,7 @@ const defaultConvertTake = async (pcm: Buffer): Promise<ConvertedTake> => {
   try {
     const src = join(dir, "take.pcm");
     await writeFile(src, pcm);
-    const out = await convertVoiceToM4a(src, dir);
+    const out = await convertVoiceToM4a(src, dir, ttsPcmSampleRate());
     const bytes = await readFile(out.path);
     return {bytes, durationSeconds: out.durationSeconds};
   } finally {
@@ -239,11 +241,7 @@ const defaultUploadVoice = (): NonNullable<NodeVoiceDeps["uploadVoice"]> => {
     const bucket = admin.storage().bucket();
     const file = bucket.file(path);
     await file.save(args.bytes, {metadata: {contentType: "audio/mp4"}});
-    const [url] = await file.getSignedUrl({
-      action: "read",
-      expires: "2100-01-01",
-    });
-    return url;
+    return readableStorageUrl(file);
   };
 };
 

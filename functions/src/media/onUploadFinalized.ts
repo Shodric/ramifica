@@ -6,9 +6,12 @@ import {tmpdir} from "os";
 import {join} from "path";
 import {promisify} from "util";
 import {onObjectFinalized} from "firebase-functions/v2/storage";
+import {mediaProfile} from "../config/ai";
+import {draftTransaction, writeMedia} from "./draftWrites";
 import {Db, docData} from "../feed/shared";
 import {ffmpegBin} from "./bin";
 import {ProcessedVideo, processVideo} from "./processVideo";
+import {readableStorageUrl} from "./storageUrl";
 
 const run = promisify(execFile);
 
@@ -181,20 +184,20 @@ export const finalizeUploadWith = async (
 
   const tools = deps.hasTools ?? defaultHasTools;
   if (!(await tools())) {
-    await nodeRef.set(
+    await writeMedia(db, storyId, nodeId,
       {
         videoSource: "upload",
-        videoStatus: node.videoStatus === "ready" ? "ready" : "pending",
+        videoStatus: "failed",
+        generationKind: null, generationPhase: null,
         uploadObjectName: name,
         uploadGeneration: object.generation ?? null,
         uploadTakeId: takeId,
         uploadError: "encode-unavailable",
       },
-      {merge: true}
     );
     await safeDelete(deps, name);
     return {
-      status: "pending",
+      status: "rejected",
       storyId,
       nodeId,
       uploadError: "encode-unavailable",
@@ -209,6 +212,7 @@ export const finalizeUploadWith = async (
   try {
     const suffix = name.toLowerCase().endsWith(".mov") ? ".mov" : ".mp4";
     const inputPath = join(dir, `input${suffix}`);
+    await writeMedia(db, storyId, nodeId, {generationKind: "video", generationPhase: "processing", uploadError: null});
     await download(name, inputPath);
     const out = await process(inputPath, dir);
     const frameBytes = await readLocal(out.lastFramePath);
@@ -232,7 +236,10 @@ export const finalizeUploadWith = async (
       "image/png"
     );
     const desynced = await childIdsDesyncedBy(db, storyId, nodeId, endHash);
-    await db.runTransaction(async (tx) => {
+    await draftTransaction(db, storyId, async (tx) => {
+      const current = await tx.get(nodeRef);
+      if (!current.exists) throw new Error("Node was deleted while processing the upload.");
+      const children = await Promise.all(desynced.map((id) => tx.get(db.doc(`stories/${storyId}/nodes/${id}`))));
       tx.set(
         nodeRef,
         {
@@ -242,6 +249,10 @@ export const finalizeUploadWith = async (
           videoJobId: `upload_${object.generation ?? "local"}`,
           videoToHash: endHash,
           durationSeconds: out.durationSeconds,
+          videoWidth: out.width, videoHeight: out.height,
+          endImageWidth: mediaProfile.width, endImageHeight: mediaProfile.height,
+          generationKind: null, generationPhase: null,
+          videoFrameLastBlurData: out.lastBlurData,
           videoFrameLastUrl: frameUrl,
           endImageSourceUrl: frameUrl,
           endImageStatus: "ready",
@@ -255,7 +266,7 @@ export const finalizeUploadWith = async (
         },
         {merge: true}
       );
-      for (const childId of desynced) {
+      for (const childId of desynced.filter((_, i) => children[i].exists)) {
         tx.set(
           db.doc(`stories/${storyId}/nodes/${childId}`),
           {videoStatus: "idle", videoUrl: null},
@@ -266,14 +277,14 @@ export const finalizeUploadWith = async (
     await safeDelete(deps, name);
     return {status: "ready", storyId, nodeId, videoUrl, endHash};
   } catch (error) {
-    await nodeRef.set(
+    await writeMedia(db, storyId, nodeId,
       {
         uploadObjectName: name,
         uploadGeneration: object.generation ?? null,
         uploadTakeId: takeId,
-        uploadError: "encode-failed",
+        uploadError: "encode-failed", videoStatus: "failed",
+        generationKind: null, generationPhase: null,
       },
-      {merge: true}
     );
     await safeDelete(deps, name);
     throw error;
@@ -339,18 +350,15 @@ const rejectOnNode = async (
   takeId: string | null
 ): Promise<void> => {
   try {
-    const snap = await db.doc(`stories/${storyId}/nodes/${nodeId}`).get();
-    if (snap.exists) {
-      await db
-        .doc(`stories/${storyId}/nodes/${nodeId}`)
-        .set(
-          {uploadObjectName: name, uploadError: code, uploadTakeId: takeId},
-          {merge: true}
-        );
+    const target = parseUploadName(name);
+    const snap = await db.doc(`stories/${storyId}`).get();
+    const story = snap.exists ? docData(snap, "Story") : {};
+    if (story.authorId === target?.uid && story.status === "draft") {
+      await writeMedia(db, storyId, nodeId, {uploadObjectName: name,
+        uploadError: code, uploadTakeId: takeId, generationKind: null,
+        generationPhase: null}).catch(() => undefined);
     }
-  } finally {
-    await safeDelete(deps, name);
-  }
+  } finally { await safeDelete(deps, name); }
 };
 
 /**
@@ -433,7 +441,7 @@ const defaultDownload = async (
  * @param {string} destPath Destination object name.
  * @param {Buffer} bytes Derived bytes.
  * @param {string} contentType MIME type.
- * @return {Promise<string>} The signed read URL.
+ * @return {Promise<string>} The read URL.
  */
 const defaultUploadBytes = async (
   destPath: string,
@@ -442,11 +450,7 @@ const defaultUploadBytes = async (
 ): Promise<string> => {
   const file = admin.storage().bucket().file(destPath);
   await file.save(bytes, {metadata: {contentType}});
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: "2100-01-01",
-  });
-  return url;
+  return readableStorageUrl(file);
 };
 
 /**

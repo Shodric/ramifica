@@ -74,8 +74,11 @@ class MemRef implements DbRef {
   }
 }
 
-/** In-memory collection: doc() plus stubs that throw, like the real use. */
+/** In-memory collection with chained filters, like a Firestore query. */
 class MemCol implements DbCol {
+  private filters: Array<(fields: Fields) => boolean> = [];
+  private take?: number;
+
   /**
    * @param {MemDb} db Backing store.
    * @param {string} path Collection path.
@@ -92,20 +95,21 @@ class MemCol implements DbCol {
   }
 
   /**
-   * Unused stub: node tests never query.
+   * Narrows the query to docs whose field strictly equals the value.
    * @param {string} field Field name.
    * @param {string} op Only `==`.
    * @param {unknown} value Expected value.
+   * @return {DbCol} The filtered query.
    */
   where(field: string, op: string, value: unknown): DbCol {
-    void field;
-    void op;
-    void value;
-    throw new Error("MemCol.where is not stubbed.");
+    const next = this.child();
+    if (op !== "==") throw new Error(`unsupported op ${op}`);
+    next.filters.push((fields) => fields[field] === value);
+    return next;
   }
 
   /**
-   * Unused stub: node tests never query.
+   * Unused stub: node tests never order.
    * @param {string} field Field name.
    * @param {string} dir Sort direction.
    */
@@ -116,35 +120,53 @@ class MemCol implements DbCol {
   }
 
   /**
-   * Unused stub: node tests never query.
+   * Caps the matches, like the idempotency lookup's `limit(1)`.
    * @param {number} n Max docs.
+   * @return {DbCol} The limited query.
    */
   limit(n: number): DbCol {
-    void n;
-    throw new Error("MemCol.limit is not stubbed.");
+    const next = this.child();
+    next.take = n;
+    return next;
   }
 
   /**
-   * Lists direct children, by id. Delete guards scan choices this way.
+   * Lists direct children, by id, honoring `where`/`limit`. Delete guards
+   * scan choices this way; the idempotency lookup filters by `requestId`.
    * @return {Promise<Object>} Whether empty, plus the doc snapshots.
    */
   async get(): Promise<{empty: boolean; docs: DbDoc[]}> {
     const prefix = `${this.path}/`;
-    const docs: DbDoc[] = [];
+    let docs: DbDoc[] = [];
     for (const [key, fields] of this.db.store) {
       if (!key.startsWith(prefix)) continue;
       if (key.slice(prefix.length).includes("/")) continue;
       docs.push(new MemDoc(true, key.slice(prefix.length), fields));
     }
+    for (const match of this.filters) {
+      docs = docs.filter((doc) => match(doc.data() ?? {}));
+    }
     docs.sort((left, right) => (left.id < right.id ? -1 : 1));
+    if (this.take !== undefined) docs = docs.slice(0, this.take);
     return {empty: docs.length === 0, docs};
+  }
+
+  /** @return {MemCol} The forked query. */
+  private child(): MemCol {
+    const next = new MemCol(this.db, this.path);
+    next.filters = [...this.filters];
+    next.take = this.take;
+    return next;
   }
 }
 
-/** In-memory Firestore. Transactions run the callback once, inline. */
+/** In-memory Firestore. Transactions serialize: each body runs to
+ * completion before the next starts, like Firestore's serializable
+ * retries, so concurrent same-key calls deterministically dedupe. */
 class MemDb implements Db {
   readonly store = new Map<string, Fields>();
   autoId = 0;
+  private tail: Promise<void> = Promise.resolve();
 
   /**
    * @param {string} path Full doc path.
@@ -164,6 +186,16 @@ class MemDb implements Db {
 
   /** @param {Function} fn Transaction body. */
   async runTransaction<T>(fn: (tx: DbTx) => Promise<T>): Promise<T> {
+    const run = this.tail.then(() => fn(this.makeTx()));
+    this.tail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  /** @return {DbTx} A transaction over the shared store. */
+  private makeTx(): DbTx {
     // Delete rides along untyped: the Db surface stays get/set/update.
     const tx = {
       get: (ref: DbRef) => ref.get(),
@@ -176,7 +208,7 @@ class MemDb implements Db {
         ref.update(data),
       delete: (ref: DbRef) => (ref as unknown as MemRef).delete(),
     };
-    return fn(tx);
+    return tx;
   }
 }
 
@@ -331,6 +363,216 @@ test("createNode rejects bad callers and targets", async () => {
   );
 });
 
+test("createNode without a key always creates a fresh child", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const first = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001"}
+  );
+  const second = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001"}
+  );
+  assert.notEqual(first.nodeId, second.nodeId);
+  const stored = await db
+    .doc(`stories/story_draft/nodes/${second.nodeId}`)
+    .get();
+  assert.equal("requestId" in (stored.data() ?? {}), false);
+});
+
+test("createNode reuses the child stored for the same key", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const key = "v1:u1:story_draft:node_001:A";
+  const first = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+  );
+  const created = await db
+    .doc(`stories/story_draft/nodes/${first.nodeId}`)
+    .get();
+  assert.equal(created.data()?.requestId, key);
+  // An edit between the calls must survive the replay untouched.
+  await db
+    .doc(`stories/story_draft/nodes/${first.nodeId}`)
+    .update({title: "Kept"});
+  const second = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+  );
+  assert.equal(second.nodeId, first.nodeId);
+  const stored = await db
+    .doc(`stories/story_draft/nodes/${first.nodeId}`)
+    .get();
+  assert.equal(stored.data()?.title, "Kept");
+  assert.equal(stored.data()?.requestId, key);
+  assert.equal(stored.data()?.startFromNodeId, "node_001");
+  const listed = await db.collection("stories/story_draft/nodes").get();
+  assert.equal(listed.docs.length, 2);
+  const story = await db.doc("stories/story_draft").get();
+  assert.equal(story.data()?.rootNodeId, "node_001");
+});
+
+test("createNode dedupes concurrent calls with the same key", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const key = "v1:u1:story_draft:node_001:A";
+  const calls = Array.from({length: 5}, () =>
+    createNodeWith(
+      db,
+      "u1",
+      {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+    )
+  );
+  const results = await Promise.all(calls);
+  for (const result of results) {
+    assert.equal(result.nodeId, results[0].nodeId);
+  }
+  const listed = await db.collection("stories/story_draft/nodes").get();
+  assert.equal(listed.docs.length, 2);
+});
+
+test("createNode isolates keys by story", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_other").set({
+    authorId: "u1",
+    title: "Other",
+    synopsis: "",
+    status: "draft",
+    rootNodeId: null,
+  });
+  const key = "v1:u1:shared:A";
+  const inDraft = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+  );
+  const inOther = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_other", requestId: key}
+  );
+  assert.notEqual(inDraft.nodeId, inOther.nodeId);
+  const other = await db
+    .doc(`stories/story_other/nodes/${inOther.nodeId}`)
+    .get();
+  assert.equal(other.data()?.requestId, key);
+  assert.equal(other.data()?.startFromNodeId, null);
+});
+
+test("createNode isolates a reused key by parent", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const key = "v1:u1:story_draft:node_001:A";
+  const first = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+  );
+  const replay = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: first.nodeId, requestId: key}
+  );
+  assert.notEqual(replay.nodeId, first.nodeId);
+  const stored = await db
+    .doc(`stories/story_draft/nodes/${first.nodeId}`)
+    .get();
+  assert.equal(stored.data()?.startFromNodeId, "node_001");
+  const listed = await db.collection("stories/story_draft/nodes").get();
+  assert.equal(listed.docs.length, 3);
+});
+
+test("createNode stores the key on the root of a new story", async () => {
+  const db = new MemDb();
+  const key = "v1:u1:story_new::A";
+  const first = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_new", requestId: key}
+  );
+  const replay = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_new", requestId: key}
+  );
+  assert.equal(replay.nodeId, first.nodeId);
+  const story = await db.doc("stories/story_new").get();
+  assert.equal(story.data()?.rootNodeId, first.nodeId);
+  const listed = await db.collection("stories/story_new/nodes").get();
+  assert.equal(listed.docs.length, 1);
+});
+
+test("createNode validates before reusing a key", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const key = "v1:u1:story_draft:node_001:A";
+  const first = await createNodeWith(
+    db,
+    "u1",
+    {storyId: "story_draft", parentNodeId: "node_001", requestId: key}
+  );
+  const hostile = {
+    storyId: "story_draft",
+    parentNodeId: "node_001",
+    requestId: key,
+  };
+  await assert.rejects(
+    createNodeWith(db, "u2", hostile),
+    (error: unknown) => (error as {code?: string}).code === "permission-denied"
+  );
+  await assert.rejects(
+    createNodeWith(
+      db,
+      "u1",
+      {storyId: "story_pub", parentNodeId: "node_p1", requestId: key}
+    ),
+    (error: unknown) =>
+      (error as {code?: string}).code === "failed-precondition"
+  );
+  await assert.rejects(
+    createNodeWith(
+      db,
+      "u1",
+      {storyId: "story_draft", parentNodeId: "node_nope", requestId: key}
+    ),
+    (error: unknown) => (error as {code?: string}).code === "not-found"
+  );
+  await assert.rejects(
+    createNodeWith(db, "", hostile),
+    (error: unknown) => (error as {code?: string}).code === "unauthenticated"
+  );
+  const stored = await db
+    .doc(`stories/story_draft/nodes/${first.nodeId}`)
+    .get();
+  assert.equal(stored.data()?.requestId, key);
+  const listed = await db.collection("stories/story_draft/nodes").get();
+  assert.equal(listed.docs.length, 2);
+});
+
+test("saveNode ignores requestId outside the author whitelist", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      title: "New title",
+      requestId: "v1:u1:story_draft:node_001:A",
+    },
+  });
+  const node = await db.doc("stories/story_draft/nodes/node_001").get();
+  const saved = node.data() ?? {};
+  assert.equal(saved.title, "New title");
+  assert.equal("requestId" in saved, false);
+});
+
 test("saveNode persists the whitelist and ignores the rest", async () => {
   const db = new MemDb();
   await seedDraft(db);
@@ -463,6 +705,53 @@ test("saveNode supports partial updates", async () => {
   const node = await db.doc("stories/story_draft/nodes/node_001").get();
   assert.equal(node.data()?.title, "Only this");
   assert.equal(node.data()?.ttsText, "Old line.");
+});
+
+test("saveNode stores author prompts and clears on blank", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      startImagePrompt: "  Wide dawn establishing shot  ",
+      endImagePrompt: "Close on the gate",
+      videoPrompt: "Slow push in",
+    },
+  });
+  const saved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(saved.startImagePrompt, "Wide dawn establishing shot");
+  assert.equal(saved.endImagePrompt, "Close on the gate");
+  assert.equal(saved.videoPrompt, "Slow push in");
+  await saveNodeWith(db, "u1", {
+    storyId: "story_draft",
+    node: {
+      nodeId: "node_001",
+      startImagePrompt: "   ",
+      endImagePrompt: null,
+      videoPrompt: "",
+    },
+  });
+  const cleared =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(cleared.startImagePrompt, null);
+  assert.equal(cleared.endImagePrompt, null);
+  assert.equal(cleared.videoPrompt, null);
+});
+
+test("saveNode rejects overlong media prompts", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  for (const field of ["startImagePrompt", "endImagePrompt", "videoPrompt"]) {
+    await assert.rejects(
+      saveNodeWith(db, "u1", {
+        storyId: "story_draft",
+        node: {nodeId: "node_001", [field]: "x".repeat(2001)},
+      }),
+      (error: unknown) => (error as {code?: string}).code === "invalid-argument"
+    );
+  }
 });
 
 test("saveNode approves the line and voice without new words", async () => {

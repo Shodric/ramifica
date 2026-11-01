@@ -1,5 +1,7 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
+import {aiDefaults, metaApiKey, metaConfig} from "../config/ai";
 import {
   cleanId,
   Db,
@@ -11,14 +13,18 @@ import {
   toRecord,
 } from "../feed/shared";
 import {
-  completeChat,
-  OpenRouterFetch,
-  OpenRouterHttpError,
-} from "../media/openrouter";
+  completeChatMeta,
+  MetaFetch,
+  MetaHttpError,
+} from "../media/meta";
 
-/** One proposed choice label for a decision node. */
+/** One proposed choice: label plus optional hotspot styling. Unknown
+ * icon/color names fail closed to null, so the client draws its index
+ * fallback the way legacy choices without icons do. */
 export interface GeneratedChoice {
   label: string;
+  icon: string | null;
+  iconColor: string | null;
 }
 
 /** Proposed node text. Nulls mean the provider offered nothing usable. */
@@ -27,20 +33,23 @@ export interface GenerateNodeTextResult {
   ttsText: string | null;
   choices: GeneratedChoice[];
   endingName: string | null;
+  startImagePrompt: string | null;
+  endImagePrompt: string | null;
+  videoPrompt: string | null;
 }
 
 /** Minimal POST surface the text provider needs; keeps tests offline. */
-export type TextFetch = OpenRouterFetch;
+export type TextFetch = MetaFetch;
 
-/** Injectable provider pieces so tests run without OpenRouter. */
+/** Injectable provider pieces so tests run without Meta. */
 export interface TextGenDeps {
   apiKey?: string;
   model?: string;
   fetchFn?: TextFetch;
 }
 
-/** Default chat model; override with OPENROUTER_TEXT_MODEL. */
-const defaultTextModel = "meta/muse-spark-1.3-contributor";
+/** Default chat model; override with META_TEXT_MODEL. */
+export const defaultTextModel = aiDefaults.meta.textModel;
 
 /**
  * Cost guard: author prompt plus context past this is rejected, so one
@@ -48,23 +57,82 @@ const defaultTextModel = "meta/muse-spark-1.3-contributor";
  */
 const maxPromptChars = 2000;
 
-/** Cost guard: the provider answer is cut off past this many tokens. */
-const maxTokens = 500;
-
 /** Narrator lines past this are clipped; the player reads them verbatim. */
 const maxTtsChars = 280;
 
-/** What Spark is allowed to propose: node text fields only, as JSON. */
+/** Media prompts past this are clipped; mirrors generateNodeMedia builds. */
+const maxMediaPromptChars = 2000;
+
+/** Choice labels past this are clipped, like every label field. */
+const maxLabelChars = 24;
+
+/** At most two choices: the canvas draws slots A/B only. */
+const maxChoices = 2;
+
+/**
+ * Hotspot icon names the text proposal may use. Mirrors
+ * `lib/core/widgets/choice_icon.dart` (`choiceIconOptions`) and the
+ * shared `catalog.json` reference; unknown names fail closed to null.
+ */
+export const knownChoiceIcons: readonly string[] = [
+  "mountain", "forest", "lightning", "key", "unlock", "shield",
+  "fingerprint", "compass", "door", "star", "heart", "eye", "sun",
+  "moon", "fire", "water", "castle", "anchor", "ship", "plane", "car",
+  "run", "walk", "diamond", "flag", "map", "home", "beach", "snow",
+  "trophy", "rocket", "bulb", "pets", "leaf", "music", "dice",
+  "puzzle", "camera", "food", "coffee", "masks", "sparkles",
+  "question", "lock", "clock", "tree", "gift", "book",
+];
+
+/**
+ * Hotspot color names the text proposal may use. Mirrors
+ * `lib/core/widgets/choice_icon.dart` (`choiceColorOptions`) and the
+ * shared `catalog.json` reference; unknown names fail closed to null.
+ */
+export const knownChoiceIconColors: readonly string[] = [
+  "cyan", "blue", "violet", "pink", "red", "orange", "gold", "green",
+  "mint", "white",
+];
+
+/** What Spark is allowed to propose: node text and media prompts, as JSON. */
 const systemPrompt = [
   "You write micro-fiction text for Ramifica, a vertical-video story app.",
-  "Propose node text fields only: a title of 1-40 characters, one narrator",
-  "line of one or two sentences, one or two choice labels of 1-24 characters",
-  "each for decision nodes, and an ending name for ending nodes.",
+  "Each node plays as a vertical 9:16 clip with no on-screen text: ",
+  "propose a title of 1-40 characters, one narrator line of one or two ",
+  "sentences, and matching visual prompts: a start image prompt (opening ",
+  "establishing frame), an end image prompt (closing payoff frame, ",
+  "continuous with the start frame), and a video prompt (slow morph from ",
+  "start to end). Keep each media prompt photorealistic and under 2000 ",
+  "characters.",
+  "For decision nodes propose one or two choices: each a label of 1-24 ",
+  "characters naming the moment of choosing, with an icon and iconColor ",
+  "picked from the lists below. For ending nodes propose an ending name ",
+  "of 1-40 characters and no choices.",
+  `Icons: ${knownChoiceIcons.join(", ")}.`,
+  `Colors: ${knownChoiceIconColors.join(", ")}.`,
   "Write in the same language as the story context; default to Spanish.",
   "Answer with a single JSON object only, no fences or commentary:",
   "{\"title\": string|null, \"ttsText\": string|null,",
-  "\"choices\": [{\"label\": string}], \"endingName\": string|null}.",
+  "\"choices\": [{\"label\": string, \"icon\": string|null,",
+  "\"iconColor\": string|null}], \"endingName\": string|null,",
+  "\"startImagePrompt\": string|null, \"endImagePrompt\": string|null,",
+  "\"videoPrompt\": string|null}.",
 ].join(" ");
+
+/** Narration is heard after the clip, at the decision point. */
+const narrationPrompt = [
+  "Write the narrator line for an interactive story's decision point.",
+  "The clip has already ended. The player hears this line just before",
+  "choosing one of the current options. Ground it in the closing frame",
+  "and those options. Invite a choice without making it for the player",
+  "or revealing its outcome. Do not narrate the whole clip or premise.",
+  "For an ending, close the ending without inventing a choice.",
+  "Use one or two short sentences, at most 280 characters.",
+  "Match the story's language; default to Spanish.",
+  "Return only JSON: {\"ttsText\": string}.",
+].join(" ");
+
+type TextPurpose = "scene" | "narration" | null;
 
 /**
  * Spark proposes node text: title, narrator line, choice labels, and (for
@@ -73,9 +141,12 @@ const systemPrompt = [
  * explicit save the author approves, so generated text never overwrites
  * manual edits unasked.
  */
-export const generateNodeText = onCall(
+export const generateNodeText = onCallSafe(
   // Lower ceiling than the player paths: text calls bill per token.
-  {enforceAppCheck: !isEmulator(), maxInstances: 10},
+  {
+    enforceAppCheck: !isEmulator(), maxInstances: 10,
+    secrets: [metaApiKey],
+  },
   async (req) => {
     const uid = requireUid(req.auth);
     return generateNodeTextWith(
@@ -106,6 +177,10 @@ export const generateNodeTextWith = async (
   const fields = toRecord(data);
   const storyId = cleanId(fields.storyId, "storyId");
   const nodeId = optionalId(fields.nodeId);
+  const purpose = optString(fields.purpose);
+  if (purpose !== null && purpose !== "scene" && purpose !== "narration") {
+    throw new HttpsError("invalid-argument", "Unknown text purpose.");
+  }
   const authorText = [optString(fields.prompt), optString(fields.context)]
     .filter((part): part is string => part !== null)
     .join("\n\n");
@@ -129,7 +204,9 @@ export const generateNodeTextWith = async (
   }
 
   let isEnding: boolean | null = null;
+  let isChild = false;
   let current: {[field: string]: unknown} | null = null;
+  const rootId = optString(story.rootNodeId);
   if (nodeId !== null) {
     const nodeSnap = await db.doc(`stories/${storyId}/nodes/${nodeId}`).get();
     if (!nodeSnap.exists) {
@@ -137,10 +214,25 @@ export const generateNodeTextWith = async (
     }
     current = docData(nodeSnap, "Node");
     isEnding = current.isEnding === true;
+    // Non-root nodes inherit the S frame from their parent, so they
+    // carry no start prompt of their own.
+    isChild = rootId !== null && rootId !== nodeId;
+  } else {
+    // A new node in a story that already has a root will be attached as
+    // a child; only the first node is a root.
+    isChild = rootId !== null;
   }
 
-  const content = await completeText(story, current, authorText, deps);
-  return sanitizeProposal(content, isEnding);
+  const content = await completeText(story, current, authorText, deps, purpose);
+  const proposal = sanitizeProposal(content, isEnding, isChild);
+  if (purpose === "scene") return {...proposal, ttsText: null};
+  if (purpose === "narration") {
+    return {
+      title: null, ttsText: proposal.ttsText, choices: [], endingName: null,
+      startImagePrompt: null, endImagePrompt: null, videoPrompt: null,
+    };
+  }
+  return proposal;
 };
 
 /**
@@ -158,40 +250,45 @@ export const asFields = (value: unknown): {[field: string]: unknown} | null => {
   return fields;
 };
 /**
- * Asks OpenRouter for the node text and returns the raw answer string.
+ * Asks Meta for the node text and returns the raw answer string.
  * @param {Object} story Draft story fields for context.
  * @param {Object} node Node fields for context, or null without a node.
  * @param {string} authorText Author prompt plus context, already capped.
  * @param {TextGenDeps} deps Provider overrides for tests.
+ * @param {TextPurpose} purpose Scene, decision narration, or legacy full text.
  * @return {Promise<string>} The raw provider answer.
  */
 const completeText = async (
   story: {[field: string]: unknown},
   node: {[field: string]: unknown} | null,
   authorText: string,
-  deps: TextGenDeps
+  deps: TextGenDeps,
+  purpose: TextPurpose
 ): Promise<string> => {
-  const apiKey = deps.apiKey ?? process.env.OPENROUTER_API_KEY;
+  const config = metaConfig();
+  const apiKey = deps.apiKey ?? config.apiKey;
   if (!apiKey) {
     throw new HttpsError(
       "failed-precondition",
       "Text generation is not configured."
     );
   }
-  const model =
-    deps.model ?? process.env.OPENROUTER_TEXT_MODEL ?? defaultTextModel;
+  const model = deps.model ?? config.textModel;
   let content: string;
   try {
-    content = await completeChat({
+    content = await completeChatMeta({
       apiKey,
       model,
-      system: systemPrompt,
-      user: userPrompt(story, node, authorText),
-      maxTokens,
+      system: purpose === "narration" ? narrationPrompt :
+        purpose === "scene" ? systemPrompt +
+          " This request is for the scene only. Set ttsText to null; " +
+          "the decision narration is authored separately in the Voice step." :
+          systemPrompt,
+      user: userPrompt(story, node, authorText, purpose),
       fetchFn: deps.fetchFn,
     });
   } catch (error) {
-    if (error instanceof OpenRouterHttpError) {
+    if (error instanceof MetaHttpError) {
       throw new HttpsError(
         "unavailable",
         `Text generation failed: ${error.status}.`
@@ -224,12 +321,14 @@ const labelOf = (item: unknown): unknown => {
  * @param {Object} story Draft story fields.
  * @param {Object} node Node fields, or null without a node.
  * @param {string} authorText Author prompt plus context.
+ * @param {TextPurpose} purpose Requested text scope.
  * @return {string} The user message.
  */
 const userPrompt = (
   story: {[field: string]: unknown},
   node: {[field: string]: unknown} | null,
-  authorText: string
+  authorText: string,
+  purpose: TextPurpose
 ): string => {
   const lines = [
     `Story title: ${optString(story.title) ?? "(untitled)"}.`,
@@ -239,6 +338,10 @@ const userPrompt = (
   if (node !== null) {
     const title = optString(node.title);
     if (title !== null) lines.push(`Current node title: ${title}.`);
+    if (purpose === "narration") {
+      const closing = optString(node.endImagePrompt);
+      if (closing !== null) lines.push(`Closing frame: ${closing}.`);
+    }
     const line = optString(node.ttsText);
     if (line !== null) lines.push(`Current narrator line: ${line}.`);
     if (Array.isArray(node.choices)) {
@@ -255,8 +358,10 @@ const userPrompt = (
     }
     lines.push(
       node.isEnding === true ?
-        "This node is an ending: propose an ending name, no choices." :
-        "This node is a decision: propose one or two choice labels."
+        "This node is an ending: close its final beat, no choices." :
+        purpose === "narration" ?
+          "This node is a decision: speak just before the player chooses." :
+          "This node is a decision: propose one or two choice labels."
     );
   } else {
     lines.push("No node is open: propose text for a new node.");
@@ -268,13 +373,18 @@ const userPrompt = (
 
 /**
  * Parses and clamps the provider answer to the node text contract.
+ * Endings carry no choices; child nodes carry no start prompt (the S
+ * frame is inherited). Legacy answers — plain-string choices, missing
+ * prompts — still parse.
  * @param {string} content Raw provider answer.
  * @param {boolean} isEnding Whether the target node is an ending.
+ * @param {boolean} isChild Whether the target node inherits S from a parent.
  * @return {GenerateNodeTextResult} The proposal, never a write.
  */
 const sanitizeProposal = (
   content: string,
-  isEnding: boolean | null
+  isEnding: boolean | null,
+  isChild: boolean
 ): GenerateNodeTextResult => {
   let parsed: unknown = null;
   try {
@@ -291,10 +401,23 @@ const sanitizeProposal = (
   const fields = asFields(parsed) ?? {};
   const title = clampText(fields.title, 40);
   const ttsText = clampText(fields.ttsText, maxTtsChars);
-  const choices = clampChoices(fields.choices);
+  const choices =
+    isEnding === true ? [] : clampChoices(fields.choices);
   const endingName =
     isEnding === false ? null : clampText(fields.endingName, 40);
-  return {title, ttsText, choices, endingName};
+  const startImagePrompt =
+    isChild ? null : clampText(fields.startImagePrompt, maxMediaPromptChars);
+  const endImagePrompt = clampText(fields.endImagePrompt, maxMediaPromptChars);
+  const videoPrompt = clampText(fields.videoPrompt, maxMediaPromptChars);
+  return {
+    title,
+    ttsText,
+    choices,
+    endingName,
+    startImagePrompt,
+    endImagePrompt,
+    videoPrompt,
+  };
 };
 
 /**
@@ -310,16 +433,35 @@ const clampText = (value: unknown, max: number): string | null => {
 };
 
 /**
- * Clamps the proposed labels to at most two non-blank choice labels.
+ * Clamps the proposed choices to at most two entries with clean labels
+ * and catalogued styling. Plain strings pass as labels (legacy answers);
+ * unknown icon/color names fail closed to null.
  * @param {unknown} value Raw `choices` value.
- * @return {GeneratedChoice[]} The clean labels.
+ * @return {GeneratedChoice[]} The clean choices.
  */
 const clampChoices = (value: unknown): GeneratedChoice[] => {
   if (!Array.isArray(value)) return [];
   const choices: GeneratedChoice[] = [];
-  for (const item of value.slice(0, 2)) {
-    const label = clampText(labelOf(item), 24);
-    if (label !== null) choices.push({label});
+  for (const item of value) {
+    if (choices.length >= maxChoices) break;
+    const label = clampText(labelOf(item), maxLabelChars);
+    if (label === null) continue;
+    const fields = asFields(item);
+    const icon =
+      fields !== null &&
+      typeof fields.icon === "string" &&
+      (knownChoiceIcons as readonly string[]).includes(fields.icon) ?
+        fields.icon :
+        null;
+    const iconColor =
+      fields !== null &&
+      typeof fields.iconColor === "string" &&
+      (knownChoiceIconColors as readonly string[]).includes(
+        fields.iconColor
+      ) ?
+        fields.iconColor :
+        null;
+    choices.push({label, icon, iconColor});
   }
   return choices;
 };

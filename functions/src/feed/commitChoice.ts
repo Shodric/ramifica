@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {fetchPlayback, PlaybackView} from "./playback";
 import {
   asRecord,
@@ -55,7 +56,7 @@ export interface CommitResult {
  * (`fromStoryId` + `endingNodeId` only), and grants the reward: all
  * idempotent, so replays, restarts, and re-commits never duplicate.
  */
-export const commitChoice = onCall(
+export const commitChoice = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

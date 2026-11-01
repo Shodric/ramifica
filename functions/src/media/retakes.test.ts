@@ -244,6 +244,7 @@ const seedRoot = (db: MemDb): void => {
  * @return {NodeMediaDeps} The mocked deps.
  */
 const imageDeps = (take: string): NodeMediaDeps => ({
+  normalizeImage: async (bytes) => ({bytes, width: 480, height: 854}),
   imageGen: async () => ({bytes: Buffer.from(take)}),
   uploadStill: async (args) =>
     `https://cdn.example/${args.nodeId}-${args.which}-${args.hash}.png`,
@@ -256,6 +257,11 @@ const imageDeps = (take: string): NodeMediaDeps => ({
  * @return {NodeMediaDeps} The mocked deps.
  */
 const videoDeps = (jobId: string, url: string): NodeMediaDeps => ({
+  downloadVideo: async () => Buffer.from(url),
+  normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854,
+    durationSeconds: 10, lastFrame: Buffer.from("frame"), lastBlurData: "blur"}),
+  uploadVideo: async () => url,
+  uploadStill: async () => "https://cdn.example/frame.png",
   requestVideo: async () => ({jobId, videoUrl: url}),
 });
 

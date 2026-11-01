@@ -332,38 +332,19 @@ test("duplicate dispatches converge on the same take", async () => {
   assert.equal(saved.ttsAudioUrl, first.ttsAudioUrl);
 });
 
-test("no credentials records pending and keeps last good bytes", async () => {
+test("missing TTS credentials fail immediately and preserve the last take", async () => {
   const key = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
   try {
     const db = new MemDb();
-    seedDraft(db, {
-      ttsAudioUrl: "https://cdn.example/old.m4a",
-      ttsStatus: "ready",
-      ttsDurationSeconds: 1.1,
-      ttsApproved: true,
-    });
-    const result = await generateNodeVoiceWith(
-      db,
-      "uid_a",
-      {storyId: "story_draft", nodeId: "node_001"},
-      {convertTake: async () => ({bytes: Buffer.from("x"), durationSeconds: 1})}
-    );
-    assert.deepEqual(result, {
-      nodeId: "node_001",
-      ttsStatus: "pending",
-      ttsAudioUrl: "https://cdn.example/old.m4a",
-      ttsDurationSeconds: 1.1,
-      ttsApproved: true,
-    });
-    const saved =
-      (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
-    assert.equal(saved.ttsStatus, "pending");
-    assert.equal(saved.ttsAudioUrl, "https://cdn.example/old.m4a");
-    assert.equal(saved.ttsApproved, true);
-  } finally {
-    if (key !== undefined) process.env.OPENROUTER_API_KEY = key;
-  }
+    seedDraft(db, {ttsAudioUrl: "https://cdn.example/old.m4a", ttsStatus: "ready"});
+    await assert.rejects(generateNodeVoiceWith(db, "uid_a", {
+      storyId: "story_draft", nodeId: "node_001",
+    }), (error: unknown) => (error as {code: string}).code === "failed-precondition");
+    const saved = (await db.doc("stories/story_draft/nodes/node_001").get()).data();
+    assert.equal(saved?.ttsStatus, "ready");
+    assert.equal(saved?.ttsAudioUrl, "https://cdn.example/old.m4a");
+  } finally { if (key !== undefined) process.env.OPENROUTER_API_KEY = key; }
 });
 
 test("provider failure marks failed and keeps last good bytes", async () => {

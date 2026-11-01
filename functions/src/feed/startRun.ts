@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {fetchPlayback} from "./playback";
 import {
   Db,
@@ -18,7 +19,7 @@ import {
  * the latest published one. `restart: true` starts a fresh run at the root
  * and marks it active; the old run stays `active` but stops being the one.
  */
-export const startRun = onCall(
+export const startRun = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

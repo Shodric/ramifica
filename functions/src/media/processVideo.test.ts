@@ -182,3 +182,38 @@ test("contentHash8 is stable and content-addressed", async () => {
     await rm(dir, {recursive: true, force: true});
   }
 });
+
+test("large stills are cropped to exactly 480x854 before hashing", async () => {
+  const {normalizeStill} = await import("./processVideo");
+  const {readFile, writeFile} = await import("fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "ramifica-still-profile-"));
+  try {
+    const src = join(dir, "large.png");
+    await run(ffmpegBin(), ["-y", "-v", "error", "-f", "lavfi", "-i",
+      "testsrc=size=1536x2688:duration=0.1", "-frames:v", "1", src]);
+    const before = await readFile(src);
+    const out = await normalizeStill(before);
+    assert.equal(out.width, 480); assert.equal(out.height, 854);
+    assert.notDeepEqual(out.bytes, before);
+    const saved = join(dir, "normalized.png");
+    await writeFile(saved, out.bytes);
+    assert.deepEqual(await probeSize(saved), {width: 480, height: 854});
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test("AI clips trim excess to 10 seconds; a six-second result fails without stretching", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ramifica-ai-profile-"));
+  try {
+    const input = join(dir, "long.mp4");
+    await run(ffmpegBin(), ["-y", "-v", "error", "-f", "lavfi", "-i",
+      "color=red:size=768x1344:rate=30:duration=10.5", "-f", "lavfi", "-i",
+      "sine=frequency=440:duration=10.5", "-c:v", "mpeg4", "-c:a", "aac", input]);
+    const out = await processVideo(input, dir, {generated: true});
+    assert.deepEqual(await probeSize(out.videoPath), {width: 480, height: 854});
+    assert.ok(Math.abs(out.durationSeconds - 10) <= 1 / 30);
+    assert.equal(await audioStreams(out.videoPath), 1);
+    const short = join(dir, "six.mp4");
+    await run(ffmpegBin(), ["-y", "-v", "error", "-i", input, "-t", "6", "-c", "copy", short]);
+    await assert.rejects(processVideo(short, dir, {generated: true}), /shorter than 10 seconds/);
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});

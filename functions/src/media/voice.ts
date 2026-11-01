@@ -2,8 +2,9 @@ import {execFile} from "child_process";
 import {join} from "path";
 import {promisify} from "util";
 import {probeDuration} from "./processVideo";
-import {OpenRouterFetch, OpenRouterHttpError, postBytes} from "./openrouter";
+import {OpenRouterFetch, OpenRouterHttpError, speakText} from "./openrouter";
 import {ffmpegBin} from "./bin";
+import {aiDefaults, openRouterConfig} from "../config/ai";
 
 const run = promisify(execFile);
 
@@ -21,22 +22,24 @@ export interface SynthesizeOptions {
   fetchFn?: OpenRouterFetch;
 }
 /** Default TTS model; override with OPENROUTER_TTS_MODEL. */
-export const defaultTtsModel = "google/gemini-3.8-flash-lite-tts";
+export const defaultTtsModel = aiDefaults.openRouter.ttsModel;
 
 /**
  * Converts an existing voice take (m4a, mp3, wav, or raw 24 kHz mono PCM)
  * to the app format: AAC mono 48 kbps `.m4a`.
  * @param {string} srcPath Source audio path.
  * @param {string} outDir Directory for the converted file.
+ * @param {number} pcmSampleRate Input sample rate for raw PCM takes.
  * @return {Promise<ConvertedVoice>} The converted file and its duration.
  */
 export const convertVoiceToM4a = async (
   srcPath: string,
-  outDir: string
+  outDir: string,
+  pcmSampleRate: number = aiDefaults.ttsPcmSampleRate
 ): Promise<ConvertedVoice> => {
   const path = join(outDir, "voz-converted.m4a");
   const input: string[] = srcPath.endsWith(".pcm") ?
-    ["-f", "s16le", "-ar", "24000", "-ac", "1", "-i", srcPath] :
+    ["-f", "s16le", "-ar", String(pcmSampleRate), "-ac", "1", "-i", srcPath] :
     ["-i", srcPath];
   await run(ffmpegBin(), [
     "-y",
@@ -70,19 +73,13 @@ export const synthesizePcm = async (
   options: SynthesizeOptions
 ): Promise<Buffer> => {
   try {
-    return await postBytes("https://openrouter.ai/api/v1/audio/speech", {
+    return await speakText({
       apiKey: options.apiKey,
       fetchFn: options.fetchFn,
-      title: "Ramifica seed",
-      body: {
-        model: options.model ?? defaultTtsModel,
-        input: options.text,
-        voice: options.voice,
-        response_format: "pcm",
-        ...(options.instructions === undefined ?
-          {} :
-          {instructions: options.instructions}),
-      },
+      model: options.model ?? openRouterConfig().ttsModel,
+      voice: options.voice,
+      text: options.text,
+      instructions: options.instructions,
     });
   } catch (error) {
     if (error instanceof OpenRouterHttpError) {

@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {fetchPlayback, PlaybackView} from "../feed/playback";
 import {
   cleanId,
@@ -16,7 +17,7 @@ import {findParentNodeId, readRunView, visitedNodeIds} from "./shared";
  * into it. Prefers this run's own hop, falls back to any visited
  * parent. Pure reads: history and status stay untouched.
  */
-export const playApproach = onCall(
+export const playApproach = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

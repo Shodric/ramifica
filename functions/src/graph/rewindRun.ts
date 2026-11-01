@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {fetchPlayback, PlaybackView} from "../feed/playback";
 import {
   asRecord,
@@ -19,7 +20,7 @@ import {newestParent, readRunView} from "./shared";
  * the append-only history (entries are never popped). A finished run
  * flips back to `active`; a run already at the root cannot rewind.
  */
-export const rewindRun = onCall(
+export const rewindRun = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

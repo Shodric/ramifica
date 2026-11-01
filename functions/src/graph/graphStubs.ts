@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError} from "firebase-functions/v2/https";
+import {onCallSafe} from "../callable";
 import {
   asRecord,
   cleanId,
@@ -46,7 +47,7 @@ export interface GraphStubsResult {
  * and public ones carry their body; unvisited secret nodes travel as
  * id-only stubs so the map cannot leak them. Pure reads, no writes.
  */
-export const graphStubs = onCall(
+export const graphStubs = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 20},
   async (req) => {
     const uid = requireUid(req.auth);

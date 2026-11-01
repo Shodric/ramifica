@@ -248,6 +248,7 @@ const script = (overrides: Partial<UploadObject> = {}): Script => {
     frameBytes: Buffer.from("last-frame-bytes"),
     videoBytes: Buffer.from("video-bytes"),
     processed: {
+      width: 480, height: 854,
       videoPath: "/tmp/work/video.mp4",
       durationSeconds: 12.5,
       firstFramePath: "/tmp/work/first.png",
@@ -450,7 +451,7 @@ test("duplicate finalize events process once", async () => {
   assert.equal(s.processCalls, 1);
 });
 
-test("missing ffmpeg degrades to pending without throwing", async () => {
+test("missing ffmpeg fails explicitly without indefinite pending", async () => {
   const s = script({name: "uploads/uidA/storyA_nodeA_take9.mp4"});
   await s.db.doc("stories/storyA/nodes/nodeA").set(
     {videoStatus: "idle", videoUrl: null},
@@ -461,25 +462,25 @@ test("missing ffmpeg degrades to pending without throwing", async () => {
     s.obj,
     depsOf(s, {hasTools: async () => false})
   );
-  assert.equal(result.status, "pending");
+  assert.equal(result.status, "rejected");
   assert.equal(result.uploadError, "encode-unavailable");
   const node = await nodeOf(s.db);
-  assert.equal(node.videoStatus, "pending");
+  assert.equal(node.videoStatus, "failed");
   assert.equal(node.uploadError, "encode-unavailable");
   assert.equal(node.uploadTakeId, "take9");
   assert.deepEqual(s.deleted, [s.obj.name]);
 });
 
-test("missing ffmpeg keeps an existing ready video", async () => {
+test("missing ffmpeg preserves the previous video URL and reports failure", async () => {
   const s = script();
   const result = await finalizeUploadWith(
     s.db,
     s.obj,
     depsOf(s, {hasTools: async () => false})
   );
-  assert.equal(result.status, "pending");
+  assert.equal(result.status, "rejected");
   const node = await nodeOf(s.db);
-  assert.equal(node.videoStatus, "ready");
+  assert.equal(node.videoStatus, "failed");
   assert.equal(node.videoUrl, "https://cdn.example/old.mp4");
   assert.equal(node.uploadError, "encode-unavailable");
 });

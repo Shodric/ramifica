@@ -296,6 +296,32 @@ test("submitVideo adds the last frame when the provider takes it", async () => {
   });
 });
 
+test("custom video endpoint stays consistent across submit, poll and content",
+  async () => {
+    const before = process.env.OPENROUTER_VIDEOS_URL;
+    try {
+      process.env.OPENROUTER_VIDEOS_URL = "https://router.example/v2/jobs/";
+      const seen: SeenRequest[] = [];
+      await submitVideo({
+        apiKey: "test-key", model: "custom", prompt: "scene", startUrl: "s",
+        fetchFn: stubJson({id: "job-9"}, 202, seen),
+      });
+      const result = await checkVideo({
+        apiKey: "test-key", jobId: "job-9",
+        fetchFn: stubJson({status: "completed"}, 200, seen),
+      });
+      assert.deepEqual(seen.map((request) => request.url), [
+        "https://router.example/v2/jobs",
+        "https://router.example/v2/jobs/job-9",
+      ]);
+      assert.equal(result.videoUrl,
+        "https://router.example/v2/jobs/job-9/content?index=0");
+    } finally {
+      if (before === undefined) delete process.env.OPENROUTER_VIDEOS_URL;
+      else process.env.OPENROUTER_VIDEOS_URL = before;
+    }
+  });
+
 test("checkVideo maps statuses and prefers unsigned urls", async () => {
   const base = {apiKey: "key-1", jobId: "job-1"};
   const pending = await checkVideo({
