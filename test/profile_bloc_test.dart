@@ -41,10 +41,7 @@ void main() {
           displayName: 'Author',
           handle: 'author',
         );
-      final bloc = _profile(
-        users: users,
-        follows: _follows({'u_author'}),
-      );
+      final bloc = _profile(users: users, follows: _follows({'u_author'}));
       addTearDown(bloc.close);
 
       bloc.add(const ProfileRequested(authorId: 'u_author'));
@@ -74,12 +71,10 @@ void main() {
       expect(bloc.state.isFollowing, isFalse);
     });
 
-    test('toggling on the own profile is a no-op without any call',
-        () async {
+    test('toggling on the own profile is a no-op without any call', () async {
       final writes = <String>[];
       final removes = <String>[];
-      final users = _Users()
-        ..accounts['u_me'] = const UserAccount(uid: 'u_me');
+      final users = _Users()..accounts['u_me'] = const UserAccount(uid: 'u_me');
       final bloc = _profile(
         users: users,
         follows: _follows({}, writes, removes),
@@ -130,8 +125,7 @@ void main() {
     });
 
     test('saving the own profile writes trimmed fields', () async {
-      final users = _Users()
-        ..accounts['u_me'] = const UserAccount(uid: 'u_me');
+      final users = _Users()..accounts['u_me'] = const UserAccount(uid: 'u_me');
       final bloc = _profile(users: users, follows: _follows({}));
       addTearDown(bloc.close);
 
@@ -154,10 +148,7 @@ void main() {
     test('saving a foreign profile is rejected without a write', () async {
       final users = _Users()
         ..accounts['u_author'] = const UserAccount(uid: 'u_author');
-      final bloc = _profile(
-        users: users,
-        follows: _follows({}),
-      );
+      final bloc = _profile(users: users, follows: _follows({}));
       addTearDown(bloc.close);
 
       bloc.add(const ProfileRequested(authorId: 'u_author'));

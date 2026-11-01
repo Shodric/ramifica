@@ -73,10 +73,7 @@ void main() {
       expect(seen, hasLength(2));
       expect(seen[0], hasLength(10));
       expect(seen[1], hasLength(1));
-      expect(
-        {...seen[0], ...seen[1]},
-        {for (var i = 0; i < 11; i++) 'u_$i'},
-      );
+      expect({...seen[0], ...seen[1]}, {for (var i = 0; i < 11; i++) 'u_$i'});
     });
 
     test('twenty-five ids read in batches of ten, ten, and five', () async {
@@ -124,9 +121,7 @@ void main() {
 
     test('a failing batch does not kill the other batches', () async {
       final repository = FollowRepository(
-        fetchAuthorIds: (_) async => {
-          for (var i = 0; i < 21; i++) 'u_$i',
-        },
+        fetchAuthorIds: (_) async => {for (var i = 0; i < 21; i++) 'u_$i'},
         fetchStoryDocs: (authorIds) async {
           // 'u_9' sorts into the trailing single-id batch, so exactly one
           // story is lost when its batch fails.
@@ -137,10 +132,9 @@ void main() {
 
       final stories = await repository.followingStories('u_me');
       expect(stories, hasLength(20));
-      expect(
-        {for (final story in stories) story.storyId},
-        {for (var i = 0; i < 21; i++) 's_u_$i'}..remove('s_u_9'),
-      );
+      expect({
+        for (final story in stories) story.storyId,
+      }, {for (var i = 0; i < 21; i++) 's_u_$i'}..remove('s_u_9'));
     });
 
     test('follow lists cap at ten batches of ten', () async {

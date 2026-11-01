@@ -10,7 +10,9 @@ import 'package:ramifica/features/explore/explore_view.dart';
 
 void main() {
   group('ExploreView search and open', () {
-    testWidgets('typing filters the list; clearing restores it', (tester) async {
+    testWidgets('typing filters the list; clearing restores it', (
+      tester,
+    ) async {
       final bloc = _bloc();
       addTearDown(bloc.close);
       await _pump(tester, bloc);

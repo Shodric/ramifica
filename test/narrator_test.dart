@@ -135,7 +135,7 @@ void main() {
 FeedBloc _bloc(_Narrator narrator, _Clock clock, {bool voice = true}) {
   return FeedBloc(
     repository: RunRepository(
-      functions: FunctionsClient(
+      execute: FunctionsClient(
         call: (name, data) async {
           if (name == 'startRun') {
             return {
@@ -146,7 +146,7 @@ FeedBloc _bloc(_Narrator narrator, _Clock clock, {bool voice = true}) {
           }
           return _playback(voice: voice);
         },
-      ),
+      ).call,
     ),
     narrator: narrator,
     clock: clock,

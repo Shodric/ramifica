@@ -117,10 +117,7 @@ void main() {
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
 
     expect(bloc.state.failure, 'No connection');
-    expect(
-      calls.where((call) => call.name == 'commitChoice'),
-      hasLength(2),
-    );
+    expect(calls.where((call) => call.name == 'commitChoice'), hasLength(2));
   });
 
   test('an invalid hold falls back to the real node', () async {
@@ -203,10 +200,7 @@ void main() {
     gate.complete(_commitResult(_destination()));
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
 
-    expect(
-      calls.where((call) => call.name == 'commitChoice'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'commitChoice'), hasLength(1));
   });
 
   test('a hold that completes outside the portal does nothing', () async {
@@ -223,33 +217,34 @@ void main() {
     expect(calls.where((call) => call.name == 'commitChoice'), isEmpty);
   });
 
-  test('a commit to an ending plays the final clip, then parks with the card',
-      () async {
-    final clock = _Clock();
-    final bloc = _bloc(
-      clock: clock,
-      onCommit: (name, data) async => _commitResult(_ending()),
-    );
-    addTearDown(bloc.close);
-    await _holding(bloc, clock, 'choice_temple');
+  test(
+    'a commit to an ending plays the final clip, then parks with the card',
+    () async {
+      final clock = _Clock();
+      final bloc = _bloc(
+        clock: clock,
+        onCommit: (name, data) async => _commitResult(_ending()),
+      );
+      addTearDown(bloc.close);
+      await _holding(bloc, clock, 'choice_temple');
 
-    bloc.add(const HoldCompleted());
-    await bloc.stream.firstWhere(
-      (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
-    );
+      bloc.add(const HoldCompleted());
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.phase == FeedPhase.playing && state.playback!.node.isEnding,
+      );
 
-    expect(bloc.state.playback!.node.endingName, 'The door');
-    expect(bloc.state.holdChoiceId, isNull);
-    expect(bloc.state.pendingRequestId, isNull);
+      expect(bloc.state.playback!.node.endingName, 'The door');
+      expect(bloc.state.holdChoiceId, isNull);
+      expect(bloc.state.pendingRequestId, isNull);
 
-    bloc.add(const PauseReached());
-    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
+      bloc.add(const PauseReached());
+      await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
 
-    // `_ending()` carries no closing line, so the card is already visible.
-    expect(bloc.state.endingSpeaking, isFalse);
-  });
+      // `_ending()` carries no closing line, so the card is already visible.
+      expect(bloc.state.endingSpeaking, isFalse);
+    },
+  );
 
   test('a fresh unlock threads the saga title into state', () async {
     final clock = _Clock();
@@ -270,8 +265,7 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
 
     expect(bloc.state.sagaUnlocked?.title, 'The river saga');
@@ -289,19 +283,16 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
     bloc.add(const PauseReached());
     await bloc.stream.firstWhere(
-      (state) =>
-          state.phase == FeedPhase.ending && state.endingSpeaking,
+      (state) => state.phase == FeedPhase.ending && state.endingSpeaking,
     );
 
     clock.fire();
     await bloc.stream.firstWhere(
-      (state) =>
-          state.phase == FeedPhase.ending && !state.endingSpeaking,
+      (state) => state.phase == FeedPhase.ending && !state.endingSpeaking,
     );
   });
 
@@ -321,8 +312,7 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
     bloc.add(const PauseReached());
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
@@ -330,8 +320,7 @@ void main() {
     bloc.add(const OtherPathRequested());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          !state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && !state.playback!.node.isEnding,
     );
 
     expect(bloc.state.playback!.node.nodeId, 'node_001');
@@ -356,8 +345,7 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
     bloc.add(const PauseReached());
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.ending);
@@ -372,12 +360,12 @@ void main() {
   test('commitChoice trims its ids and rejects a blank one', () async {
     final calls = <_Call>[];
     final repository = RunRepository(
-      functions: FunctionsClient(
+      execute: FunctionsClient(
         call: (name, data) async {
           calls.add(_Call(name, data));
           return _commitResult(_destination());
         },
-      ),
+      ).call,
     );
 
     final result = await repository.commitChoice(
@@ -551,7 +539,10 @@ Future<void> _holding(FeedBloc bloc, _Clock clock, String choiceId) async {
 Future<void> _showWindow(WidgetTester tester, FeedBloc bloc) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: BlocProvider.value(value: bloc, child: FeedView(clipPlayer: _Clip())),
+      home: BlocProvider.value(
+        value: bloc,
+        child: FeedView(clipPlayer: _Clip()),
+      ),
     ),
   );
   bloc.add(const StoryOpened(storyId: 'story_temple'));
@@ -581,7 +572,7 @@ FeedBloc _bloc({
 }) {
   return FeedBloc(
     repository: RunRepository(
-      functions: FunctionsClient(
+      execute: FunctionsClient(
         call: (name, data) async {
           calls?.add(_Call(name, data));
           if (name == 'startRun') {
@@ -598,7 +589,7 @@ FeedBloc _bloc({
           if (onLoad != null) return onLoad(name, data);
           return _playback(voice: voice);
         },
-      ),
+      ).call,
     ),
     prefetcher: Prefetcher(open: _Slot.new),
     clock: clock,

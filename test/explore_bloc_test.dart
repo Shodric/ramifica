@@ -61,8 +61,7 @@ void main() {
       final bloc = ExploreBloc(
         catalog: CatalogRepository(
           fetchPublishedIds: () async => throw const AppFailure(.offline),
-          fetchPublishedStories: () async =>
-              throw const AppFailure(.offline),
+          fetchPublishedStories: () async => throw const AppFailure(.offline),
         ),
         follows: _follows({}),
         uid: 'u_me',
@@ -127,51 +126,52 @@ void main() {
       expect(bloc.state.pendingStoryId, 'story_temple');
     });
 
-    test('filter matches title case-insensitively without refetching',
-        () async {
-      var storyCalls = 0;
-      var campaignCalls = 0;
-      var followCalls = 0;
-      final bloc = ExploreBloc(
-        catalog: CatalogRepository(
-          fetchPublishedIds: () async => const [
-            'story_temple',
-            'story_ridge',
-          ],
-          fetchPublishedStories: () async {
-            storyCalls++;
-            return _stories();
-          },
-          fetchActiveCampaigns: () async {
-            campaignCalls++;
-            return const [];
-          },
-        ),
-        follows: FollowRepository(
-          fetchAuthorIds: (_) async {
-            followCalls++;
-            return {'u_author'};
-          },
-        ),
-        uid: 'u_me',
-      );
-      addTearDown(bloc.close);
+    test(
+      'filter matches title case-insensitively without refetching',
+      () async {
+        var storyCalls = 0;
+        var campaignCalls = 0;
+        var followCalls = 0;
+        final bloc = ExploreBloc(
+          catalog: CatalogRepository(
+            fetchPublishedIds: () async => const [
+              'story_temple',
+              'story_ridge',
+            ],
+            fetchPublishedStories: () async {
+              storyCalls++;
+              return _stories();
+            },
+            fetchActiveCampaigns: () async {
+              campaignCalls++;
+              return const [];
+            },
+          ),
+          follows: FollowRepository(
+            fetchAuthorIds: (_) async {
+              followCalls++;
+              return {'u_author'};
+            },
+          ),
+          uid: 'u_me',
+        );
+        addTearDown(bloc.close);
 
-      bloc.add(const CatalogRequested());
-      await bloc.stream.firstWhere((state) => state.phase == .loaded);
-      bloc.add(const QueryChanged('TEMPLE'));
-      await bloc.stream.firstWhere((state) => state.query == 'TEMPLE');
+        bloc.add(const CatalogRequested());
+        await bloc.stream.firstWhere((state) => state.phase == .loaded);
+        bloc.add(const QueryChanged('TEMPLE'));
+        await bloc.stream.firstWhere((state) => state.query == 'TEMPLE');
 
-      expect(bloc.state.isSearching, isTrue);
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_temple'],
-      );
-      expect(bloc.state.stories, hasLength(2));
-      expect(storyCalls, 1);
-      expect(campaignCalls, 1);
-      expect(followCalls, 1);
-    });
+        expect(bloc.state.isSearching, isTrue);
+        expect(bloc.state.filteredStories.map((story) => story.storyId), [
+          'story_temple',
+        ]);
+        expect(bloc.state.stories, hasLength(2));
+        expect(storyCalls, 1);
+        expect(campaignCalls, 1);
+        expect(followCalls, 1);
+      },
+    );
 
     test('filter matches synopsis and tags', () async {
       final bloc = ExploreBloc(
@@ -186,24 +186,21 @@ void main() {
 
       bloc.add(const QueryChanged('jungle'));
       await bloc.stream.firstWhere((state) => state.query == 'jungle');
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_temple'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_temple',
+      ]);
 
       bloc.add(const QueryChanged('myst'));
       await bloc.stream.firstWhere((state) => state.query == 'myst');
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_temple'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_temple',
+      ]);
 
       bloc.add(const QueryChanged('climbing'));
       await bloc.stream.firstWhere((state) => state.query == 'climbing');
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_ridge'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_ridge',
+      ]);
     });
 
     test('empty query returns the tab list unfiltered', () async {
@@ -252,10 +249,9 @@ void main() {
 
       bloc.add(const QueryChanged('temple'));
       await bloc.stream.firstWhere((state) => state.query == 'temple');
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_temple'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_temple',
+      ]);
 
       bloc.add(const QueryChanged('ridge'));
       await bloc.stream.firstWhere((state) => state.query == 'ridge');
@@ -264,10 +260,9 @@ void main() {
 
       bloc.add(const CatalogTabSelected(.forYou));
       await bloc.stream.firstWhere((state) => state.tab == ExploreTab.forYou);
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_ridge'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_ridge',
+      ]);
     });
 
     test('a story tap makes no repository call', () async {
@@ -333,10 +328,9 @@ void main() {
 
       bloc.add(const CatalogTabSelected(.forYou));
       await bloc.stream.firstWhere((state) => state.tab == ExploreTab.forYou);
-      expect(
-        bloc.state.filteredStories.map((story) => story.storyId),
-        ['story_temple'],
-      );
+      expect(bloc.state.filteredStories.map((story) => story.storyId), [
+        'story_temple',
+      ]);
 
       bloc.add(const QueryChanged('zzz-no-match'));
       await bloc.stream.firstWhere((state) => state.query == 'zzz-no-match');
@@ -460,14 +454,17 @@ void main() {
       expect(await repository.activeCampaigns(), isEmpty);
     });
 
-    test('publishedStories falls back to ids without an injected fetch', () async {
-      final repository = CatalogRepository(
-        fetchPublishedIds: () async => const ['story_a'],
-      );
+    test(
+      'publishedStories falls back to ids without an injected fetch',
+      () async {
+        final repository = CatalogRepository(
+          fetchPublishedIds: () async => const ['story_a'],
+        );
 
-      expect(await repository.publishedStories(), hasLength(1));
-      expect(await repository.activeCampaigns(), isEmpty);
-    });
+        expect(await repository.publishedStories(), hasLength(1));
+        expect(await repository.activeCampaigns(), isEmpty);
+      },
+    );
 
     test('malformed docs never surface raw maps', () {
       expect(

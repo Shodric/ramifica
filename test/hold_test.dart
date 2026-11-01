@@ -83,7 +83,6 @@ void main() {
     expect(bloc.prefetcher.urls, contains('https://example.com/ridge.mp4'));
   });
 
-
   test('a finished hold ignores the release', () async {
     final clock = _Clock();
     final bloc = _bloc(clock);
@@ -157,7 +156,6 @@ void main() {
     expect(bloc.state.holdChoiceId, 'choice_ridge');
     expect(find.byType(Image), findsOneWidget);
   });
-
 
   testWidgets('releasing outside the ring cancels the hold', (tester) async {
     final clock = _Clock();
@@ -269,7 +267,7 @@ Offset _ring(WidgetTester tester, String choiceId) {
 FeedBloc _bloc(_Clock clock, {bool voice = true}) {
   return FeedBloc(
     repository: RunRepository(
-      functions: FunctionsClient(
+      execute: FunctionsClient(
         call: (name, data) async {
           if (name == 'startRun') {
             return {
@@ -280,7 +278,7 @@ FeedBloc _bloc(_Clock clock, {bool voice = true}) {
           }
           return _playback(voice: voice);
         },
-      ),
+      ).call,
     ),
     prefetcher: Prefetcher(open: _Slot.new),
     clock: clock,

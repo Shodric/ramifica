@@ -27,7 +27,9 @@ Future<void> _pump(
 ) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: Scaffold(body: SagaList(stories: stories, onOpen: onOpen)),
+      home: Scaffold(
+        body: SagaList(stories: stories, onOpen: onOpen),
+      ),
     ),
   );
 }
@@ -52,7 +54,11 @@ void main() {
     tester,
   ) async {
     await _pump(tester, const [
-      SagaStory(storyId: 'story_ridge', title: 'Hidden ascent', unlocked: false),
+      SagaStory(
+        storyId: 'story_ridge',
+        title: 'Hidden ascent',
+        unlocked: false,
+      ),
     ], (_) {});
 
     expect(find.byType(LockMark), findsOneWidget);

@@ -1,3 +1,5 @@
+import 'support/create_repository_harness.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -58,6 +60,31 @@ void main() {
       expect(nodes.map((node) => node.nodeId), ['node_1']);
     });
 
+    test('nodeSavePatch idles the voice only when the line changes', () {
+      const node = DraftNode(
+        nodeId: 'node_1',
+        title: ' Door ',
+        ttsText: ' New line ',
+        lineApproved: true,
+        ttsApproved: true,
+        ttsStatus: 'ready',
+        ttsAudioUrl: 'https://cdn.example/old.m4a',
+      );
+
+      final changed = nodeSavePatch(node, 'Old line');
+      expect(changed['title'], 'Door');
+      expect(changed['ttsText'], 'New line');
+      expect(changed['lineApproved'], isTrue);
+      expect(changed['ttsApproved'], isFalse);
+      expect(changed['ttsStatus'], 'idle');
+      expect(changed['ttsAudioUrl'], isNull);
+      expect(changed.containsKey('videoUrl'), isFalse);
+
+      final same = nodeSavePatch(node.copy(ttsText: 'Old line'), 'Old line');
+      expect(same.containsKey('ttsStatus'), isFalse);
+      expect(same['ttsApproved'], isTrue);
+    });
+
     test('saveNode sends the node doc under its id', () async {
       final calls = <_Call>[];
       final repository = _repo(calls);
@@ -93,7 +120,7 @@ void main() {
     });
 
     test('generateNodeText accepts plain-string choices', () async {
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             throw const AppFailure(.failed),
         fetchStoryDoc: (_) async => throw const AppFailure(.failed),
@@ -119,7 +146,7 @@ void main() {
     });
 
     test('an empty proposal is invalid', () async {
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             throw const AppFailure(.failed),
         fetchStoryDoc: (_) async => throw const AppFailure(.failed),
@@ -260,7 +287,7 @@ void main() {
 
     test('a generation failure shows its phrase on the node', () async {
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               throw const AppFailure(.failed),
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -304,7 +331,7 @@ void main() {
     });
 
     test('publishStory returns the server problems list', () async {
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -377,7 +404,7 @@ void main() {
         const MapEntry('node_3', {'title': 'Spare'}),
       ];
       final calls = <_Call>[];
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -414,7 +441,7 @@ void main() {
 
     test('a delete rejection shows its phrase and keeps the node', () async {
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -440,7 +467,7 @@ void main() {
       'StoryPublished marks the story published on empty problems',
       () async {
         final bloc = CreateBloc(
-          repository: CreateRepository(
+          repository: testCreateRepository(
             createDraftDoc: ({required authorId, required title}) async =>
                 'story_1',
             fetchStoryDoc: (_) async => _storyDoc(),
@@ -470,7 +497,7 @@ void main() {
       'StoryPublished shows the server problems without publishing',
       () async {
         final bloc = CreateBloc(
-          repository: CreateRepository(
+          repository: testCreateRepository(
             createDraftDoc: ({required authorId, required title}) async =>
                 'story_1',
             fetchStoryDoc: (_) async => _storyDoc(),
@@ -502,7 +529,7 @@ void main() {
 
     test('a publish transport failure shows its phrase', () async {
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -527,7 +554,7 @@ void main() {
         MapEntry('node_2', _nodeDoc()),
       ];
       final calls = <_Call>[];
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -638,7 +665,7 @@ void main() {
     });
 
     test('generateNodeVideo reports the backend poll flag', () async {
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -658,7 +685,7 @@ void main() {
     test('video generation polls until the backend reports done', () async {
       var videoCalls = 0;
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -690,7 +717,7 @@ void main() {
     test('video generation fails closed when the poll cap is hit', () async {
       var videoCalls = 0;
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -741,7 +768,7 @@ void main() {
 
     test('imaging shows running while the call is in flight', () async {
       final gate = Completer<Map<String, dynamic>>();
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -791,7 +818,7 @@ void main() {
 
     test('a gated video failure shows its phrase on the node', () async {
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               throw const AppFailure(.failed),
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -1136,7 +1163,7 @@ void main() {
     test('a pre-trigger read never resolves the upload', () async {
       var reads = 0;
       final calls = <_Call>[];
-      final repository = CreateRepository(
+      final repository = testCreateRepository(
         createDraftDoc: ({required authorId, required title}) async =>
             'story_1',
         fetchStoryDoc: (_) async => _storyDoc(),
@@ -1391,7 +1418,7 @@ void main() {
 
     test('a transport failure surfaces its phrase', () async {
       final bloc = CreateBloc(
-        repository: CreateRepository(
+        repository: testCreateRepository(
           createDraftDoc: ({required authorId, required title}) async =>
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
@@ -1702,7 +1729,9 @@ void main() {
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 0.7, y: 0.2));
+      bloc.add(
+        const ZoneMoved(nodeId: 'node_1', choiceId: 'c1', x: 0.7, y: 0.2),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 10));
       bloc.add(const NodeSaved());
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
@@ -1911,7 +1940,7 @@ void main() {
       final choices = (sent['choices'] as List).cast<Map>();
       expect(choices, hasLength(2));
       expect(choices.last['targetNodeId'], 'node_1');
-      expect(choices.last['slot'], 'A');
+      expect(choices.last['slot'], 'B');
     });
 
     test('tapping slot B first links the child into slot B', () async {
@@ -2170,7 +2199,7 @@ CreateRepository _repo(
   List<MapEntry<String, Map<String, dynamic>>>? nodes,
   UploadVideoFile? upload,
 }) {
-  return CreateRepository(
+  return testCreateRepository(
     createDraftDoc: ({required authorId, required title}) async => 'story_1',
     fetchStoryDoc: (_) async => _storyDoc(),
     fetchNodeDocs: (_) async =>

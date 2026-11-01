@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/functions_client.dart';
 import 'package:ramifica/data/models/app_failure.dart';
@@ -57,5 +58,34 @@ void main() {
     expect(appFailureCodeFor('not-found'), AppFailureCode.invalid);
     expect(appFailureCodeFor('internal'), AppFailureCode.failed);
     expect(const AppFailure(.offline).phrase, 'No connection');
+    expect(
+      const AppFailure(
+        .invalid,
+        detail: 'Voice transcription is not configured.',
+      ).hint,
+      'Voice transcription is not configured.',
+    );
+  });
+
+  test('a function message is the hint', () async {
+    final client = FunctionsClient(
+      call: (name, data) async => throw FirebaseFunctionsException(
+        code: 'failed-precondition',
+        message: 'Voice transcription is not configured.',
+      ),
+    );
+
+    expect(
+      () => client.call('transcribeVoice'),
+      throwsA(
+        isA<AppFailure>()
+            .having((error) => error.code, 'code', AppFailureCode.invalid)
+            .having(
+              (error) => error.hint,
+              'hint',
+              'Voice transcription is not configured.',
+            ),
+      ),
+    );
   });
 }

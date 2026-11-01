@@ -95,8 +95,7 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
     bloc.add(const PauseReached());
     await bloc.stream.firstWhere(
@@ -130,10 +129,14 @@ Future<void> _open(FeedBloc bloc) async {
 FeedBloc _bloc({_Clock? clock, bool commitsEndingWithLine = false}) {
   return FeedBloc(
     repository: RunRepository(
-      functions: FunctionsClient(
+      execute: FunctionsClient(
         call: (name, data) async {
           if (name == 'startRun') {
-            return {'runId': 'run_story_a', 'storyId': 'story_a', 'status': 'active'};
+            return {
+              'runId': 'run_story_a',
+              'storyId': 'story_a',
+              'status': 'active',
+            };
           }
           if (name == 'loadPlayback') {
             return _playback();
@@ -143,7 +146,7 @@ FeedBloc _bloc({_Clock? clock, bool commitsEndingWithLine = false}) {
           }
           throw StateError('unexpected $name');
         },
-      ),
+      ).call,
     ),
     prefetcher: Prefetcher(open: _Slot.new),
     clock: clock ?? _Clock(),

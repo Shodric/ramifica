@@ -11,8 +11,7 @@ import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 
 void main() {
-  test('swipe draws another story and opens it with the resume rule',
-      () async {
+  test('swipe draws another story and opens it with the resume rule', () async {
     final calls = <_Call>[];
     final bloc = _bloc(ids: ['story_a', 'story_b'], calls: calls);
     addTearDown(bloc.close);
@@ -44,10 +43,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(bloc.state.phase, FeedPhase.playing);
-    expect(
-      calls.where((call) => call.name == 'startRun'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
   });
 
   test('swipe is ignored while speaking', () async {
@@ -62,10 +58,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(bloc.state.phase, FeedPhase.speaking);
-    expect(
-      calls.where((call) => call.name == 'startRun'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
   });
 
   test('swipe from the card opens another story', () async {
@@ -110,8 +103,7 @@ void main() {
     bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere(
       (state) =>
-          state.phase == FeedPhase.playing &&
-          state.playback!.node.isEnding,
+          state.phase == FeedPhase.playing && state.playback!.node.isEnding,
     );
     bloc.add(const PauseReached());
     await bloc.stream.firstWhere(
@@ -122,10 +114,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(bloc.state.phase, FeedPhase.ending);
     expect(bloc.state.endingSpeaking, isTrue);
-    expect(
-      calls.where((call) => call.name == 'startRun'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
 
     clock.fire();
     await bloc.stream.firstWhere(
@@ -154,10 +143,7 @@ void main() {
 
     expect(bloc.state.phase, FeedPhase.playing);
     expect(bloc.state.playback!.story.storyId, 'story_a');
-    expect(
-      calls.where((call) => call.name == 'startRun'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
   });
 
   test('swipe without a catalog does nothing', () async {
@@ -174,17 +160,15 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(bloc.state.phase, FeedPhase.playing);
-    expect(
-      calls.where((call) => call.name == 'startRun'),
-      hasLength(1),
-    );
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
   });
 }
 
 Future<void> _open(FeedBloc bloc, String storyId) async {
   bloc.add(StoryOpened(storyId: storyId));
   await bloc.stream.firstWhere(
-    (state) => state.phase == FeedPhase.playing || state.phase == FeedPhase.ending,
+    (state) =>
+        state.phase == FeedPhase.playing || state.phase == FeedPhase.ending,
   );
 }
 
@@ -205,8 +189,11 @@ FeedBloc _bloc({
 }) {
   final log = calls ?? <_Call>[];
   return FeedBloc(
-    repository: _runs(log, endings,
-        commitsEndingWithLine: commitsEndingWithLine),
+    repository: _runs(
+      log,
+      endings,
+      commitsEndingWithLine: commitsEndingWithLine,
+    ),
     catalog: CatalogRepository(
       fetchPublishedIds: () async {
         if (error != null) throw error;
@@ -224,7 +211,7 @@ RunRepository _runs(
   bool commitsEndingWithLine = false,
 }) {
   return RunRepository(
-    functions: FunctionsClient(
+    execute: FunctionsClient(
       call: (name, data) async {
         calls.add(_Call(name, data));
         if (name == 'startRun') {
@@ -252,7 +239,7 @@ RunRepository _runs(
         }
         throw StateError('unexpected $name');
       },
-    ),
+    ).call,
   );
 }
 

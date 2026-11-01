@@ -108,9 +108,9 @@ void main() {
     test('a failure shows its phrase', () async {
       final bloc = GraphBloc(
         repository: GraphRepository(
-          functions: FunctionsClient(
+          execute: FunctionsClient(
             call: (name, data) async => throw const AppFailure(.offline),
-          ),
+          ).call,
         ),
       );
       addTearDown(bloc.close);
@@ -215,10 +215,7 @@ void main() {
         (state) => !state.acting && state.selectedId == 'node_001',
       );
 
-      expect(
-        calls.where((call) => call.name == 'playApproach'),
-        hasLength(1),
-      );
+      expect(calls.where((call) => call.name == 'playApproach'), hasLength(1));
     });
 
     test('a root rewind warns and leaves the run untouched', () async {
@@ -536,12 +533,12 @@ GraphRepository _graphs(
   Future<dynamic> Function(String name, Map<String, dynamic>? data) respond,
 ) {
   return GraphRepository(
-    functions: FunctionsClient(
+    execute: FunctionsClient(
       call: (name, data) async {
         calls.add(_Call(name, data));
         return respond(name, data);
       },
-    ),
+    ).call,
   );
 }
 
@@ -643,7 +640,7 @@ Map<String, dynamic> _playback({String nodeId = 'node_001', String? title}) {
 
 RunRepository _runRepo() {
   return RunRepository(
-    functions: FunctionsClient(
+    execute: FunctionsClient(
       call: (name, data) async {
         print('SEE-MAP call: $name');
         if (name == 'startRun') {
@@ -672,7 +669,7 @@ RunRepository _runRepo() {
           'choices': <Object?>[],
         };
       },
-    ),
+    ).call,
   );
 }
 

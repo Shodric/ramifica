@@ -65,12 +65,12 @@ void main() {
     var loads = 0;
     final bloc = FeedBloc(
       repository: RunRepository(
-        functions: FunctionsClient(
+        execute: FunctionsClient(
           call: (name, data) async {
             if (name == 'loadPlayback') loads += 1;
             throw const AppFailure(.offline);
           },
-        ),
+        ).call,
       ),
     );
     addTearDown(bloc.close);
@@ -86,7 +86,7 @@ void main() {
   test('a malformed playback is invalid', () async {
     final bloc = FeedBloc(
       repository: RunRepository(
-        functions: FunctionsClient(
+        execute: FunctionsClient(
           call: (name, data) async {
             if (name == 'startRun') {
               return {
@@ -97,7 +97,7 @@ void main() {
             }
             return {'runId': 'run_1'};
           },
-        ),
+        ).call,
       ),
     );
     addTearDown(bloc.close);
@@ -198,9 +198,9 @@ void main() {
     final mounted = <String>[];
     final bloc = FeedBloc(
       repository: RunRepository(
-        functions: FunctionsClient(
+        execute: FunctionsClient(
           call: (name, data) async => throw const AppFailure(.offline),
-        ),
+        ).call,
       ),
       prefetcher: _warm(mounted, []),
     );
@@ -566,12 +566,12 @@ RunRepository _runs(
   Future<dynamic> Function(String name, Map<String, dynamic>? data) respond,
 ) {
   return RunRepository(
-    functions: FunctionsClient(
+    execute: FunctionsClient(
       call: (name, data) async {
         calls.add(_Call(name, data));
         return respond(name, data);
       },
-    ),
+    ).call,
   );
 }
 

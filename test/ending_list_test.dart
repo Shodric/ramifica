@@ -23,7 +23,9 @@ Future<void> _pump(
 ) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: Scaffold(body: EndingList(endings: endings, onOpen: onOpen)),
+      home: Scaffold(
+        body: EndingList(endings: endings, onOpen: onOpen),
+      ),
     ),
   );
 }
