@@ -7,6 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/data/persistence/document_store.dart';
+import 'package:ramifica/data/persistence/draft_persistence.dart';
+import 'package:ramifica/data/persistence/publication.dart';
 import 'package:ramifica/data/models/draft_story.dart';
 import 'package:ramifica/data/models/user.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
@@ -15,6 +18,8 @@ import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_state.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
+
+import 'support/memory_document_store.dart';
 
 void main() {
   group('CreateRepository', () {
@@ -65,8 +70,6 @@ void main() {
         nodeId: 'node_1',
         title: ' Door ',
         ttsText: ' New line ',
-        lineApproved: true,
-        ttsApproved: true,
         ttsStatus: 'ready',
         ttsAudioUrl: 'https://cdn.example/old.m4a',
       );
@@ -74,15 +77,15 @@ void main() {
       final changed = nodeSavePatch(node, 'Old line');
       expect(changed['title'], 'Door');
       expect(changed['ttsText'], 'New line');
-      expect(changed['lineApproved'], isTrue);
-      expect(changed['ttsApproved'], isFalse);
+      expect(changed.containsKey('lineApproved'), isFalse);
+      expect(changed.containsKey('ttsApproved'), isFalse);
       expect(changed['ttsStatus'], 'idle');
       expect(changed['ttsAudioUrl'], isNull);
       expect(changed.containsKey('videoUrl'), isFalse);
 
       final same = nodeSavePatch(node.copy(ttsText: 'Old line'), 'Old line');
       expect(same.containsKey('ttsStatus'), isFalse);
-      expect(same['ttsApproved'], isTrue);
+      expect(same.containsKey('ttsApproved'), isFalse);
     });
 
     test('saveNode sends the node doc under its id', () async {
@@ -605,45 +608,27 @@ void main() {
       await repository.generateNodeImage(
         storyId: 'story_1',
         nodeId: 'node_1',
-        which: 'end',
+        which: 'start',
       );
 
       expect(calls.single.name, 'generateNodeImage');
       expect(calls.single.data, {
         'storyId': 'story_1',
         'nodeId': 'node_1',
-        'which': 'end',
+        'which': 'start',
       });
 
-      await expectLater(
-        repository.generateNodeImage(
-          storyId: 'story_1',
-          nodeId: 'node_1',
-          which: 'middle',
-        ),
-        throwsA(const AppFailure(.invalid)),
-      );
+      for (final which in ['middle', 'end']) {
+        await expectLater(
+          repository.generateNodeImage(
+            storyId: 'story_1',
+            nodeId: 'node_1',
+            which: which,
+          ),
+          throwsA(const AppFailure(.invalid)),
+        );
+      }
       expect(calls, hasLength(1));
-    });
-
-    test('approveNodeImage sends the approved flag', () async {
-      final calls = <_Call>[];
-      final repository = _repo(calls);
-
-      await repository.approveNodeImage(
-        storyId: 'story_1',
-        nodeId: 'node_1',
-        which: 'end',
-        approved: false,
-      );
-
-      expect(calls.single.name, 'approveNodeImage');
-      expect(calls.single.data, {
-        'storyId': 'story_1',
-        'nodeId': 'node_1',
-        'which': 'end',
-        'approved': false,
-      });
     });
 
     test('generateNodeVideo sends ids and the prompt', () async {
@@ -743,7 +728,7 @@ void main() {
       );
 
       expect(videoCalls, 3);
-      expect(bloc.state.failure, 'Something failed');
+      expect(bloc.state.failure, contains('Continue generation'));
     });
 
     test('image generation dispatches and reloads the nodes', () async {
@@ -754,7 +739,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.hasDraft);
       calls.clear();
 
-      bloc.add(const ImageGenerateRequested(nodeId: 'node_1', which: 'end'));
+      bloc.add(const ImageGenerateRequested(nodeId: 'node_1', which: 'start'));
       await bloc.stream.firstWhere(
         (state) => state.job == CreateJob.none && calls.isNotEmpty,
       );
@@ -762,8 +747,194 @@ void main() {
       final generate = calls.singleWhere(
         (call) => call.name == 'generateNodeImage',
       );
-      expect(generate.data['which'], 'end');
+      expect(generate.data['which'], 'start');
       expect(bloc.state.failure, isNull);
+    });
+
+    test('story save persists the trimmed title and synopsis', () async {
+      final calls = <_Call>[];
+      final repository = testCreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        updateStoryDoc: ({required storyId, title, synopsis}) async {
+          calls.add(
+            _Call('updateStory', {
+              'storyId': storyId,
+              'title': title,
+              'synopsis': synopsis,
+            }),
+          );
+        },
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async => <String, dynamic>{},
+      );
+      final bloc = CreateBloc(repository: repository);
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const StoryFieldChanged(
+          title: '  Temple redo  ',
+          synopsis: 'A descent.',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.story?.title == '  Temple redo  ',
+      );
+
+      final completion = Completer<bool>();
+      bloc.add(StorySaved(completion: completion));
+      expect(await completion.future, isTrue);
+
+      final save = calls.singleWhere((call) => call.name == 'updateStory');
+      expect(save.data['title'], 'Temple redo');
+      expect(save.data['synopsis'], 'A descent.');
+      expect(bloc.state.failure, isNull);
+    });
+
+    test(
+      'cover generation flushes edits, then points at the new art',
+      () async {
+        final calls = <_Call>[];
+        final repository = testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          updateStoryDoc: ({required storyId, title, synopsis}) async {
+            calls.add(_Call('updateStory', {'title': title}));
+          },
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async {
+            calls.add(_Call(name, data));
+            if (name == 'generateStoryCover') {
+              return {'coverUrl': 'https://cdn.invalid/cover-1.webp'};
+            }
+            return <String, dynamic>{};
+          },
+        );
+        final bloc = CreateBloc(repository: repository);
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+
+        bloc.add(const StoryFieldChanged(title: 'Temple redo'));
+        await bloc.stream.firstWhere(
+          (state) => state.story?.title == 'Temple redo',
+        );
+
+        bloc.add(const CoverGenerateRequested());
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.job == CreateJob.none && state.story?.coverUrl != null,
+        );
+
+        final flush = calls.indexWhere((call) => call.name == 'updateStory');
+        final generate = calls.indexWhere(
+          (call) => call.name == 'generateStoryCover',
+        );
+        expect(flush, greaterThanOrEqualTo(0));
+        expect(generate, greaterThan(flush));
+        expect(calls[generate].data, {'storyId': 'story_1'});
+        expect(bloc.state.story?.coverUrl, 'https://cdn.invalid/cover-1.webp');
+        expect(bloc.state.failure, isNull);
+      },
+    );
+
+    test('cover generation shows imaging while in flight', () async {
+      final gate = Completer<Map<String, dynamic>>();
+      final repository = testCreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async {
+          if (name == 'generateStoryCover') return gate.future;
+          return <String, dynamic>{};
+        },
+      );
+      final bloc = CreateBloc(repository: repository);
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const CoverGenerateRequested(prompt: 'A lighthouse.'));
+      await bloc.stream.firstWhere((state) => state.generatingCover);
+      expect(bloc.state.operationKind, 'cover');
+      expect(bloc.state.jobNodeId, isNull);
+
+      gate.complete({'coverUrl': 'https://cdn.invalid/cover-1.webp'});
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
+      expect(bloc.state.story?.coverUrl, 'https://cdn.invalid/cover-1.webp');
+    });
+
+    test('a cover failure shows its phrase and keeps the old art', () async {
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            ..._storyDoc(),
+            'coverUrl': 'https://cdn.invalid/old.webp',
+          },
+          fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+          callFunction: (name, data) async => throw const AppFailure(.offline),
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const CoverGenerateRequested());
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.story?.coverUrl, 'https://cdn.invalid/old.webp');
+    });
+
+    test('cover requests without a draft touch nothing', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+
+      bloc.add(const CoverGenerateRequested());
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(calls, isEmpty);
+      expect(bloc.state.job, CreateJob.none);
+    });
+
+    test('generateStoryCover returns the cover url', () async {
+      final repository = testCreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async => {
+          'coverUrl': 'https://cdn.invalid/cover-1.webp',
+        },
+      );
+
+      expect(
+        await repository.generateStoryCover(storyId: 'story_1'),
+        'https://cdn.invalid/cover-1.webp',
+      );
+    });
+
+    test('generateStoryCover fails closed on blank ids', () async {
+      final repository = testCreateRepository(
+        createDraftDoc: ({required authorId, required title}) async =>
+            'story_1',
+        fetchStoryDoc: (_) async => _storyDoc(),
+        fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
+        callFunction: (name, data) async => <String, dynamic>{},
+      );
+
+      await expectLater(
+        repository.generateStoryCover(storyId: '  '),
+        throwsA(isA<AppFailure>()),
+      );
     });
 
     test('imaging shows running while the call is in flight', () async {
@@ -789,31 +960,6 @@ void main() {
 
       gate.complete(<String, dynamic>{});
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
-    });
-
-    test('image approval sends the flag and clears the job', () async {
-      final calls = <_Call>[];
-      final bloc = CreateBloc(repository: _repo(calls));
-      addTearDown(bloc.close);
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
-      calls.clear();
-
-      bloc.add(
-        const ImageApprovalChanged(
-          nodeId: 'node_1',
-          which: 'end',
-          approved: false,
-        ),
-      );
-      await bloc.stream.firstWhere(
-        (state) => state.job == CreateJob.none && calls.isNotEmpty,
-      );
-
-      final approve = calls.singleWhere(
-        (call) => call.name == 'approveNodeImage',
-      );
-      expect(approve.data['approved'], isFalse);
     });
 
     test('a gated video failure shows its phrase on the node', () async {
@@ -847,13 +993,6 @@ void main() {
 
       bloc
         ..add(const ImageGenerateRequested(nodeId: 'missing', which: 'end'))
-        ..add(
-          const ImageApprovalChanged(
-            nodeId: 'missing',
-            which: 'end',
-            approved: true,
-          ),
-        )
         ..add(const VideoGenerateRequested('missing'));
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
@@ -866,33 +1005,29 @@ void main() {
         ..._nodeDoc(),
         'videoSource': 'generated',
         'videoFromHash': 'h-s',
-        'videoToHash': 'h-e',
+        'videoFrameLastUrl': 'https://example.com/f.webp',
+        'videoFrameLastHash': 'h-f',
         'startImageSourceUrl': 'https://example.com/s.webp',
         'startImageStatus': 'ready',
         'startHash': 'h-s',
         'startImageApproved': true,
         'startFromNodeId': 'node_0',
-        'startParentEndHash': 'h-0',
-        'endImageSourceUrl': 'https://example.com/e.webp',
-        'endImageStatus': 'ready',
-        'endHash': 'h-e',
-        'endImageSource': 'muse',
-        'endImageApproved': true,
+        'startParentFrameHash': 'h-0',
       });
 
       expect(node.videoSource, 'generated');
       expect(node.videoFromHash, 'h-s');
+      expect(node.videoFrameLastUrl, 'https://example.com/f.webp');
+      expect(node.videoFrameLastHash, 'h-f');
       expect(node.startImageSourceUrl, 'https://example.com/s.webp');
       expect(node.startImageApproved, isTrue);
       expect(node.startFromNodeId, 'node_0');
-      expect(node.endImageSourceUrl, 'https://example.com/e.webp');
-      expect(node.endHash, 'h-e');
-      expect(node.endImageApproved, isTrue);
-      expect(node.toJson()['endHash'], 'h-e');
+      expect(node.startParentFrameHash, 'h-0');
+      expect(node.toJson()['videoFrameLastHash'], 'h-f');
       expect(node.toJson()['startImageApproved'], isTrue);
     });
 
-    test('video gate needs the approved parent end', () {
+    test('video gate needs ready frames only', () {
       const story = DraftStory(
         storyId: 'story_1',
         authorId: 'uid_1',
@@ -902,7 +1037,7 @@ void main() {
       const child = DraftNode(
         nodeId: 'node_2',
         startFromNodeId: 'node_1',
-        startParentEndHash: 'hash-e1',
+        startParentFrameHash: 'hash-f1',
       );
 
       const open = CreateState(
@@ -910,9 +1045,8 @@ void main() {
         nodes: [
           DraftNode(
             nodeId: 'node_1',
-            endImageSourceUrl: 'https://example.com/e.webp',
-            endImageApproved: true,
-            endHash: 'hash-e1',
+            videoFrameLastUrl: 'https://example.com/f.webp',
+            videoFrameLastHash: 'hash-f1',
           ),
           child,
         ],
@@ -926,20 +1060,17 @@ void main() {
       const gated = CreateState(
         story: story,
         nodes: [
-          DraftNode(nodeId: 'node_1', endImageApproved: false),
+          DraftNode(nodeId: 'node_1'),
           child,
         ],
         openNodeId: 'node_2',
       );
-      expect(
-        gated.videoGateMessage(child),
-        'The parent end frame must be approved first.',
-      );
+      expect(gated.videoGateMessage(child), 'Generate the parent clip first.');
 
       const rootless = DraftNode(nodeId: 'node_1');
       expect(
         open.videoGateMessage(rootless),
-        'Approve the start frame to generate video.',
+        'Generate the start frame to generate video.',
       );
     });
 
@@ -950,17 +1081,20 @@ void main() {
         title: 'Temple',
         rootNodeId: 'node_1',
       );
-      const parent = DraftNode(nodeId: 'node_1', endHash: 'hash-new');
+      const parent = DraftNode(
+        nodeId: 'node_1',
+        videoFrameLastHash: 'hash-new',
+      );
       const stale = DraftNode(
         nodeId: 'node_2',
         startFromNodeId: 'node_1',
-        startParentEndHash: 'hash-old',
+        startParentFrameHash: 'hash-old',
         videoStatus: 'idle',
       );
       const synced = DraftNode(
         nodeId: 'node_3',
         startFromNodeId: 'node_1',
-        startParentEndHash: 'hash-new',
+        startParentFrameHash: 'hash-new',
         videoStatus: 'idle',
       );
       const state = CreateState(
@@ -1526,18 +1660,14 @@ void main() {
         contains('Node node_1 needs a title of 1-40 characters.'),
       );
       expect(missing, contains('Node node_1 needs a ready video.'));
-      expect(missing, contains('Node node_1 needs an approved end image.'));
+      expect(missing, contains('Node node_1 needs its extracted last frame.'));
       expect(
         missingForNode(node: node, isRoot: true),
-        contains('Node node_1 needs an approved start image.'),
+        contains('Node node_1 needs a ready start image.'),
       );
       expect(missing, contains('Node node_1 needs one or two choices.'));
-      expect(missing, contains('Node node_1 needs an approved narrator line.'));
+      expect(missing, contains('Node node_1 needs a narrator line.'));
       expect(missing, contains('Node node_1 needs a ready narrator voice.'));
-      expect(
-        missing,
-        contains('Node node_1 needs an approved narrator voice.'),
-      );
     });
 
     test('a complete node has nothing missing', () {
@@ -1773,7 +1903,13 @@ void main() {
         endingType: 'abierto',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
-        endImageApproved: true,
+        videoWidth: 480,
+        videoHeight: 854,
+        durationSeconds: 10,
+        videoFrameLastUrl: 'https://example.com/f9.png',
+        videoFrameLastHash: 'hash-f9',
+        startFromNodeId: 'node_1',
+        startParentFrameHash: 'end',
       );
       problems = CreateState(
         story: story,
@@ -1806,28 +1942,17 @@ void main() {
       expect(problems, contains('Node node_9 is not reachable from the root.'));
     });
 
-    test('line and take approvals write bloc state', () async {
+    test('narrator line edits write bloc state', () async {
       final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
       addTearDown(bloc.close);
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const NodeFieldChanged(nodeId: 'node_1', lineApproved: true));
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsText: 'Go left'));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(
-        bloc.state.nodes
-            .firstWhere((node) => node.nodeId == 'node_1')
-            .lineApproved,
-        isTrue,
-      );
-
-      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsApproved: true));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(
-        bloc.state.nodes
-            .firstWhere((node) => node.nodeId == 'node_1')
-            .ttsApproved,
-        isTrue,
+        bloc.state.nodes.firstWhere((node) => node.nodeId == 'node_1').ttsText,
+        'Go left',
       );
     });
 
@@ -1870,7 +1995,7 @@ void main() {
       bloc.add(const DraftOpened('story_1'));
       await bloc.stream.firstWhere((state) => state.hasDraft);
 
-      bloc.add(const NodeFieldChanged(nodeId: 'node_1', lineApproved: true));
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsText: 'Go left'));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       bloc.add(const ZonesSaved());
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
@@ -1884,7 +2009,7 @@ void main() {
           (key, value) => MapEntry(key.toString(), value),
         );
         expect(sent['nodeId'], 'node_1');
-        expect(sent['lineApproved'], isTrue);
+        expect(sent['ttsText'], 'Go left');
       }
     });
 
@@ -1967,6 +2092,253 @@ void main() {
       expect(choices, hasLength(1));
       expect(choices.single['slot'], 'B');
       expect(choices.single['targetNodeId'], 'node_1');
+    });
+  });
+
+  group('CreateBlocDirectPersistence', () {
+    test('DraftRequested creates the draft through the client stack', () async {
+      final stack = _memoryStack(seed: false);
+      stack.bloc.add(const DraftRequested(authorId: 'uid_1', title: 'Temple'));
+      await stack.bloc.stream.firstWhere(
+        (state) => state.hasDraft && state.job == CreateJob.none,
+      );
+
+      final storyId = stack.bloc.state.story!.storyId;
+      expect(storyId, isNotEmpty);
+      expect(stack.bloc.state.openNodeId, isNotNull);
+      expect(stack.store.documents['stories/$storyId']?['title'], 'Temple');
+      expect(
+        stack
+            .store
+            .documents['stories/$storyId/nodes/${stack.bloc.state.openNodeId}'],
+        isNotNull,
+      );
+    });
+
+    test('NodeAdded links the child client-direct and opens it', () async {
+      final stack = _memoryStack();
+      await _openMemory(stack);
+
+      stack.bloc.add(const NodeAdded(parentNodeId: 'node_1'));
+      final opened = await stack.bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.nodes.length == 2,
+      );
+
+      final childId = opened.openNodeId!;
+      expect(childId, isNot('node_1'));
+      final parentDoc = stack.store.documents['stories/story_1/nodes/node_1']!;
+      final choices = parentDoc['choices'] as List;
+      expect(choices, hasLength(1));
+      expect((choices.single as Map)['targetNodeId'], childId);
+      expect(
+        stack
+            .store
+            .documents['stories/story_1/nodes/$childId']?['startFromNodeId'],
+        'node_1',
+      );
+    });
+
+    test('SceneProposalApplied overwrites fields and branches once', () async {
+      final stack = _memoryStack(
+        nodes: const [DraftNode(nodeId: 'node_1', title: 'Manual')],
+      );
+      await _openMemory(stack);
+
+      const proposal = SceneProposal(
+        title: 'AI title',
+        ttsText: 'A line',
+        choices: [SceneProposalChoice(label: 'Go')],
+      );
+      stack.bloc.add(
+        const SceneProposalApplied(nodeId: 'node_1', proposal: proposal),
+      );
+      final applied = await stack.bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            (state.openNode?.choices.isNotEmpty ?? false),
+      );
+
+      expect(applied.openNode!.title, 'AI title');
+      expect(applied.openNode!.ttsText, 'A line');
+      expect(applied.openNode!.choices.single.label, 'Go');
+
+      stack.bloc.add(
+        const SceneProposalApplied(nodeId: 'node_1', proposal: proposal),
+      );
+      await stack.bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none,
+      );
+      expect(stack.bloc.state.openNode!.choices, hasLength(1));
+    });
+
+    test('NodeDeleted drops an untargeted node and reopens the root', () async {
+      final stack = _memoryStack(
+        nodes: const [
+          DraftNode(nodeId: 'node_1', title: 'Root'),
+          DraftNode(nodeId: 'node_2', title: 'Spare'),
+        ],
+      );
+      await _openMemory(stack);
+      stack.bloc.add(const NodeSelected('node_2'));
+      await stack.bloc.stream.firstWhere(
+        (state) => state.openNodeId == 'node_2',
+      );
+
+      stack.bloc.add(const NodeDeleted());
+      final after = await stack.bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.nodes.length == 1,
+      );
+
+      expect(after.openNodeId, 'node_1');
+      expect(after.failure, isNull);
+      expect(
+        stack.store.documents.containsKey('stories/story_1/nodes/node_2'),
+        isFalse,
+      );
+    });
+
+    test(
+      'NodeDeleted keeps the root and targeted nodes with a phrase',
+      () async {
+        final stack = _memoryStack(
+          nodes: const [
+            DraftNode(
+              nodeId: 'node_1',
+              title: 'Root',
+              choices: [
+                DraftChoice(
+                  choiceId: 'c1',
+                  label: 'Go',
+                  targetNodeId: 'node_2',
+                  isDefault: true,
+                ),
+              ],
+            ),
+            DraftNode(nodeId: 'node_2', title: 'Spare'),
+          ],
+        );
+        await _openMemory(stack);
+
+        stack.bloc.add(const NodeDeleted());
+        await stack.bloc.stream.firstWhere((state) => state.failure != null);
+        expect(stack.bloc.state.failure, 'The root scene cannot be deleted.');
+        expect(stack.bloc.state.nodes, hasLength(2));
+
+        stack.bloc.add(const NodeSelected('node_2'));
+        await stack.bloc.stream.firstWhere(
+          (state) => state.openNodeId == 'node_2' && state.failure == null,
+        );
+        stack.bloc.add(const NodeDeleted());
+        await stack.bloc.stream.firstWhere(
+          (state) =>
+              state.job == CreateJob.none &&
+              state.failure != null &&
+              state.openNodeId == 'node_2',
+        );
+        expect(
+          stack.bloc.state.failure,
+          'This scene is still targeted by an Option.',
+        );
+        expect(
+          stack.bloc.state.nodes.map((node) => node.nodeId),
+          contains('node_2'),
+        );
+      },
+    );
+
+    test('StoryPublished requires a save first', () async {
+      final stack = _memoryStack();
+      await _openMemory(stack);
+
+      stack.bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
+      await stack.bloc.stream.firstWhere(
+        (state) => state.openNode?.title == 'Typed',
+      );
+
+      stack.bloc.add(const StoryPublished());
+      await stack.bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(stack.bloc.state.failure, 'Save your changes before publishing.');
+      expect(stack.bloc.state.publishedStoryId, isNull);
+    });
+
+    test(
+      'StoryPublished shows the checklist for an incomplete draft',
+      () async {
+        final stack = _memoryStack();
+        await _openMemory(stack);
+
+        stack.bloc.add(const StoryPublished());
+        await stack.bloc.stream.firstWhere((state) => state.failure != null);
+
+        expect(stack.bloc.state.failure, contains('needs'));
+        expect(stack.bloc.state.publishedStoryId, isNull);
+      },
+    );
+
+    test('StoryPublished flips a complete draft to published', () async {
+      const ending = DraftNode(
+        nodeId: 'node_9',
+        title: 'Dawn',
+        isEnding: true,
+        endingName: 'Dawn',
+        endingType: 'abierto',
+        videoUrl: 'https://example.com/end.mp4',
+        videoStatus: 'ready',
+        videoWidth: 480,
+        videoHeight: 854,
+        durationSeconds: 10,
+        videoFrameLastUrl: 'https://example.com/f9.png',
+        videoFrameLastHash: 'hash-f9',
+        startFromNodeId: 'node_1',
+        startParentFrameHash: 'end',
+      );
+      final root = _completeNode().copy(
+        title: 'Done',
+        choices: const [
+          DraftChoice(
+            choiceId: 'c1',
+            label: 'Enter',
+            targetNodeId: 'node_9',
+            isDefault: true,
+            x: 0.25,
+            y: 0.65,
+            radius: 0.15,
+          ),
+        ],
+      );
+      final stack = _memoryStack(nodes: [root, ending]);
+      await _openMemory(stack);
+
+      stack.bloc.add(const StoryPublished());
+      final published = await stack.bloc.stream.firstWhere(
+        (state) => state.publishedStoryId != null,
+      );
+
+      expect(published.publishedStoryId, 'story_1');
+      expect(published.failure, isNull);
+      expect(stack.store.documents['stories/story_1']?['status'], 'published');
+    });
+
+    test('local edits survive a remote sync while offline', () async {
+      final stack = _memoryStack();
+      await _openMemory(stack);
+
+      stack.bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
+      await stack.bloc.stream.firstWhere(
+        (state) => state.openNode?.title == 'Typed',
+      );
+
+      await stack.store.batch([
+        DocumentWrite('stories/story_1/nodes/node_1', {
+          'videoPrompt': 'Remote',
+        }, merge: true),
+      ]);
+      final synced = await stack.bloc.stream.firstWhere(
+        (state) => state.openNode?.videoPrompt == 'Remote',
+      );
+
+      expect(synced.openNode?.title, 'Typed');
     });
   });
 
@@ -2184,6 +2556,43 @@ void main() {
         'orphan': 6,
       });
     });
+
+    test('level badges combine depth with the branch path', () {
+      DraftChoice choice(String id, String target, [String? slot]) {
+        return DraftChoice(
+          choiceId: id,
+          label: '',
+          targetNodeId: target,
+          isDefault: true,
+          slot: slot,
+        );
+      }
+
+      final nodes = [
+        DraftNode(
+          nodeId: 'node_1',
+          title: 'Root',
+          choices: [choice('c1', 'node_2', 'A'), choice('c2', 'node_3', 'B')],
+        ),
+        DraftNode(
+          nodeId: 'node_2',
+          title: 'A',
+          choices: [choice('c3', 'node_4')],
+        ),
+        const DraftNode(nodeId: 'node_3', title: 'B'),
+        const DraftNode(nodeId: 'node_4', title: 'AA'),
+        const DraftNode(nodeId: 'orphan', title: 'Orphan'),
+      ];
+
+      expect(levelBadges(nodes, 'node_1'), {
+        'node_1': 'root',
+        'node_2': '1a',
+        'node_3': '1b',
+        // Unslotted links take the sibling order letter.
+        'node_4': '2aa',
+        'orphan': '',
+      });
+    });
   });
 }
 
@@ -2239,6 +2648,75 @@ CreateRepository _repo(
           onProgress?.call(1);
         },
   );
+}
+
+class _MemoryStack {
+  _MemoryStack(this.store, this.bloc);
+
+  final MemoryDocumentStore store;
+  final CreateBloc bloc;
+}
+
+/// Bloc wired to the real client writers over an in-memory store. Business
+/// callables throw, so any Functions fallback fails the test.
+_MemoryStack _memoryStack({
+  String uid = 'uid_1',
+  String storyId = 'story_1',
+  String storyTitle = 'Temple',
+  String rootNodeId = 'node_1',
+  List<DraftNode>? nodes,
+  bool seed = true,
+}) {
+  final store = MemoryDocumentStore();
+  if (seed) {
+    store.documents['stories/$storyId'] = {
+      'authorId': uid,
+      'title': storyTitle,
+      'synopsis': '',
+      'status': 'draft',
+      'rootNodeId': rootNodeId,
+      'revision': 0,
+    };
+    for (final node
+        in nodes ?? const [DraftNode(nodeId: 'node_1', title: 'Door')]) {
+      store.documents['stories/$storyId/nodes/${node.nodeId}'] = node.toJson();
+    }
+  }
+  String? current() => uid;
+  final drafts = ClientDraftPersistence(store, current);
+  final publisher = ClientPublisher(store, current);
+  final repository = CreateRepository(
+    drafts: drafts,
+    publisher: publisher,
+    createDraftDoc: ({required authorId, required String title}) async =>
+        (await drafts.createDraft(authorId, title)).$1.storyId,
+    fetchStoryDoc: (id) => store.get('stories/$id'),
+    fetchNodeDocs: (id) async {
+      final docs = await store.list('stories/$id/nodes');
+      drafts.remember(id, [
+        for (final doc in docs) DraftNode.fromMap(doc.key, doc.value),
+      ]);
+      return docs;
+    },
+    fetchNodeDoc: (story, node) => store.get('stories/$story/nodes/$node'),
+    callFunction: (name, data) async =>
+        throw StateError('Business operation reached Functions: $name'),
+  );
+  final bloc = CreateBloc(
+    repository: repository,
+    drafts: drafts,
+    publisher: publisher,
+  );
+  addTearDown(bloc.close);
+  return _MemoryStack(store, bloc);
+}
+
+Future<void> _openMemory(
+  _MemoryStack stack, [
+  String storyId = 'story_1',
+]) async {
+  stack.bloc.add(DraftOpened(storyId));
+  await stack.bloc.stream.firstWhere((state) => state.hasDraft);
 }
 
 AuthRepository _auth(String? uid) =>
@@ -2345,16 +2823,20 @@ DraftNode _completeNode() {
     title: 'Door',
     videoUrl: 'https://example.com/video.mp4',
     videoStatus: 'ready',
+    videoWidth: 480,
+    videoHeight: 854,
+    durationSeconds: 10,
+    videoFrameLastUrl: 'https://example.com/f.png',
+    videoFrameLastHash: 'end',
+    startImageWidth: 480,
+    startImageHeight: 854,
     startImageSourceUrl: 'https://example.com/s.png',
-    startImageApproved: true,
-    endImageSourceUrl: 'https://example.com/e.png',
-    endImageApproved: true,
+    startImageStatus: 'ready',
+    startHash: 'start',
     ttsText: 'What should they do?',
-    lineApproved: true,
     ttsAudioUrl: 'https://example.com/voice.m4a',
     ttsStatus: 'ready',
     ttsDurationSeconds: 4.1,
-    ttsApproved: true,
     choices: [
       DraftChoice(
         choiceId: 'c1',

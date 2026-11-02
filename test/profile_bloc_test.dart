@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/data/models/auth_exception.dart';
+import 'package:ramifica/data/models/draft_story.dart';
 import 'package:ramifica/data/models/user.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
@@ -178,6 +179,41 @@ void main() {
 
       expect(auth.signOutCalls, 1);
     });
+
+    test('loads the own creations on request', () async {
+      final bloc = ProfileBloc(
+        auth: AuthRepository(auth: _Auth(), users: _Users()),
+        users: _Users(),
+        follows: _follows({}),
+        fetchAuthorStories: ({required authorId}) async {
+          expect(authorId, 'u_me');
+          return [
+            DraftStory(storyId: 'a', authorId: authorId, title: 'A'),
+            DraftStory(storyId: 'b', authorId: authorId, title: 'B'),
+          ];
+        },
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const ProfileDraftsRequested());
+      final state = await bloc.stream.firstWhere(
+        (s) => s.drafts.length == 2,
+      );
+
+      expect(state.drafts.map((d) => d.storyId), ['a', 'b']);
+      expect(state.failure, isNull);
+    });
+
+    test('without a story source the creations stay empty', () async {
+      final bloc = _profile(users: _Users(), follows: _follows({}));
+      addTearDown(bloc.close);
+
+      bloc.add(const ProfileDraftsRequested());
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.drafts, isEmpty);
+      expect(bloc.state.failure, isNull);
+    });
   });
 }
 
@@ -206,46 +242,6 @@ FollowRepository _follows(
       removes?.add('$uid>$authorId');
     },
   );
-}
-
-class _Auth implements AuthGateway {
-  var signOutCalls = 0;
-
-  @override
-  Stream<AuthIdentity?> authStateChanges() => const Stream.empty();
-
-  @override
-  AuthIdentity? get currentIdentity =>
-      const AuthIdentity(uid: 'u_me', providers: ['google']);
-
-  @override
-  Future<void> signInWithGooglePopup() async {}
-
-  @override
-  Future<void> signInWithGoogleRedirect() async {}
-
-  @override
-  Future<void> completeGoogleRedirect() async {}
-
-  @override
-  Future<void> signInWithEmail({
-    required String email,
-    required String password,
-  }) async {}
-
-  @override
-  Future<void> signUpWithEmail({
-    required String email,
-    required String password,
-  }) async {}
-
-  @override
-  Future<void> sendPasswordReset(String email) async {}
-
-  @override
-  Future<void> signOut() async {
-    signOutCalls++;
-  }
 }
 
 class _Users implements UserDirectory {
@@ -293,5 +289,45 @@ class _Users implements UserDirectory {
         providers: current.providers,
       );
     }
+  }
+}
+
+class _Auth implements AuthGateway {
+  var signOutCalls = 0;
+
+  @override
+  Stream<AuthIdentity?> authStateChanges() => const Stream.empty();
+
+  @override
+  AuthIdentity? get currentIdentity =>
+      const AuthIdentity(uid: 'u_me', providers: ['google']);
+
+  @override
+  Future<void> signInWithGooglePopup() async {}
+
+  @override
+  Future<void> signInWithGoogleRedirect() async {}
+
+  @override
+  Future<void> completeGoogleRedirect() async {}
+
+  @override
+  Future<void> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> signUpWithEmail({
+    required String email,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> sendPasswordReset(String email) async {}
+
+  @override
+  Future<void> signOut() async {
+    signOutCalls++;
   }
 }

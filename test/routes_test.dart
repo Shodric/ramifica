@@ -13,6 +13,7 @@ void main() {
     expect(AppRoutes.createNew, '/create/new-creation');
     expect(AppRoutes.storyPath('story_temple'), '/story/story_temple');
     expect(AppRoutes.graphPath('story_1'), '/graph/story_1');
+    expect(AppRoutes.createFor('story_1'), '/create/story_1');
   });
 
   test('parses the public paths', () {
@@ -39,6 +40,14 @@ void main() {
     expect(parseLocation('/create'), isA<CreateLocation>());
     expect(parseLocation('/create/new-creation'), isA<CreateCanvasLocation>());
     expect(pathOf(const CreateCanvasLocation()), '/create/new-creation');
+
+    final draft = parseLocation('/create/story_1');
+    expect(draft, isA<CreateCanvasLocation>());
+    expect((draft as CreateCanvasLocation).storyId, 'story_1');
+    expect(pathOf(draft), '/create/story_1');
+    final encodedDraft = parseLocation('/create/a%20b');
+    expect((encodedDraft as CreateCanvasLocation).storyId, 'a b');
+    expect(pathOf(encodedDraft), '/create/a%20b');
     expect(parseLocation('/profile'), isA<ProfileLocation>());
     expect(pathOf(parseLocation('/story/a%20b')), '/story/a%20b');
     expect(pathOf(parseLocation('/graph/story_1')), '/graph/story_1');

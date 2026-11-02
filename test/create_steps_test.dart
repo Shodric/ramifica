@@ -36,36 +36,82 @@ void main() {
     );
   });
 
-  test(
-    'Script does not require narration; Voice owns the line and approval gate',
-    () {
-      const scene = DraftNode(nodeId: 'n', title: 'Title');
-      expect(firstMissingForStep(step: 0, node: scene, isRoot: true), isNull);
+  test('icon search matches names and labels, blank returns all', () {
+    expect(filterChoiceIcons(''), hasLength(choiceIconOptions.length));
+    expect(filterChoiceIcons('  '), hasLength(choiceIconOptions.length));
+
+    expect(
+      filterChoiceIcons('moon').map((o) => o.name),
+      containsAll(['moon', 'moonshield']),
+    );
+    expect(filterChoiceIcons('Hoop').map((o) => o.name), contains('hoop'));
+    expect(filterChoiceIcons('zzz-no-such-icon'), isEmpty);
+  });
+
+  test('icon search matches tags across related options', () {
+    expect(
+      filterChoiceIcons('money').map((o) => o.name),
+      containsAll(['cash', 'coin', 'card', 'wallet', 'bank']),
+    );
+    expect(
+      filterChoiceIcons('bill').map((o) => o.name),
+      containsAll(['cash', 'ticket', 'receipt']),
+    );
+    expect(filterChoiceIcons('ghost').map((o) => o.name), contains('unseen'));
+  });
+
+  test('every icon maps to a labeled section in order', () {
+    for (final option in choiceIconOptions) {
       expect(
-        firstMissingForStep(step: 3, node: scene, isRoot: true),
+        choiceIconSections[option.name],
+        isNotNull,
+        reason: '${option.name} has no section',
+      );
+      expect(kIconSectionOrder, contains(choiceIconSections[option.name]));
+    }
+    for (final section in kIconSectionOrder) {
+      expect(kIconSectionLabels[section], isNotNull);
+      expect(
+        choiceIconOptions.any((o) => iconSectionOf(o.name) == section),
+        isTrue,
+        reason: '$section is empty',
+      );
+    }
+  });
+
+  test(
+    'Script requires title and narrator line; voice needs a take, not approval',
+    () {
+      const untitled = DraftNode(nodeId: 'n');
+      expect(
+        firstMissingForStep(step: 0, node: untitled, isRoot: true),
+        'a scene title (1-40 characters)',
+      );
+      const scene = DraftNode(nodeId: 'n', title: 'Title');
+      expect(
+        firstMissingForStep(step: 0, node: scene, isRoot: true),
         'the narrator line',
       );
       final written = scene.copy(ttsText: 'Will you enter or wait?');
+      expect(firstMissingForStep(step: 0, node: written, isRoot: true), isNull);
       expect(
-        firstMissingForStep(step: 3, node: written, isRoot: true),
-        'approval of the narrator line',
+        firstMissingForStep(step: 1, node: written, isRoot: true),
+        'a generated start frame',
       );
-      final approved = written.copy(lineApproved: true);
       expect(
-        firstMissingForStep(step: 3, node: approved, isRoot: true),
+        firstMissingForStep(step: 2, node: written, isRoot: true),
         'a generated voice',
       );
     },
   );
 
   for (final width in [390.0, 1200.0]) {
-    testWidgets('S4 owns narrator text and approval at width $width', (
+    testWidgets('S3 edits narrator text and generates voice at width $width', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(Size(width, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       String? line;
-      bool? approved;
       var generated = false;
       await mount(
         tester,
@@ -74,7 +120,6 @@ void main() {
           busy: false,
           showErrors: false,
           onLineChanged: (value) => line = value,
-          onLineApprovalChanged: (value) => approved = value,
           onLineGenerate: () => generated = true,
         ),
       );
@@ -87,8 +132,6 @@ void main() {
         'Enter or wait?',
       );
       expect(line, 'Enter or wait?');
-      await tester.tap(find.byKey(const ValueKey('approve-line-n')));
-      expect(approved, isTrue);
       await tester.tap(find.byKey(const ValueKey('gen-line-n')));
       expect(generated, isTrue);
       expect(tester.takeException(), isNull);
@@ -97,7 +140,7 @@ void main() {
 
   for (final width in [390.0, 1200.0]) {
     testWidgets(
-      'S1 review and Apply fit width $width without changing the node',
+      'S1 review edits the proposal and Apply writes it at width $width',
       (tester) async {
         await tester.binding.setSurfaceSize(Size(width, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -117,7 +160,6 @@ void main() {
                 title: 'AI title',
                 ttsText: 'Choose',
                 startImagePrompt: 'Start',
-                endImagePrompt: 'End',
                 videoPrompt: 'Move',
                 choices: [
                   GeneratedChoice(
@@ -143,22 +185,27 @@ void main() {
         expect(calls, 1);
         expect(applied, isNull);
         expect(node.title, 'Manual title');
-        expect(find.text('Kept. Edit in Script.'), findsOneWidget);
+        // Proposal fields stay editable: review the line and the option.
+        expect(
+          find.byKey(const ValueKey('script-prop-line-root')),
+          findsOneWidget,
+        );
         await tester.enterText(
-          find.byKey(const ValueKey('script-prop-end-root')),
-          'Reviewed end',
+          find.byKey(const ValueKey('script-prop-video-root')),
+          'Reviewed clip',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('script-prop-opt-label-root-0')),
+          'Run',
         );
         final apply = find.byKey(const ValueKey('script-apply-root'));
         await tester.ensureVisible(apply);
         await tester.tap(apply);
         await tester.pump();
-        expect(applied?.ttsText, isNull);
+        expect(applied?.ttsText, 'Choose');
         expect(find.byKey(const ValueKey('line-root')), findsNothing);
-        expect(
-          find.byKey(const ValueKey('script-prop-line-root')),
-          findsNothing,
-        );
-        expect(applied?.endImagePrompt, 'Reviewed end');
+        expect(applied?.videoPrompt, 'Reviewed clip');
+        expect(applied?.choices.single.label, 'Run');
         expect(applied?.choices.single.icon, 'rocket');
         expect(tester.takeException(), isNull);
       },
@@ -166,14 +213,13 @@ void main() {
   }
 
   testWidgets(
-    'Apply is disabled when the scene and both options are already filled',
+    'Apply overwrites reviewed fields and options on a filled scene',
     (tester) async {
       const node = DraftNode(
         nodeId: 'root',
         title: 'Title',
         ttsText: 'Line',
         startImagePrompt: 'S',
-        endImagePrompt: 'E',
         videoPrompt: 'V',
         choices: [
           DraftChoice(
@@ -196,6 +242,7 @@ void main() {
           ),
         ],
       );
+      SceneProposal? applied;
       await mount(
         tester,
         StepScript(
@@ -210,6 +257,7 @@ void main() {
               GeneratedChoice(label: 'Other B'),
             ],
           ),
+          onApplyProposal: (p) => applied = p,
         ),
       );
       await tester.enterText(
@@ -225,7 +273,19 @@ void main() {
       final button = tester.widget<FilledButton>(
         find.byKey(const ValueKey('script-apply-root')),
       );
-      expect(button.onPressed, isNull);
+      expect(button.onPressed, isNotNull);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('script-apply-root')),
+      );
+      await tester.tap(find.byKey(const ValueKey('script-apply-root')));
+      await tester.pump();
+      expect(applied?.title, 'Other');
+      expect(applied?.choices.map((c) => c.label).toList(), [
+        'Other A',
+        'Other B',
+      ]);
+      expect(applied?.choices.first.icon, 'rocket');
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -320,35 +380,53 @@ void main() {
     );
   });
 
-  testWidgets(
-    'S2 sends current prompt and children cannot generate their start',
-    (tester) async {
-      String? sent;
-      await mount(
-        tester,
-        StepFrames(
-          node: const DraftNode(nodeId: 'child'),
-          isRoot: false,
-          inheritedPrompt: 'Parent end',
-          busy: false,
-          showErrors: false,
-          onImageGenerate: (which, prompt) => sent = '$which:$prompt',
-        ),
-      );
-      expect(find.byKey(const ValueKey('gen-image-start-child')), findsNothing);
-      await tester.enterText(
-        find.byKey(const ValueKey('prompt-end-child')),
-        'Revised',
-      );
-      final generate = find.byKey(const ValueKey('gen-image-end-child'));
-      await tester.ensureVisible(generate);
-      await tester.tap(generate);
-      expect(sent, 'end:Revised');
-    },
-  );
+  testWidgets('S2 sends the current start prompt on the root', (tester) async {
+    String? sent;
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(nodeId: 'root'),
+        isRoot: true,
+        busy: false,
+        showErrors: false,
+        onImageGenerate: (which, prompt) => sent = '$which:$prompt',
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('prompt-start-root')),
+      'Revised',
+    );
+    final generate = find.byKey(const ValueKey('gen-image-start-root'));
+    await tester.ensureVisible(generate);
+    await tester.tap(generate);
+    expect(sent, 'start:Revised');
+  });
+
+  testWidgets('S2 shows the inherited frame read-only for children', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(nodeId: 'child'),
+        isRoot: false,
+        inheritedImageUrl: 'https://example.com/f.png',
+        inheritedCaption: 'Inherited from Scene 1',
+        busy: false,
+        showErrors: false,
+        onImageGenerate: (_, _) => fail('children cannot generate'),
+      ),
+    );
+    expect(find.text('Inherited'), findsOneWidget);
+    expect(find.text('Inherited from Scene 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('gen-image-start-child')), findsNothing);
+    expect(find.byKey(const ValueKey('gen-image-end-child')), findsNothing);
+    expect(find.byKey(const ValueKey('prompt-start-child')), findsNothing);
+    expect(find.byKey(const ValueKey('prompt-end-child')), findsNothing);
+  });
 
   testWidgets(
-    'S5 sends the edited prompt and disables it during an active job',
+    'S4 sends the edited prompt and disables it during an active job',
     (tester) async {
       String? sent;
       await mount(
@@ -395,7 +473,7 @@ void main() {
     },
   );
 
-  testWidgets('S5 resumes a pending job with its submitted prompt', (
+  testWidgets('S4 resumes a pending job with its submitted prompt', (
     tester,
   ) async {
     String? sent;
