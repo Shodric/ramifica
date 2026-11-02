@@ -49,7 +49,7 @@ There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch]
 
 | Request | What the worker does |
 |---|---|
-| Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` is served by `storyPage`: the same app shell plus OG tags, cached per its `Cache-Control`. |
+| Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` opens the SPA with generic Ramifica share metadata. |
 | JS, wasm, and fonts in the precache list | Precache. The revision is the `v` query on the worker script, so the next build fetches a new shell. |
 | `.webp` | Cache first. 300 entries, 30 days. Status 200 only. |
 | `.m4a` | Cache first. 100 entries, 30 days. Status 200 only. |
@@ -64,7 +64,7 @@ Project id: `meta-ramifica`. Config lives in `firebase.json` and `.firebaserc`.
 
 Emulators: Auth `9099`, Functions `5001`, Firestore `8080`, Hosting `5000`, Storage `9199`. One project mode. The UI is on.
 
-Hosting serves `build/web` with `cleanUrls`. Every path rewrites to `/index.html`, except `/story/**`, which rewrites to the `storyPage` function first for link previews (absolute asset paths; same app shell plus OG tags). `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
+Hosting serves `build/web` with `cleanUrls`. Every path, including `/story/**`, rewrites directly to `/index.html`. Share metadata is generic and never includes a private scene. `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
 
 The first `pointerdown` anywhere sends `UserGestured`: it clears `autoMuted`, resumes the audio context, and resumes a clip parked by hiding. It never overrides a manual mute. `FeedView` also reads `window.__ramificaGestured` on start, so a login tap counts. Hiding the browser tab sends `AppHidden`, which parks the video until the next tap; becoming visible again never resumes on its own. Switching tabs uses `TickerMode` instead and does resume.
 
@@ -226,13 +226,13 @@ Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The ba
 
 ## Routes
 
-Path URLs, from `usePathUrlStrategy()` in `main.dart`. No hash. Hosting rewrites every path to `/index.html`. When `storyPage` exists, `/story/**` is rewritten to that function first, for link previews.
+Path URLs, from `usePathUrlStrategy()` in `main.dart`. No hash. Hosting rewrites every path to `/index.html`. Share URLs use the same SPA shell.
 
 | Path | Screen | Who provides it |
 |---|---|---|
 | `/access` | `AccessView` | `AuthBloc`, already created above. No tab bar. |
 | `/` | `ShellView` on Feed | `ShellBloc` and `FeedBloc` |
-| `/story/{storyId}` | `ShellView` on Feed with that story | Same. The first response is `storyPage`, with the Open Graph preview. |
+| `/story/{storyId}` | `ShellView` on Feed with that story | Same SPA, with a generic Ramifica preview. |
 | `/explore` | `ShellView` on Explore | Same |
 | `/graph/{storyId}` | `ShellView` on Map | Same |
 | `/profile` | `ShellView` on Profile | Same |
@@ -323,108 +323,85 @@ A `secret` destination is not prefetched before `commitChoice`. Do not prefetch 
 
 Playback files are progressive MP4, H.264, 480x854, faststart. One resolution. No HLS.
 
-## What the client reads
+## Client persistence and privacy
 
-Firestore rules let only the story's author read `nodes`. A player does not read nodes directly. Playback and the map come from Functions.
+`lib/data/persistence/` contains the business logic. `DocumentStore` is the narrow
+Firestore adapter; tests use the same Dart writers with an atomic memory store
+and with the real Firestore emulator. RunRepository and GraphRepository retain
+their methods and models and share one account-scoped `ClientGameService` cache.
 
-| Screen | Source |
-|---|---|
-| Feed | `startRun` and `loadPlayback(runId)`. |
-| Map | `graphStubs(storyId)`. An unvisited node returns its id, whether it is an ending, and destination ids. A visited node also returns title, `thumbnailUrl`, labels, and `choiceCounts`. An unvisited secret appears only when a visited option points at it, and only as an id: a lock, no title, no image. |
-| Explore | Query of published `stories` and active `campaigns`. |
-| Create | The author's `draft` story and its nodes, secrets included. This read is direct. The author owns it. |
-| Profile | The user doc, `follows`, `endings`, and that person's `sagas`. |
-| Link `/story/{storyId}` | HTTP function `storyPage`. It builds HTML with Open Graph title, synopsis, and `ogImageUrl`, then loads the app. No session. No nodes. |
+- `ClientDraftPersistence` creates a story and root in one batch, creates/links a
+  child in one transaction, and applies an outline/scene in one transaction.
+  Request IDs produce deterministic child IDs. Existing legacy keyed children
+  are reused; an occupied slot is preserved. There is no pending-operation journal.
+- Saving and image approval use direct transactions. Image approval compares the
+  reviewed hash with the current hash. Deletion checks references against a fresh
+  graph and then checks its revision inside the delete transaction.
+- Each open draft has one nodes listener. Pending author edits merge by field;
+  media metadata and unrelated remote changes still arrive. Creating, saving,
+  approving and Apply do not re-fetch the full collection. Media polling refreshes
+  only its own node. Errors preserve local edits.
+- `story.revision` advances atomically for author writes and for media results.
+  Publishing requires saved edits, validates the graph in Dart, stages sanitized
+  projections in batches, and activates only if that revision is still current.
 
-### loadPlayback
+Publication paths are `stories/{storyId}/publications/{publicationId}`:
 
-`loadPlayback({runId})` reads the caller's run, the current node, and its destinations with the Admin SDK. It returns only this:
+| Path | Reader |
+| --- | --- |
+| Original `stories/{id}/nodes/{node}` | Author only, including prompts and job metadata. |
+| `publications/{pub}/nodes/{node}` | Author, or a player whose own progress visited the node, for the active publication only. |
+| `publications/{pub}/map/{node}` | Active players. An unvisited secret contributes only its ID and `{secret:true}`. |
+| `publications/{pub}/stats/{node}` | Aggregated counts, separate from authoring; secret counts require a visit. |
 
-```json
-{
-  "runId": "run_8k2p",
-  "status": "active",
-  "story": { "storyId": "story_temple", "title": "The temple secret", "authorName": "Alex Vance" },
-  "node": {
-    "nodeId": "node_001",
-    "title": "The temple door",
-    "isEnding": false,
-    "videoUrl": "https://firebasestorage.googleapis.com/.../video-9f3e1a2b.mp4?alt=media&token=...",
-    "durationSeconds": 10.0,
-    "ttsText": "What do you think Jeff should do? Enter the temple, or climb the ridge?",
-    "ttsAudioUrl": "https://firebasestorage.googleapis.com/.../voz-c4d5e6f7.m4a?alt=media&token=...",
-    "ttsDurationSeconds": 4.1,
-    "videoFrameLastBlurData": "data:image/webp;base64,...",
-    "endingName": null,
-    "endingType": null
-  },
-  "choices": [
-    {
-      "choiceId": "choice_temple",
-      "label": "Enter the temple",
-      "targetNodeId": "node_002",
-      "isDefault": true,
-      "x": 0.25, "y": 0.65, "radius": 0.15,
-      "targetSecret": false,
-      "target": {
-        "nodeId": "node_002",
-        "videoUrl": "https://firebasestorage.googleapis.com/.../video-5d6e7f80.mp4?alt=media&token=..."
-      }
-    },
-    {
-      "choiceId": "choice_ridge",
-      "label": "Climb the ridge",
-      "targetNodeId": "node_003",
-      "isDefault": false,
-      "x": 0.75, "y": 0.7, "radius": 0.15,
-      "targetSecret": true,
-      "target": null
-    }
-  ]
-}
-```
+Staged publications are inaccessible to players. Playback documents explicitly
+whitelist game fields and copy nonsecret immediate target URLs for prefetch.
+Secret choices contain a target ID but no target body or URL. The author's public
+name is copied onto the story at publication time. Author preview remains private.
 
-- `authorName` comes from `users/{authorId}.displayName`. It is not stored on the story.
-- `targetNodeId` is always present. The client needs it to ask for video, blurs, and prefetch. The id alone leaks nothing, because nodes are not readable by a player.
-- `targetSecret` is `visibility == "secret"` on the destination.
-- `status` is `active` or `ended`. When `ended`, `node` is the ending and the client shows the last frame with the card.
-- A secret destination travels with `target: null`: id and label, no title, image, or video. Its body arrives in the `commitChoice` response that reaches it.
-- The portal does not need destination blurs. It reuses the current node's last frame, which matches the destination's first frame.
-- `choiceCounts`, destination `ttsText`, prompts, and author fields do not travel.
-- With an inline blur of about 600 bytes, the response is 1 to 2 KB.
+The client commits a choice, history entry, visit and counter atomically. Only
+then does it read the destination body. An ending is completed in a second,
+idempotent transaction; loading an interrupted run completes it. Reward IDs,
+request IDs, `lastCommit`, existing codes and append-only history are preserved.
+Rewind changes the current node without deleting visits/history. A legacy run
+can restore its visits from its own history before loading protected content.
+Accounts can write their own progress; this intentionally does not implement
+anti-cheat. Another account's drafts, progress and secret bodies remain isolated.
 
-## Writes
+## Functions
 
-| Action | Who writes |
-|---|---|
-| Create `users/{uid}` and change name, handle, photo, locale | Client. |
-| Follow or unfollow | Client, at `follows/{uid}/authors/{authorId}`. |
-| Create a `draft` story and edit its story fields | Client. |
-| Edit a draft node's author fields (title, line, choices, approvals) | Client. Rules reject media fields and published stories. |
-| Create or delete a node, runs, endings, unlocks, codes, `status: published` | Functions. |
+Only six callables are deployed: `generateNodeText`, `proposeStoryOutline`,
+`generateNodeImage`, `generateNodeVideo`, `generateNodeVoice`, `transcribeVoice`.
+`onUploadFinalized` processes uploaded clips. The live dictation relay continues
+in Cloud Run. API keys remain in server secrets. No business operation calls
+Functions and `/story/{id}` does not invoke a function.
 
-| Function | Used by |
-|---|---|
-| `startRun` | Feed, Explore, Profile. `startRun({ storyId, restart })`. With no `storyId`, pick the story from `storyState.updatedAt`. With `restart: true`, create a new run at the root and mark it active. |
-| `loadPlayback` | Feed. |
-| `commitChoice` | Feed. Takes `runId`, `fromNodeId`, `choiceId`, and `requestId`. The same `requestId` returns the same result. Returns the destination playback, plus ending, saga, and code when those exist. |
-| `rewindRun` | Map. |
-| `playApproach` | Map. |
-| `graphStubs` | Map. |
-| `createNode` | Create. |
-| `saveNode` | Unused by the client. Draft node edits merge from Firestore. |
-| `generateNodeText` | Create. |
-| `generateNodeImage` | Create. `generateNodeImage({ which: "start" \| "end" })`. E on any node. S only on the root. |
-| `generateNodeVideo` | Create. Inherits S from the parent's approved E and asks for video from S to E. |
-| `generateNodeVoice` | Create. |
-| `onUploadFinalized` | Nobody calls it. Storage trigger on `uploads/`. Re-encodes the uploaded video. |
-| `storyPage` | Hosting, on `/story/**`. HTTP. No session. |
-| `deleteNode` | Create. |
-| `publishStory` | Create. |
-| `transcribeVoice` | Create, premise FAB. Unary. One closed audio blob in, `{text, done: false}` out. |
-| `proposeStoryOutline` | Create, premise sheet. Proposal only. The client writes on apply. |
+## Media format and editor players
 
-Callables use `onCall({ enforceAppCheck: true, maxInstances })` in `us-central1`. App Check on the web is reCAPTCHA Enterprise. `storyPage` is plain HTTP for crawlers and does not use App Check.
+`functions/src/config/ai.ts` owns the output profile: 480 × 854, vertical, 30 fps;
+generated clips last 10 seconds and request 480p. Conflicting legacy overrides
+fail explicitly. Images are center-cropped without distortion before hashing.
+Generated clips and uploads use the same H.264/yuv420p/AAC faststart pipeline.
+ffprobe checks final dimensions and measured duration. AI clips shorter than ten
+seconds minus one frame fail; longer clips are trimmed. Uploads keep their duration.
+Hashes and saved metadata describe the normalized files. Existing assets are
+never regenerated by migration; incompatible draft media is identified for replacement.
+
+Each local generation sets its media/node/frame and phase before saving, so
+loading appears on the first tap. Persisted generation state covers reloads;
+terminal failures clear it. Another take keeps the preceding take visible until
+a validated replacement arrives. Image download, player buffering, generation
+and measured upload progress have distinct indicators.
+
+P3 uses `VoicePlayback` with preparation, pause, seek and observable real position,
+duration, buffering and errors. Its conventional player includes a moving,
+draggable slider. P4 embeds video with play/pause, seek, elapsed/total time, sound,
+retry and measured dimensions. Both use the existing video_player plugin. They
+initialize on the active step, pause leaving it, replace changed URLs and dispose
+on removal. Opening the general preview pauses inline players; it also has
+explicit controls and does not depend on autoplay.
+
+See `docs/client-persistence-rollout.md` for migration and release ordering.
 
 ## Premise dictation
 
@@ -434,7 +411,7 @@ Realtime flow:
 
 - The browser sends PCM16 LE mono 24 kHz in ~80ms binary frames. There is no `seq`; the relay forwards each frame as it arrives. Frames that land before `ready` are held and flushed in order once the session is live. Each `transcript` from Meta replaces the on-screen text (`partialMode: CUMULATIVE`, whole hypothesis, not a delta), unless the transcript field is focused. `speechComplete` arrives as `final` and always replaces. A mid-take relay error closes the client socket; the take still falls back to one WAV.
 - Releasing the FAB (or the 90s cap) sends `{type:'end'}`; the relay sends `endStream`, waits for `speechComplete`, delivers it as `{type:'final'}`, and closes both sockets clean. Auth is a first-frame `{type:'auth', idToken, appCheckToken}` (4401 without it); `META_API_KEY` lives in Secret Manager, never in the client.
-- If the socket fails to open in 15s or drops, the client builds one WAV (RIFF header + saved PCM) and sends it once via `transcribeVoice` (`format: 'wav'`, `last: true`); that text replaces the field with hint `Live dictation is unavailable. The full take was transcribed.` A failed take shows the server message when there is one. `transcribeVoice` stays as the unary WAV fallback only — it is no longer the live path. The root node opens this as step 0 in the wizard shell, before Script. The root stepper starts with an Idea chip; child nodes do not. It is not a canvas button. The step uses the same filled inputs as Script. Title is its own field. "Tell your idea" fills the height left under the header. Continue saves it as the story synopsis, then advances. Decision narration is authored separately in S4. On later steps Continue stays and names the first missing piece until the step is complete.
+- If the socket fails to open in 15s or drops, the client builds one WAV (RIFF header + saved PCM) and sends it once via `transcribeVoice` (`format: 'wav'`, `last: true`); that text replaces the field with hint `Live dictation is unavailable. The full take was transcribed.` A failed take shows the server message when there is one. `transcribeVoice` stays as the unary WAV fallback only — it is no longer the live path. The root node opens this as step 0 in the wizard shell, before Script. The root stepper starts with an Idea chip; child nodes do not. It is not a canvas button. The step uses the same filled inputs as Script. Title is its own field. "Tell your idea" fills the height left under the header. Continue advances without saving. Save or Apply persists the premise; decision narration remains separate in P3. Decision narration is authored separately in S3. On later steps Continue stays and names the first missing piece until the step is complete.
 
 ## Scene proposals and prompt editing
 
@@ -446,22 +423,19 @@ It returns an editable proposal; only Apply dispatches `SceneProposalApplied`.
 Apply fills empty author fields and missing A/B branches, preserving existing
 choice IDs, destinations, geometry, and defaults. S1 scene proposals exclude
 narration, and Script requires only a valid scene title to continue.
-S4 owns the decision narration: write or generate the line, approve it, then
+S3 owns the decision narration: write or generate the line, approve it, then
 generate and approve voice. This line is heard after the clip, just before the
 player chooses an option; endings use a closing line without inventing choices.
 `generateNodeText` accepts a scene or narration purpose on the existing callable.
 Narration uses the closing-frame prompt and current choices as context, and only
 updates `ttsText`. Editing it invalidates both approvals and the old voice.
-`wizard_gates.dart` requires the approved line in S4, before the audio checks.
+`wizard_gates.dart` requires the approved line in S3, before the audio checks.
 
-All node writes share a client queue. Apply saves pending edits, reloads,
-publishes each proposed link locally before saving it, and merges final reads
-without discarding newer local author edits. A failed read or save leaves the
-local revision available for retry. Each missing branch calls `createNode` with
-`v1:author:story:parent:slot`; the transaction queries that key and parent before
-creating a child. A retry after reload reuses and relinks an orphan. The key is
-stable per slot even when the proposal changes. Occupied slots keep their child.
-This requires no recovery journal or separate idempotency collection.
+All author writes share a client queue. Apply first flushes pending edits and
+then merges the current parent and missing children atomically. Only empty fields
+and slots are filled; IDs, geometry, defaults and existing destinations survive
+retries. Stable per-slot request IDs also recover legacy orphans. No full reload,
+extra callable, recovery journal or separate operation collection is needed.
 
 The text contract caps title/ending name at 40 characters, narration at 280,
 choice labels at 24, and the three media prompts at 2000, with at most two choices.
@@ -471,7 +445,7 @@ the reference for mirror tests against Dart and TypeScript; TS consumers import
 the same lists, and unknown names become null with the usual display fallback.
 
 S2 edits the prompt before Generate or Another take and shows one image per
-frame. A child's start frame and prompt are inherited read-only. S5 edits the
+frame. A child's start frame and prompt are inherited read-only. S4 edits the
 video prompt; a pending provider job keeps its submitted prompt until resumed.
 For prompts and `endingName`, a null `NodeFieldChanged` value preserves the field;
 a blank value clears it to null. A cleared image prompt uses `buildImagePrompt`.

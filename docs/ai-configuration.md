@@ -46,8 +46,7 @@ injected process variables; a dotenv file needs a loader such as Firebase CLI or
 `node --env-file` to enter the environment.
 
 The emulator still calls external providers when credentials are present.
-Without a key, text/transcription report missing configuration; images, TTS and
-video retain their existing `pending` behavior. Empty keys cannot generate media.
+Missing credentials fail explicitly for every generator and clear terminal pending states. Empty keys cannot generate media.
 
 The current `--dart-define=EMULATOR=true` connects only Functions to its emulator.
 Auth, Firestore and Storage still use the real project unless connected to their
@@ -70,7 +69,7 @@ firebase deploy --only functions --project meta-ramifica
 The commands prompt for each key. Keep values out of command arguments and
 tracked configuration. Firebase stores them in Google Secret Manager and injects
 each secret into the functions declaring it: Meta for text/outline/images/ASR,
-OpenRouter for TTS/video. Image approval needs no key. Image generation declares
+OpenRouter for TTS/video. Image approval is a direct client transaction and needs no callable or key. Image generation declares
 the Meta secret even when ComfyUI is selected; the rest of the project's text and
 dictation features also need this secret.
 
@@ -120,12 +119,15 @@ does not request resampling from the API. A model returning only MP3 needs an
 adapted converter input. `OPENROUTER_TTS_INSTRUCTIONS` changes voice direction;
 an empty value omits instructions. The default respects the supplied text's language.
 
-For video, choose a model with compatible resolution, aspect ratio and duration.
-HeyGen's default connection uses the first frame only.
-`OPENROUTER_VIDEO_USE_END_FRAME=true` includes the final frame for models accepting
-both `first_frame` and `last_frame`. Approving an end image does not make HeyGen
-use it as a generation condition; choose a model accepting both frames when that
-is required. The app retains its image approval gates in either case. Finish
+Video requests use 480p, 9:16 and 10 seconds at 24 fps. `OPENROUTER_VIDEO_RESOLUTION=480p`,
+`OPENROUTER_VIDEO_DURATION_SECONDS=10`, and `OPENROUTER_VIDEO_ASPECT_RATIO=9:16` express
+the request; the pipeline stores what the provider returns (browser-compatible
+H.264 + faststart) and records the probed dimensions and duration. Nothing is
+scaled, cropped, trimmed, or rejected for size. Uploaded clips keep their duration.
+HeyGen's default connection uses the first frame only: the pipeline sends the
+start frame and never conditions on an authored end frame. The extracted last
+frame of each finished clip is stored for playback and for chaining the next
+node's start. Finish
 pending jobs before switching video API backends or models, since the new endpoint
 may be unable to poll the old job IDs.
 
