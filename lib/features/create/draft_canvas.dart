@@ -7,10 +7,10 @@ import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/create_node_card.dart';
 import 'package:ramifica/features/create/create_plus_node.dart';
 
-/// Horizontal sibling gap and vertical row pitch. Gaps fit 170px cards
+/// Horizontal sibling gap and vertical row pitch. Gaps fit 170x240 cards
 /// plus connector room, and the pad clears card halves, so nothing clips.
-const _hGap = 200.0;
-const _vGap = 240.0;
+const _hGap = 220.0;
+const _vGap = 280.0;
 const _pad = 120.0;
 
 /// One drawn edge. [returns] marks a cycle: the child sits on the same or
@@ -319,6 +319,54 @@ Map<String, String> slotPaths(List<DraftNode> nodes, String? rootNodeId) {
     paths.putIfAbsent(node.nodeId, () => '');
   }
   return paths;
+}
+
+/// Level badge per node from the root: `'root'` for the root itself,
+/// `'1a'`/`'1b'` for its children, `'2aa'`... for grandchildren. Depth
+/// counts edges; letters come from the slot when set, else from the
+/// link order among siblings (first free of `a`/`b`). Unreachable nodes
+/// keep an empty badge. Cycles resolve to the first visit, mirroring
+/// [layoutDraft].
+Map<String, String> levelBadges(List<DraftNode> nodes, String? rootNodeId) {
+  final byId = {for (final node in nodes) node.nodeId: node};
+  final root = _resolveRootId(nodes, rootNodeId);
+  final badges = <String, String>{};
+  void walk(String id, int depth, String path) {
+    if (badges.containsKey(id)) return;
+    badges[id] = depth == 0 ? 'root' : '$depth$path';
+    final node = byId[id];
+    if (node == null) return;
+    final links = [
+      for (final link in _orderedLinks(node))
+        if (link.target.isNotEmpty && byId.containsKey(link.target)) link,
+    ];
+    final reserved = <String>{
+      for (final link in links)
+        if (link.slot == 'A' || link.slot == 'B') link.slot!.toLowerCase(),
+    };
+    var fallback = 0;
+    for (final link in links) {
+      var letter = '';
+      if (link.slot == 'A' || link.slot == 'B') {
+        letter = link.slot!.toLowerCase();
+      } else {
+        while (fallback < 2) {
+          final candidate = 'ab'[fallback++];
+          if (reserved.add(candidate)) {
+            letter = candidate;
+            break;
+          }
+        }
+      }
+      walk(link.target, depth + 1, path + letter);
+    }
+  }
+
+  if (root.isNotEmpty) walk(root, 0, '');
+  for (final node in nodes) {
+    badges.putIfAbsent(node.nodeId, () => '');
+  }
+  return badges;
 }
 
 /// Pan transform (at 1x) landing [center] in the middle of a [viewport].

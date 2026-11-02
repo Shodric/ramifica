@@ -1,4 +1,5 @@
 import 'package:ramifica/core/widgets/status_pill.dart';
+import 'package:ramifica/data/persistence/publication.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/draft_story.dart';
 
@@ -12,6 +13,7 @@ class CreateState {
   const CreateState({
     this.story,
     this.nodes = const [],
+    this.stories = const [],
     this.openNodeId,
     this.job = CreateJob.none,
     this.jobNodeId,
@@ -26,6 +28,10 @@ class CreateState {
   final DraftStory? story;
   final List<DraftNode> nodes;
 
+  /// The author's own stories, newest first. Loaded on demand by
+  /// [StoriesRequested] so the Create tab can list every creation.
+  final List<DraftStory> stories;
+
   /// The node open in the inspector. Null before the first node exists.
   final String? openNodeId;
 
@@ -35,13 +41,21 @@ class CreateState {
   /// The node the [job] works on, if it targets one node.
   final String? jobNodeId;
 
-  /// The exact active action: startImage, endImage, voice, video, or text.
+  /// The exact active action: startImage, voice, video, or text.
   /// Set before saving so the indicator starts at the first tap.
   final String? operationKind;
   final String? operationPhase;
 
   bool generating(String nodeId, String kind) =>
       job != CreateJob.none && jobNodeId == nodeId && operationKind == kind;
+
+  /// True while the story key art is generating. Story-level, so no node
+  /// carries it — unlike [generating], there is no node target.
+  bool get generatingCover =>
+      job == CreateJob.imaging && operationKind == 'cover';
+
+  /// True while the story fields (title/synopsis) are saving.
+  bool get savingStory => job == CreateJob.saving && jobNodeId == null;
 
   /// Upload progress 0..1 while [job] is [CreateJob.uploading], else null.
   final double? uploadProgress;
@@ -130,25 +144,10 @@ class CreateState {
   /// `published` (modulo the server-verified hashes in [missingFor]).
   List<String> publishProblems() {
     if (story == null) return ['No draft open yet.'];
-    final problems = <String>[];
-    final rootId = story?.rootNodeId;
-    final byId = {for (final node in nodes) node.nodeId: node};
-    final root = rootId == null ? null : byId[rootId];
-    if (root == null) {
-      problems.add('Missing root node.');
-    }
-    if (!nodes.any((node) => node.isEnding)) {
-      problems.add('At least one ending is required.');
-    }
-    if (root != null) {
-      for (final orphanId in orphanNodeIds) {
-        problems.add('Node $orphanId is not reachable from the root.');
-      }
-    }
-    for (final node in nodes) {
-      problems.addAll(missingFor(node));
-    }
-    return problems;
+    return validatePublication(
+      {'rootNodeId': story!.rootNodeId},
+      {for (final node in nodes) node.nodeId: node.toJson()},
+    );
   }
 
   DraftNode? _byId(String nodeId) {
@@ -159,7 +158,7 @@ class CreateState {
   }
 
   /// True when [nodeId] is the draft root. Only the root generates its
-  /// own S frame and shows S approval controls; children inherit S.
+  /// own S frame; children inherit S from their parent clip.
   bool isRoot(String nodeId) => story?.rootNodeId == nodeId;
 
   /// The node [node] inherited its S from, or null for the root and for
@@ -171,33 +170,36 @@ class CreateState {
   }
 
   /// Why [node] cannot generate video yet, or null when the gate is open.
-  /// The root needs its own S approved and present; any other node needs
-  /// its parent E approved and present (the call inherits it as S).
+  /// The root needs its own S ready and present; any other node needs
+  /// its parent clip ready and present (the call inherits the clip's
+  /// extracted last frame as S).
   String? videoGateMessage(DraftNode node) {
     if (isRoot(node.nodeId)) {
-      if (!node.startImageApproved || node.startImageSourceUrl == null) {
-        return 'Approve the start frame to generate video.';
+      if (node.startImageStatus != 'ready' ||
+          node.startImageSourceUrl == null) {
+        return 'Generate the start frame to generate video.';
       }
       return null;
     }
     final parent = parentOf(node);
     if (parent == null ||
-        !parent.endImageApproved ||
-        parent.endImageSourceUrl == null) {
-      return 'The parent end frame must be approved first.';
+        parent.videoFrameLastHash == null ||
+        parent.videoFrameLastUrl == null) {
+      return 'Generate the parent clip first.';
     }
     return null;
   }
 
   /// True when [node] carries a stale video: its inherited S no longer
-  /// matches the parent E (the parent regenerated E and the backend
-  /// forced this video back to `idle` until it re-inherits).
+  /// matches the parent clip (the parent clip finished again and the
+  /// backend forced this video back to `idle` until it re-inherits).
   bool videoDesynced(DraftNode node) =>
       node.isVideoDesyncedFrom(parentOf(node));
 
   CreateState copy({
     DraftStory? Function()? story,
     List<DraftNode>? nodes,
+    List<DraftStory>? stories,
     String? Function()? openNodeId,
     CreateJob? job,
     String? operationKind,
@@ -211,6 +213,7 @@ class CreateState {
     return CreateState(
       story: story == null ? this.story : story(),
       nodes: nodes ?? this.nodes,
+      stories: stories ?? this.stories,
       openNodeId: openNodeId == null ? this.openNodeId : openNodeId(),
       job: job ?? this.job,
       operationKind: job == CreateJob.none
@@ -238,6 +241,7 @@ class CreateState {
     return other is CreateState &&
         other.story == story &&
         _sameNodes(other.nodes, nodes) &&
+        _sameStories(other.stories, stories) &&
         other.openNodeId == openNodeId &&
         other.operationKind == operationKind &&
         other.operationPhase == operationPhase &&
@@ -253,6 +257,7 @@ class CreateState {
   int get hashCode => Object.hash(
     story,
     Object.hashAll(nodes),
+    Object.hashAll(stories),
     openNodeId,
     job,
     operationKind,
@@ -284,9 +289,9 @@ class CreateState {
 /// The publish checklist for one node, shared by the state and the tests.
 /// Mirrors functions/src/publish/validateStory.ts per node, minus the
 /// server-verified frame sync hashes: title, visibility, video, images,
-/// choices, and voice. [isRoot] adds the start-image approval only the
-/// root needs (children inherit S from their parent E). Reachability stays
-/// out: it is story-level and the canvas marks orphans distinctly.
+/// choices, and voice. [isRoot] adds the start-image readiness only the
+/// root needs (children inherit S from their parent clip). Reachability
+/// stays out: it is story-level and the canvas marks orphans distinctly.
 List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   final missing = <String>[];
   final id = node.nodeId;
@@ -299,11 +304,11 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   if (node.videoStatus != 'ready' || node.videoUrl == null) {
     missing.add('Node $id needs a ready video.');
   }
-  if (!node.endImageApproved) {
-    missing.add('Node $id needs an approved end image.');
+  if (node.videoFrameLastUrl == null) {
+    missing.add('Node $id needs its extracted last frame.');
   }
-  if (isRoot && !node.startImageApproved) {
-    missing.add('Node $id needs an approved start image.');
+  if (isRoot && node.startImageStatus != 'ready') {
+    missing.add('Node $id needs a ready start image.');
   }
   if (node.isEnding) {
     if (node.choices.isNotEmpty) {
@@ -339,19 +344,15 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
     }
   }
   // Voice: required on decisions; on endings only when a line exists.
-  // Approval follows generation: fresh takes land unapproved and the
-  // author approves after listening.
+  // Generated media is accepted as-is; regen replaces it.
   if (!node.isEnding || node.ttsText.trim().isNotEmpty) {
-    if (!node.lineApproved) {
-      missing.add('Node $id needs an approved narrator line.');
+    if (node.ttsText.trim().isEmpty) {
+      missing.add('Node $id needs a narrator line.');
     }
     if (node.ttsStatus != 'ready' ||
         node.ttsAudioUrl == null ||
         !_isPositive(node.ttsDurationSeconds)) {
       missing.add('Node $id needs a ready narrator voice.');
-    }
-    if (!node.ttsApproved) {
-      missing.add('Node $id needs an approved narrator voice.');
     }
   }
   // Reachability is story-level: the canvas marks orphans distinctly.
@@ -363,6 +364,14 @@ bool _isPositive(double? value) => value != null && value.isFinite && value > 0;
 bool _isUnit(double value) => value.isFinite && value >= 0 && value <= 1;
 
 bool _sameNodes(List<DraftNode> a, List<DraftNode> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+bool _sameStories(List<DraftStory> a, List<DraftStory> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
     if (a[i] != b[i]) return false;

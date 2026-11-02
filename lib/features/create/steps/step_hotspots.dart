@@ -3,7 +3,7 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/zone_marker.dart';
 
-/// S3 Options: hotspot header, the [ZoneMarker] preview, one card per
+/// S5 Options: hotspot header, the [ZoneMarker] preview, one card per
 /// option, the add-option action, and the red delete at the end (non-root
 /// only). Zones persist with the scene Save button or generation; there is no
 /// separate Save zones button. [showErrors] flags options whose label is
@@ -107,7 +107,9 @@ class _StepHotspotsState extends State<StepHotspots> {
               nodeId: node.nodeId,
               choices: node.choices,
               targets: widget.targets,
-              endImageUrl: node.endImageSourceUrl,
+              // Options sits after Clip: the backdrop is always the
+              // finished clip's last frame, never the start frame.
+              frameUrl: node.videoFrameLastUrl,
               busy: widget.busy,
               choiceDestinations: widget.targetTitles,
               errorChoiceIds: errorIds,
@@ -124,16 +126,20 @@ class _StepHotspotsState extends State<StepHotspots> {
             ),
           ),
         if (widget.showErrors && !node.isEnding && node.choices.isEmpty) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           const Text(
             '⚠ Add at least one Option to continue',
             style: TextStyle(color: RamificaColors.error, fontSize: 12),
           ),
         ],
-        const SizedBox(height: 24),
-        _AddOptionButton(busy: widget.busy, onAddBranch: widget.onAddBranch),
+        // Two slots (A/B) max, and endings take no options: the
+        // standalone add button only shows with 0-1 options.
+        if (!node.isEnding && node.choices.length < 2) ...[
+          const SizedBox(height: 16),
+          _AddOptionButton(busy: widget.busy, onAddBranch: widget.onAddBranch),
+        ],
         if (!widget.isRoot) ...[
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           _DeleteNode(
             node: node,
             busy: widget.busy,
@@ -276,7 +282,7 @@ class _DeleteNode extends StatelessWidget {
       children: [
         if (deleteBlockedReason != null)
           Text(deleteBlockedReason!, style: RamificaText.meta),
-        if (deleteBlockedReason != null) const SizedBox(height: 4),
+        if (deleteBlockedReason != null) const SizedBox(height: 8),
         SizedBox(
           height: 48,
           width: double.infinity,

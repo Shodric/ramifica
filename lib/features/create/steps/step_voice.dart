@@ -4,8 +4,10 @@ import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
 
-/// S4 Voice owns the line heard when the player is about to choose.
-/// Write or generate the text, approve it, then generate and approve audio.
+/// S3 Voice owns the line heard when the player is about to choose.
+/// Write or generate the text, then generate audio. Generated media is
+/// accepted as-is: regen replaces it. Approval fields are ignored
+/// (kept for compat until callers drop them).
 class StepVoice extends StatefulWidget {
   const StepVoice({
     super.key,
@@ -13,6 +15,7 @@ class StepVoice extends StatefulWidget {
     required this.busy,
     this.active = true,
     this.generating = false,
+    this.generatingLine = false,
     this.phase,
     required this.showErrors,
     this.onLineChanged,
@@ -25,18 +28,20 @@ class StepVoice extends StatefulWidget {
   final DraftNode node;
   final bool busy;
   final bool active, generating;
+  final bool generatingLine;
   final String? phase;
   final bool showErrors;
   final ValueChanged<String>? onLineChanged;
   final VoidCallback? onLineGenerate;
+  // Legacy approval callback, ignored. Kept for compat until callers drop it.
   final ValueChanged<bool>? onLineApprovalChanged;
   final VoidCallback? onVoiceGenerate;
+  // Legacy approval callback, ignored. Kept for compat until callers drop it.
   final ValueChanged<bool>? onVoiceApprovalChanged;
 
-  /// True when the voice gate is open: the line is approved and non-blank,
-  /// mirroring the `generateNodeVoice` failed-precondition.
-  static bool gateOpen(DraftNode node) =>
-      node.lineApproved && node.ttsText.trim().isNotEmpty;
+  /// True when the voice gate is open: the line is non-blank.
+  /// Regen replaces the take; no approval step remains.
+  static bool gateOpen(DraftNode node) => node.ttsText.trim().isNotEmpty;
 
   @override
   State<StepVoice> createState() => _StepVoiceState();
@@ -68,7 +73,9 @@ class _StepVoiceState extends State<StepVoice> {
     final busy = widget.busy;
     final showErrors = widget.showErrors;
     final nodeId = node.nodeId;
-    final generating = widget.generating || node.ttsStatus == 'pending';
+    final generating =
+        widget.generating ||
+        (node.ttsStatus == 'pending' && !node.generationExpired);
     final gate = StepVoice.gateOpen(node);
     final status = switch (node.ttsStatus) {
       'ready' => StatusPillState.ready,
@@ -84,15 +91,15 @@ class _StepVoiceState extends State<StepVoice> {
           node.isEnding ? 'The narrator closes this ending after the clip.' : 'The narrator speaks after the clip, just before the player chooses an Option.',
           style: RamificaText.meta,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         TextField(
           key: ValueKey('line-$nodeId'),
           controller: _line,
           focusNode: _focus,
           enabled: !busy,
           maxLength: 280,
-          minLines: 2,
-          maxLines: 4,
+          minLines: 3,
+          maxLines: 5,
           decoration: InputDecoration(
             labelText: 'Narrator line',
             hintText: node.isEnding
@@ -116,55 +123,49 @@ class _StepVoiceState extends State<StepVoice> {
                   _focus.unfocus();
                   widget.onLineGenerate?.call();
                 },
-          icon: const Icon(Icons.auto_awesome, size: 18),
-          label: const Text('Generate line'),
-        ),
-        _LineApprovalRow(
-          node: node,
-          busy: busy,
-          showError:
-              showErrors &&
-              node.ttsText.trim().isNotEmpty &&
-              !node.lineApproved,
-          onLineApprovalChanged: widget.onLineApprovalChanged,
+          icon: widget.generatingLine
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.auto_awesome, size: 18),
+          label: Text(
+            widget.generatingLine
+                ? widget.phase == 'saving'
+                      ? 'Saving changes…'
+                      : 'Suggesting line…'
+                : 'Suggest line',
+          ),
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            StatusPill(status: status),
-            if (node.ttsApproved) ...[
-              const SizedBox(width: 8),
-              const StatusPill(status: StatusPillState.approved),
-            ],
-            if (node.ttsAudioUrl == null) ...[
+        // No status row once audio exists: the preview below is the
+        // state, and regen is just Generate voice again.
+        if (node.ttsAudioUrl == null)
+          Row(
+            children: [
+              StatusPill(status: status),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text('No narrator voice yet.', style: RamificaText.meta),
               ),
             ],
-          ],
-        ),
+          ),
         if (!gate) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           const Text(
-            'Approve the narrator line to generate voice.',
+            'Write the narrator line to generate voice.',
             style: RamificaText.meta,
           ),
         ],
         const SizedBox(height: 8),
-        if (node.ttsAudioUrl == null)
-          FilledButton(
-            key: ValueKey('gen-voice-$nodeId'),
-            onPressed: busy || !gate ? null : widget.onVoiceGenerate,
-            child: const Text('Generate voice'),
-          )
-        else
-          OutlinedButton(
-            key: ValueKey('gen-voice-$nodeId'),
-            onPressed: busy || !gate ? null : widget.onVoiceGenerate,
-            child: const Text('Another take'),
-          ),
-        if (generating)
+        FilledButton(
+          key: ValueKey('gen-voice-$nodeId'),
+          onPressed: busy || !gate ? null : widget.onVoiceGenerate,
+          child: const Text('Generate voice'),
+        ),
+        if (generating) ...[
+          const SizedBox(height: 8),
           Row(
             children: [
               const SizedBox(
@@ -182,12 +183,19 @@ class _StepVoiceState extends State<StepVoice> {
               ),
             ],
           ),
-        if (node.ttsStatus == 'failed')
-          const Text(
-            'Voice generation failed. Retry Generate or Another take.',
+        ],
+        if (node.generationExpired && node.ttsStatus == 'pending') ...[
+          const SizedBox(height: 8),
+          const Text('The voice request timed out. Retry Generate voice.'),
+        ],
+        if (node.ttsStatus == 'failed') ...[
+          const SizedBox(height: 8),
+          Text(
+            node.mediaError ?? 'Voice generation failed. Retry Generate voice.',
           ),
+        ],
         if (showErrors && node.ttsStatus != 'ready') ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           const Text(
             '⚠ Generate the voice',
             style: TextStyle(color: RamificaColors.error, fontSize: 12),
@@ -202,91 +210,7 @@ class _StepVoiceState extends State<StepVoice> {
             busy: busy || generating,
             durationSeconds: node.ttsDurationSeconds,
           ),
-          Row(
-            children: [
-              const SizedBox(width: 8),
-              FilledButton(
-                key: ValueKey('approve-voice-$nodeId'),
-                onPressed: busy || node.ttsApproved
-                    ? null
-                    : () => widget.onVoiceApprovalChanged?.call(true),
-                child: const Text('Approve'),
-              ),
-              const SizedBox(width: 4),
-              TextButton(
-                key: ValueKey('reject-voice-$nodeId'),
-                onPressed: busy || !node.ttsApproved
-                    ? null
-                    : () => widget.onVoiceApprovalChanged?.call(false),
-                child: const Text('Reject'),
-              ),
-            ],
-          ),
         ],
-        if (showErrors && node.ttsStatus == 'ready' && !node.ttsApproved) ...[
-          const SizedBox(height: 4),
-          const Text(
-            '⚠ Approve the voice',
-            style: TextStyle(color: RamificaColors.error, fontSize: 12),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-/// Narrator line approval row. Approve needs a non-blank line; reject
-/// flips an approval back off. [showError] adds the inline warning.
-class _LineApprovalRow extends StatelessWidget {
-  const _LineApprovalRow({
-    required this.node,
-    required this.busy,
-    required this.showError,
-    required this.onLineApprovalChanged,
-  });
-
-  final DraftNode node;
-  final bool busy;
-  final bool showError;
-  final ValueChanged<bool>? onLineApprovalChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final nodeId = node.nodeId;
-    final hasLine = node.ttsText.trim().isNotEmpty;
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                node.lineApproved ? 'Line approved.' : 'Line not approved.',
-                style: RamificaText.meta,
-              ),
-            ),
-            TextButton(
-              key: ValueKey('approve-line-$nodeId'),
-              onPressed: busy || !hasLine || node.lineApproved
-                  ? null
-                  : () => onLineApprovalChanged?.call(true),
-              child: const Text('Approve line'),
-            ),
-            TextButton(
-              key: ValueKey('reject-line-$nodeId'),
-              onPressed: busy || !node.lineApproved
-                  ? null
-                  : () => onLineApprovalChanged?.call(false),
-              child: const Text('Reject'),
-            ),
-          ],
-        ),
-        if (showError)
-          const Text(
-            '⚠ Approve the line to continue',
-            style: TextStyle(color: RamificaColors.error, fontSize: 12),
-          ),
       ],
     );
   }

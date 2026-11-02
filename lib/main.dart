@@ -1,4 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -15,6 +18,11 @@ import 'package:web/web.dart' as web;
 
 /// Local demo: `flutter run --dart-define=EMULATOR=true -d chrome`.
 const emulator = bool.fromEnvironment('EMULATOR');
+const allEmulators = bool.fromEnvironment('FIREBASE_EMULATORS');
+const localProject = String.fromEnvironment(
+  'FIREBASE_PROJECT_ID',
+  defaultValue: 'demo-ramifica',
+);
 
 /// Public reCAPTCHA Enterprise site key. The secret stays in Firebase
 /// App Check, not in this repo. Override with
@@ -27,9 +35,26 @@ const _appCheckSiteKey = String.fromEnvironment(
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
-  await _activateAppCheck();
-  if (emulator) {
+  await Firebase.initializeApp(
+    options: allEmulators
+        ? const FirebaseOptions(
+            apiKey: 'fake-api-key',
+            appId: '1:123:web:demo',
+            messagingSenderId: '123',
+            projectId: localProject,
+            storageBucket: '$localProject.appspot.com',
+            authDomain: 'localhost',
+          )
+        : DefaultFirebaseOptions.web,
+  );
+  if (allEmulators) {
+    await FirebaseAuth.instance.useAuthEmulator('127.0.0.1', 9099);
+    FirebaseFirestore.instance.useFirestoreEmulator('127.0.0.1', 8080);
+    FirebaseStorage.instance.useStorageEmulator('127.0.0.1', 9199);
+  } else {
+    await _activateAppCheck();
+  }
+  if (emulator || allEmulators) {
     // Functions emulator only (local code). Auth, Firestore, and Storage
     // stay real so login and drafts persist across runs. (Real Firestore
     // rejects Auth-emulator tokens, hence Auth is not emulated.)

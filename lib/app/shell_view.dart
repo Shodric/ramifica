@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ramifica/features/create/video_picker.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
@@ -149,7 +150,7 @@ class _ShellViewState extends State<ShellView> {
                 child: FeedView(storyId: state.storyId),
               ),
               const ExploreView(),
-              const CreateView(),
+              const CreateView(pickVideo: pickBrowserVideo),
               GraphView(storyId: storyId),
               const ProfileView(),
             ],

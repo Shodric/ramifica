@@ -5,6 +5,8 @@ import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
+import 'package:ramifica/data/models/draft_story.dart';
+import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
@@ -35,6 +37,8 @@ class ProfileView extends StatefulWidget {
     this.onEndingOpen,
     this.sagaStories = const [],
     this.onSagaOpen,
+    this.fetchAuthorStories,
+    this.onDraftOpen,
   });
 
   final ProfileBloc? bloc;
@@ -63,6 +67,16 @@ class ProfileView extends StatefulWidget {
   /// Test seam for saga story taps. Null navigates to the story route.
   final void Function(String storyId)? onSagaOpen;
 
+  /// Lists the signed-in user's own stories for the Creations tab.
+  /// Null in tests without a story source: the tab stays empty.
+  /// Production wires `CreateRepository.fetchAuthorStories`.
+  final Future<List<DraftStory>> Function({required String authorId})?
+  fetchAuthorStories;
+
+  /// Test seam for creation taps. Null navigates to the canvas editor
+  /// through the `/create/:id` deep link.
+  final void Function(String storyId)? onDraftOpen;
+
   @override
   State<ProfileView> createState() => _ProfileViewState();
 }
@@ -86,11 +100,19 @@ class _ProfileViewState extends State<ProfileView> {
     // page instead of throwing. Production initializes Firebase in main
     // before this tab builds, like FeedView's missing-bloc fallback.
     try {
-      _bloc = ProfileBloc(
-        auth: createFirebaseAuthRepository(),
-        users: FirestoreUserDirectory(),
-        follows: createFirebaseFollowRepository(),
-      )..add(ProfileRequested(authorId: widget.authorId));
+      _bloc =
+          ProfileBloc(
+            auth: createFirebaseAuthRepository(),
+            users: FirestoreUserDirectory(),
+            follows: createFirebaseFollowRepository(),
+            fetchAuthorStories:
+                widget.fetchAuthorStories ??
+                createFirebaseCreateRepository().fetchAuthorStories,
+          )..add(ProfileRequested(authorId: widget.authorId));
+      // Own profile only: foreign viewers never see these drafts.
+      if (widget.authorId == null) {
+        _bloc!.add(const ProfileDraftsRequested());
+      }
     } catch (_) {
       _bloc = null;
     }
@@ -258,7 +280,7 @@ class _ProfileViewState extends State<ProfileView> {
             endings: widget.unlockedEndings,
             onOpen: (storyId) => _openEnding(context, storyId),
           ),
-        if (_tab == 2) const _LoreCard(),
+        if (_tab == 2) _CreationsCard(drafts: state.drafts, onOpen: (id) => _openDraft(context, id)),
 
         // Guild placeholder always sits at the bottom of the profile.
         const SizedBox(height: 16),
@@ -283,6 +305,22 @@ class _ProfileViewState extends State<ProfileView> {
     try {
       AppNavigation.read(context)
           .go(AppRoutes.graphPath(Uri.encodeComponent(storyId)));
+    } on FlutterError {
+      // Widget tests mount ProfileView without the router.
+    }
+  }
+
+  /// Opens a creation in the canvas editor through the `/create/:id`
+  /// deep link. Test seam first, like endings and sagas.
+  void _openDraft(BuildContext context, String storyId) {
+    final open = widget.onDraftOpen;
+    if (open != null) {
+      open(storyId);
+      return;
+    }
+    try {
+      AppNavigation.read(context)
+          .go(AppRoutes.createFor(Uri.encodeComponent(storyId)));
     } on FlutterError {
       // Widget tests mount ProfileView without the router.
     }
@@ -474,7 +512,7 @@ class _TabBar extends StatelessWidget {
           ),
           _TabButton(
             icon: Icons.hub_outlined,
-            label: 'Lore & Graph',
+            label: 'Creations',
             selected: tab == 2,
             onTap: () => onSelect(2),
           ),
@@ -689,12 +727,14 @@ class _FeaturedSaga extends StatelessWidget {
   }
 }
 
-/// Lore tab: static story-graph card in the Stitch DAG style. The miniature
-/// graph is a fixed [CustomPainter] (no animation, settles immediately) with
-/// an Explored/Unexplored legend. No editor CTA: the graph tab owns branch
-/// editing, so the profile links nothing here.
-class _LoreCard extends StatelessWidget {
-  const _LoreCard();
+/// Creations tab: the signed-in user's own stories, newest first. Tapping
+/// one opens it on the canvas editor; empty means no drafts yet (foreign
+/// profiles never reach this widget with data).
+class _CreationsCard extends StatelessWidget {
+  const _CreationsCard({required this.drafts, required this.onOpen});
+
+  final List<DraftStory> drafts;
+  final ValueChanged<String> onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -709,13 +749,13 @@ class _LoreCard extends StatelessWidget {
         crossAxisAlignment: .stretch,
         mainAxisSize: .min,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.account_tree_outlined, color: RamificaColors.hotspot),
-              SizedBox(width: 8),
+              const Icon(Icons.video_library_outlined, color: RamificaColors.hotspot),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Active Story Graph',
+                  'My creations (${drafts.length})',
                   style: RamificaText.headlineSM,
                 ),
               ),
@@ -723,111 +763,70 @@ class _LoreCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Each node is a scene; each edge is a viewer choice.',
+            'Drafts open in the editor. Published stories keep playing in Explore.',
             style: RamificaText.bodySM.copyWith(
               color: RamificaColors.textSecondary,
             ),
           ),
           const SizedBox(height: 12),
-          Container(
-            height: 140,
-            decoration: BoxDecoration(
-              color: RamificaColors.containerLowest,
-              borderRadius: .circular(12),
-            ),
-            child: const CustomPaint(painter: _MiniDagPainter()),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  shape: .circle,
-                  color: RamificaColors.hotspot,
-                ),
+          if (drafts.isEmpty)
+            const Text(
+              'No creations yet. Start one from the Create tab.',
+              style: RamificaText.meta,
+            )
+          else
+            for (var i = 0; i < drafts.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              _CreationRow(
+                draft: drafts[i],
+                onOpen: () => onOpen(drafts[i].storyId),
               ),
-              const SizedBox(width: 6),
-              const Text('Explored', style: RamificaText.meta),
-              const SizedBox(width: 16),
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  shape: .circle,
-                  color: RamificaColors.nodeLocked,
-                ),
-              ),
-              const SizedBox(width: 6),
-              const Text('Unexplored', style: RamificaText.meta),
             ],
-          ),
         ],
       ),
     );
   }
 }
 
-/// Fixed miniature DAG: root, two branches, one locked node, one golden
-/// ending. All coordinates are fractions of the canvas size; nothing moves.
-class _MiniDagPainter extends CustomPainter {
-  const _MiniDagPainter();
+/// One creation row: title plus its Draft/Published state.
+class _CreationRow extends StatelessWidget {
+  const _CreationRow({required this.draft, required this.onOpen});
+
+  final DraftStory draft;
+  final VoidCallback onOpen;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    Offset p(double x, double y) => Offset(w * x, h * y);
-
-    final edgeHot = Paint()
-      ..color = RamificaColors.hotspot
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final edgeBlue = Paint()
-      ..color = RamificaColors.nodeActive
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final edgeLocked = Paint()
-      ..color = RamificaColors.nodeLocked
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final root = p(0.12, 0.5);
-    final top = p(0.42, 0.24);
-    final bottom = p(0.42, 0.76);
-    final locked = p(0.74, 0.24);
-    final ending = p(0.74, 0.76);
-
-    canvas.drawLine(root, top, edgeHot);
-    canvas.drawLine(root, bottom, edgeBlue);
-    canvas.drawLine(top, locked, edgeLocked);
-    canvas.drawLine(bottom, ending, edgeHot);
-
-    void dot(Offset c, double r, Color fill, [Color? ring]) {
-      if (ring != null) {
-        canvas.drawCircle(
-          c,
-          r,
-          Paint()
-            ..color = ring
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2,
-        );
-      }
-      canvas.drawCircle(c, r - 2, Paint()..color = fill);
-    }
-
-    dot(root, 12, RamificaColors.hotspot);
-    dot(top, 10, RamificaColors.nodeActive, RamificaColors.nodeActive);
-    dot(bottom, 13, RamificaColors.hotspot, RamificaColors.textPrimary);
-    dot(locked, 9, RamificaColors.nodeLocked, RamificaColors.nodeLocked);
-    dot(ending, 12, RamificaColors.rewardGold, RamificaColors.hotspot);
+  Widget build(BuildContext context) {
+    final title = draft.title.trim().isEmpty ? 'Untitled' : draft.title;
+    return Material(
+      color: RamificaColors.containerLowest,
+      borderRadius: .circular(12),
+      child: InkWell(
+        key: ValueKey('open-draft-${draft.storyId}'),
+        borderRadius: .circular(12),
+        onTap: onOpen,
+        child: Padding(
+          padding: const .all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(title, style: RamificaText.labelSM),
+              ),
+              Text(
+                draft.status == 'published' ? 'Published' : 'Draft',
+                style: RamificaText.meta,
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: RamificaColors.textSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
+

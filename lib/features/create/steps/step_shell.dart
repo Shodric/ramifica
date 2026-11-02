@@ -1,3 +1,5 @@
+import 'package:ramifica/data/models/app_failure.dart';
+
 import 'dart:convert';
 
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -13,10 +15,14 @@ import 'package:ramifica/features/create/premise_sheet.dart';
 import 'package:ramifica/features/create/steps/wizard_gates.dart';
 import 'package:uuid/uuid.dart';
 
-/// Sticky wizard chrome: breadcrumb header with tappable stepper, and the
-/// footer with save status plus Back/Continue. Never toasts: the step
-/// reports its first missing piece as an inline red banner above the
-/// footer, and field errors render under their own control.
+/// Sticky wizard chrome: tappable stepper, and the footer with save status
+/// plus Back/Continue. Never toasts: the step reports its first missing
+/// piece as an inline red banner above the footer, and field errors render
+/// under their own control.
+///
+/// Scene titles live in the AppBar now. [sceneNumber], [sceneTotal],
+/// [title], and [status] are unused by the header itself and are kept only
+/// for test compat; the stepper chips below are unchanged.
 class WizardHeader extends StatelessWidget {
   const WizardHeader({
     super.key,
@@ -49,56 +55,31 @@ class WizardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
+    return Row(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Scene $sceneNumber of $sceneTotal',
-                style: RamificaText.meta,
-              ),
+        if (showIdea)
+          Expanded(
+            child: _StepChip(
+              index: -1,
+              label: 'Idea',
+              current: ideaCurrent,
+              done: ideaDone,
+              enabled: true,
+              onTap: onIdea ?? () {},
             ),
-            StatusPill(status: status),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          title.isEmpty ? 'Untitled scene' : title,
-          style: RamificaText.headlineSM,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            if (showIdea)
-              Expanded(
-                child: _StepChip(
-                  index: -1,
-                  label: 'Idea',
-                  current: ideaCurrent,
-                  done: ideaDone,
-                  enabled: true,
-                  onTap: onIdea ?? () {},
-                ),
-              ),
-            for (var i = 0; i < wizardStepCount; i++) ...[
-              if (showIdea || i > 0) const SizedBox(width: 6),
-              Expanded(
-                child: _StepChip(
-                  index: i,
-                  current: i == stepIndex,
-                  done: i < firstIncomplete,
-                  enabled: i <= firstIncomplete,
-                  onTap: () => onStepTap(i),
-                ),
-              ),
-            ],
-          ],
-        ),
+          ),
+        for (var i = 0; i < wizardStepCount; i++) ...[
+          if (showIdea || i > 0) const SizedBox(width: 6),
+          Expanded(
+            child: _StepChip(
+              index: i,
+              current: i == stepIndex,
+              done: i < firstIncomplete,
+              enabled: i <= firstIncomplete,
+              onTap: () => onStepTap(i),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -259,8 +240,7 @@ class WizardFooter extends StatelessWidget {
 
 /// Step 0, before Script. The root stepper leads with an Idea chip.
 /// The body is one title plus the idea field, in the same inputs as the
-/// other steps. The idea field is the story premise. Continue commits it and
-/// leaves this page.
+/// other steps. Typing and Continue keep the premise local. Save or Apply persists it.
 class WizardPremise extends StatefulWidget {
   const WizardPremise({super.key});
 
@@ -301,7 +281,7 @@ class WizardPremiseState extends State<WizardPremise> {
   }
 
   /// Saves the premise as the story synopsis; the decision narration
-  /// belongs to S4. Skips unchanged drafts with no proposed options.
+  /// belongs to S3. Skips unchanged drafts with no proposed options.
   void commit() {
     final bloc = context.read<CreateBloc>();
     if (bloc.state.story == null) return;
@@ -311,7 +291,7 @@ class WizardPremiseState extends State<WizardPremise> {
         title == _seedTitle.trim() &&
         idea == _seedIdea.trim() &&
         _options.isEmpty;
-    if (unchanged) return;
+    if (unchanged && !bloc.hasUnsavedStoryEdits) return;
     bloc.add(OutlineApplied(title: title, synopsis: idea, options: _options));
   }
 
@@ -339,6 +319,9 @@ class WizardPremiseState extends State<WizardPremise> {
     _title = title;
     _idea = idea;
     _options = options;
+    context.read<CreateBloc>().add(
+      StoryFieldChanged(title: title, synopsis: idea),
+    );
   }
 
   @override
@@ -350,6 +333,7 @@ class WizardPremiseState extends State<WizardPremise> {
     return PremiseSheet(
       key: const ValueKey('wizard-premise'),
       embedded: true,
+      onApply: null,
       initialTitle: _title,
       initialIdea: _idea,
       onDraft: _onDraft,
@@ -367,6 +351,9 @@ class WizardPremiseState extends State<WizardPremise> {
         return slice.text;
       },
       propose: (transcript) async {
+        if (!await bloc.flushNode(story.rootNodeId!)) {
+          throw const AppFailure(.failed);
+        }
         final outline = await repository.proposeStoryOutline(
           storyId: story.storyId,
           transcript: transcript,

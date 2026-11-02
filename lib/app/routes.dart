@@ -36,6 +36,11 @@ AppLocation parseLocation(String? name) {
       return const CreateCanvasLocation();
   }
 
+  final draftId = _oneSegment(path, '${AppRoutes.create}/');
+  if (draftId != null) {
+    return CreateCanvasLocation(storyId: draftId);
+  }
+
   final storyId = _oneSegment(path, '${AppRoutes.story}/');
   if (storyId != null) {
     return FeedLocation(storyId: storyId);
@@ -60,7 +65,10 @@ String pathOf(AppLocation location) {
       Uri.encodeComponent(storyId),
     ),
     CreateLocation() => AppRoutes.create,
-    CreateCanvasLocation() => AppRoutes.createNew,
+    CreateCanvasLocation(:final storyId) =>
+        storyId == null || storyId.isEmpty
+            ? AppRoutes.createNew
+            : AppRoutes.createFor(Uri.encodeComponent(storyId)),
     AccessLocation() => AppRoutes.access,
     ProfileLocation() => AppRoutes.profile,
     UnknownLocation(:final path) => path.isEmpty ? '/' : path,
@@ -107,6 +115,9 @@ abstract final class AppRoutes {
   static String storyPath(String storyId) => '$story/$storyId';
 
   static String graphPath(String storyId) => '$graph/$storyId';
+
+  /// Deep link that opens a creation straight on the canvas editor.
+  static String createFor(String storyId) => '$create/$storyId';
 }
 
 final class CreateLocation extends AppLocation {
@@ -115,8 +126,11 @@ final class CreateLocation extends AppLocation {
 
 /// Fullscreen canvas at `/create/new-creation`: same create tab, but the
 /// shell hides the bottom bar and the view skips the entry screen.
+/// With [storyId], the canvas opens that creation directly.
 final class CreateCanvasLocation extends AppLocation {
-  const CreateCanvasLocation();
+  const CreateCanvasLocation({this.storyId});
+
+  final String? storyId;
 }
 
 final class ExploreLocation extends AppLocation {

@@ -48,7 +48,10 @@ class FunctionsClient {
     Map<String, dynamic>? data,
   ) {
     return FirebaseFunctions.instanceFor(region: functionsRegion)
-        .httpsCallable(name)
+        .httpsCallable(
+          name,
+          options: HttpsCallableOptions(timeout: const Duration(minutes: 5)),
+        )
         .call<dynamic>(data)
         .then((result) => result.data);
   }

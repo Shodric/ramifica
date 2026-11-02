@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/data/models/draft_story.dart';
+import 'package:ramifica/data/persistence/draft_persistence.dart';
+import 'package:ramifica/data/persistence/publication.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/create_event.dart';
@@ -19,14 +23,19 @@ import 'package:uuid/uuid.dart';
 class CreateBloc extends Bloc<CreateEvent, CreateState> {
   CreateBloc({
     required this.repository,
+    DraftPersistence? drafts,
+    ClientPublisher? publisher,
     this.auth,
     this.uploadPollInterval = const Duration(seconds: 2),
     this.maxUploadPolls = 30,
     this.videoPollInterval = const Duration(seconds: 10),
     this.maxVideoPolls = 40,
-  }) : super(const CreateState()) {
+  }) : drafts = drafts ?? repository.persistence,
+       publisher = publisher ?? repository.publisher,
+       super(const CreateState()) {
     on<DraftRequested>(_onDraftRequested, transformer: restartable());
     on<DraftOpened>(_onDraftOpened, transformer: restartable());
+    on<StoriesRequested>(_onStoriesRequested, transformer: restartable());
     on<NodeSelected>(_onNodeSelected);
     on<DraftNodesObserved>((event, emit) {
       if (event.storyId != state.story?.storyId) return;
@@ -50,8 +59,27 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       _serialized(_onSceneProposalApplied),
       transformer: droppable(),
     );
+    on<StoryFieldChanged>((event, emit) {
+      final story = state.story;
+      if (story == null) return;
+      final next = story.copy(title: event.title, synopsis: event.synopsis);
+      if (next == story) return;
+      _storyEditGeneration++;
+      final stories = [
+        for (final entry in state.stories)
+          if (entry.storyId == story.storyId) next else entry,
+      ];
+      emit(
+        state.copy(story: () => next, stories: stories, failure: () => null),
+      );
+    });
     on<NodeFieldChanged>(_onFieldChanged);
     on<NodeSaved>(_serialized(_onNodeSaved));
+    on<StorySaved>(_serialized(_onStorySaved));
+    on<CoverGenerateRequested>(
+      _serialized(_onCoverGenerate),
+      transformer: droppable(),
+    );
     on<NodeDeleted>(_serialized(_onNodeDeleted), transformer: droppable());
     on<StoryPublished>(
       _serialized(_onStoryPublished),
@@ -77,10 +105,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       _serialized(_onImageGenerate),
       transformer: droppable(),
     );
-    on<ImageApprovalChanged>(
-      _serialized(_onImageApproval),
-      transformer: droppable(),
-    );
     on<VideoGenerateRequested>(
       _serialized(_onVideoGenerate),
       transformer: droppable(),
@@ -92,6 +116,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<VideoUploadProgressed>(_onVideoUploadProgressed);
   }
   final CreateRepository repository;
+
+  /// Direct client writes for every authoring mutation. Defaults to the
+  /// repository's stack; tests inject a memory-backed writer.
+  final DraftPersistence drafts;
+
+  /// Client-side publisher for the draft checklist. Null only when the
+  /// repository was built without one; publishing then fails closed.
+  final ClientPublisher? publisher;
   final AuthRepository? auth;
 
   /// Local edit generation per node: bumped on every state-only edit so
@@ -100,28 +132,61 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   /// clobbering concurrent edits when a save + reload overlaps them.
   final Map<String, int> _editGeneration = {};
 
-  void _markEdited(String nodeId) {
+  final _dirtyFields = <String, Map<String, int>>{};
+  void _markEdited(
+    String nodeId, {
+    Iterable<String> fields = const ['choices'],
+  }) {
     if (nodeId.isEmpty) return;
-    _editGeneration[nodeId] = (_editGeneration[nodeId] ?? 0) + 1;
+    final generation = (_editGeneration[nodeId] ?? 0) + 1;
+    _editGeneration[nodeId] = generation;
+    final versions = _dirtyFields.putIfAbsent(nodeId, () => {});
+    for (final field in fields) {
+      versions[field] = generation;
+    }
   }
 
   final Map<String, int> _savedGeneration = {};
+  int _storyEditGeneration = 0, _storySavedGeneration = 0;
+  bool get hasUnsavedStoryEdits =>
+      _storyEditGeneration != _storySavedGeneration;
+  Future<void> _persistStory() async {
+    while (hasUnsavedStoryEdits && !isClosed) {
+      final snapshot = state.story;
+      if (snapshot == null) return;
+      final generation = _storyEditGeneration;
+      final title = snapshot.title.trim();
+      final synopsis = snapshot.synopsis.trim();
+      if (title.isEmpty && synopsis.isEmpty) {
+        throw const AppFailure(.invalid);
+      }
+      await drafts.updateStory(
+        snapshot.storyId,
+        title: title.isEmpty ? null : title,
+        synopsis: synopsis.isEmpty ? null : synopsis,
+      );
+      _storySavedGeneration = generation;
+    }
+  }
+
   Future<void> _operationTail = Future<void>.value();
   StreamSubscription<List<DraftNode>>? _draftSubscription;
   final _closing = Completer<void>();
 
   void _watch(String storyId) {
     unawaited(_draftSubscription?.cancel());
-    _draftSubscription = repository
+    _draftSubscription = drafts
         .watchNodes(storyId)
         .listen(
           (nodes) {
-            if (!isClosed && !_closing.isCompleted)
+            if (!isClosed && !_closing.isCompleted) {
               add(DraftNodesObserved(storyId, nodes));
+            }
           },
           onError: (Object error) {
-            if (!isClosed && !_closing.isCompleted)
+            if (!isClosed && !_closing.isCompleted) {
               add(DraftNodesObserved(storyId, const [], error: error));
+            }
           },
         );
   }
@@ -209,7 +274,10 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         local != null && _isDirty(node.nodeId)
             ? DraftNode.fromMap(node.nodeId, {
                 ...node.toJson(),
-                ...nodeSavePatch(local, node.ttsText),
+                for (final entry
+                    in (_dirtyFields[node.nodeId] ?? <String, int>{}).entries)
+                  if (entry.value > (_savedGeneration[node.nodeId] ?? 0))
+                    entry.key: local.toJson()[entry.key],
               })
             : node,
       );
@@ -233,7 +301,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final snapshot = _node(nodeId);
       if (snapshot == null) return;
       final revision = _editGeneration[nodeId] ?? 0;
-      await repository.saveNode(storyId: storyId, node: snapshot);
+      await drafts.save(storyId, snapshot);
       _savedGeneration[nodeId] = revision;
       save = _isDirty(nodeId);
     }
@@ -271,17 +339,19 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
-      final created = await repository.createDraft(
-        authorId: author,
-        title: event.title,
-      );
+      final created = await drafts.createDraft(author, event.title);
       emit(
         CreateState(
           story: created.$1,
           nodes: [created.$2],
+          stories: _upsertStory(created.$1),
           openNodeId: created.$2.nodeId,
         ),
       );
+      _storyEditGeneration = _storySavedGeneration = 0;
+      _editGeneration.clear();
+      _savedGeneration.clear();
+      _dirtyFields.clear();
       _watch(created.$1.storyId);
     } on AppFailure catch (error) {
       emit(
@@ -318,7 +388,18 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final open = nodes.any((node) => node.nodeId == root)
           ? root
           : (nodes.isEmpty ? null : nodes.first.nodeId);
-      emit(CreateState(story: story, nodes: nodes, openNodeId: open));
+      emit(
+        CreateState(
+          story: story,
+          nodes: nodes,
+          stories: state.stories,
+          openNodeId: open,
+        ),
+      );
+      _storyEditGeneration = _storySavedGeneration = 0;
+      _editGeneration.clear();
+      _savedGeneration.clear();
+      _dirtyFields.clear();
       _watch(storyId);
     } on AppFailure catch (error) {
       emit(
@@ -329,6 +410,40 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         ),
       );
     }
+  }
+
+  Future<void> _onStoriesRequested(
+    StoriesRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    final author =
+        event.authorId?.trim() ?? auth?.auth.currentIdentity?.uid.trim() ?? '';
+    if (author.isEmpty) return;
+    try {
+      final stories = await repository.fetchAuthorStories(authorId: author);
+      emit(state.copy(stories: stories, failure: () => null));
+    } on AppFailure catch (error) {
+      emit(state.copy(failure: () => error.hint));
+    }
+  }
+
+  /// Inserts or replaces [story] in the creations list, newest first
+  /// (missing dates sort last, ties break by title like the fetch).
+  List<DraftStory> _upsertStory(DraftStory story) {
+    final rest = [
+      for (final entry in state.stories)
+        if (entry.storyId != story.storyId) entry,
+    ];
+    final next = [...rest, story];
+    next.sort((a, b) {
+      final au = a.updatedAt;
+      final bu = b.updatedAt;
+      if (au == null && bu == null) return a.title.compareTo(b.title);
+      if (au == null) return 1;
+      if (bu == null) return -1;
+      return bu.compareTo(au);
+    });
+    return next;
   }
 
   void _onNodeSelected(NodeSelected event, Emitter<CreateState> emit) {
@@ -352,9 +467,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
     try {
       await _persistNode(story.storyId, parent.nodeId);
-      final change = await repository.createAndLink(
-        storyId: story.storyId,
-        parentNodeId: parent.nodeId,
+      final change = await drafts.createAndLink(
+        story.storyId,
+        parent.nodeId,
         slot: event.slot,
       );
       emit(
@@ -389,8 +504,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   ) async {
     final story = state.story;
     final parent = _node(event.nodeId);
-    if (story == null || parent == null || !['A', 'B'].contains(event.slot))
+    if (story == null || parent == null || !['A', 'B'].contains(event.slot)) {
       return;
+    }
     emit(
       state.copy(
         job: CreateJob.saving,
@@ -400,9 +516,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
     try {
       await _persistNode(story.storyId, parent.nodeId);
-      final change = await repository.createAndLink(
-        storyId: story.storyId,
-        parentNodeId: parent.nodeId,
+      final change = await drafts.createAndLink(
+        story.storyId,
+        parent.nodeId,
         slot: event.slot,
       );
       final linked = change.nodes.firstWhere((n) => n.nodeId == parent.nodeId);
@@ -449,7 +565,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
     try {
       await _persistNode(story.storyId, root.nodeId);
-      final change = await repository.persistence.applyScene(
+      final storyGeneration = _storyEditGeneration;
+      final change = await drafts.applyScene(
         story.storyId,
         root.nodeId,
         {
@@ -462,9 +579,15 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
             {'label': c.label, 'icon': c.icon, 'iconColor': c.iconColor},
         ],
       );
+      _storySavedGeneration = storyGeneration;
       emit(
         state.copy(
-          story: () => story.copy(title: event.title, synopsis: event.synopsis),
+          story: () => state.story!.copy(
+            title: _storyEditGeneration == storyGeneration ? event.title : null,
+            synopsis: _storyEditGeneration == storyGeneration
+                ? event.synopsis
+                : null,
+          ),
           nodes: _mergeChanged(change.nodes),
           job: CreateJob.none,
           jobNodeId: () => null,
@@ -481,8 +604,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     }
   }
 
-  /// Explicit Apply flushes local edits, then fills empty fields and slots in
-  /// one transaction. IDs, destinations, positions and defaults survive retries.
+  /// Explicit Apply flushes local edits, then overwrites reviewed fields and
+  /// slots in one transaction. IDs, destinations, positions and defaults
+  /// survive retries; missing slots create branches, never deletes.
   Future<void> _onSceneProposalApplied(
     SceneProposalApplied event,
     Emitter<CreateState> emit,
@@ -502,29 +626,24 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         nodeId: event.nodeId,
         finishJob: false,
         force: false,
-      ))
+      )) {
         return;
+      }
       final p = event.proposal;
-      final proposal = GeneratedNodeText(
-        title: p.title,
-        ttsText: p.ttsText,
-        endingName: p.endingName,
-        startImagePrompt: p.startImagePrompt,
-        endImagePrompt: p.endImagePrompt,
-        videoPrompt: p.videoPrompt,
-        choices: [
+      final change = await drafts.applyScene(
+        story.storyId,
+        event.nodeId,
+        {
+          'title': p.title,
+          'ttsText': p.ttsText,
+          'endingName': p.endingName,
+          'startImagePrompt': p.startImagePrompt,
+          'videoPrompt': p.videoPrompt,
+        },
+        [
           for (final c in p.choices)
-            GeneratedChoice(
-              label: c.label,
-              icon: c.icon,
-              iconColor: c.iconColor,
-            ),
+            {'label': c.label, 'icon': c.icon, 'iconColor': c.iconColor},
         ],
-      );
-      final change = await repository.applyScene(
-        storyId: story.storyId,
-        nodeId: event.nodeId,
-        proposal: proposal,
       );
       if (isClosed || _closing.isCompleted) return;
       emit(
@@ -536,7 +655,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         ),
       );
     } on AppFailure catch (error) {
-      if (!isClosed)
+      if (!isClosed) {
         emit(
           state.copy(
             job: CreateJob.none,
@@ -544,25 +663,22 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
             failure: () => error.hint,
           ),
         );
+      }
     }
   }
 
   void _onFieldChanged(NodeFieldChanged event, Emitter<CreateState> emit) {
-    if (!state.nodes.any((node) => node.nodeId == event.nodeId)) return;
-    _markEdited(event.nodeId);
-    emit(
-      state.copy(
-        nodes: [
-          for (final node in state.nodes)
-            if (node.nodeId == event.nodeId)
-              _applyFields(node, event)
-            else
-              node,
-        ],
-        failure: () => null,
-        focusChoiceId: () => null,
-      ),
-    );
+    final before = _node(event.nodeId);
+    if (before == null) return;
+    final after = _applyFields(before, event);
+    final old = before.toJson(), next = after.toJson();
+    final fields = [
+      for (final key in next.keys)
+        if (jsonEncode(old[key]) != jsonEncode(next[key])) key,
+    ];
+    if (fields.isEmpty) return;
+    _markEdited(event.nodeId, fields: fields);
+    _publishNode(after, emit);
   }
 
   /// Moves one choice zone, clamping to the 0-1 frame so the payload can
@@ -715,6 +831,126 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     }
   }
 
+  Future<void> _onStorySaved(
+    StorySaved event,
+    Emitter<CreateState> emit,
+  ) async {
+    try {
+      final saved = await _saveStoryAwait(emit);
+      if (!(event.completion?.isCompleted ?? true)) {
+        event.completion!.complete(saved);
+      }
+    } catch (error, stack) {
+      if (!(event.completion?.isCompleted ?? true)) {
+        event.completion!.completeError(error, stack);
+      }
+      rethrow;
+    }
+  }
+
+  /// Flush the latest story revision, optionally keeping the enclosing
+  /// cover job busy through the generation call.
+  Future<bool> _saveStoryAwait(
+    Emitter<CreateState> emit, {
+    bool finishJob = true,
+  }) async {
+    final story = state.story;
+    if (story == null) return true;
+    emit(
+      state.copy(
+        job: CreateJob.saving,
+        jobNodeId: () => null,
+        failure: () => null,
+      ),
+    );
+    try {
+      await _persistStory();
+      if (isClosed) return false;
+      if (finishJob) {
+        emit(
+          state.copy(
+            job: CreateJob.none,
+            jobNodeId: () => null,
+            failure: () => null,
+          ),
+        );
+      }
+      return true;
+    } on AppFailure catch (error) {
+      if (isClosed) return false;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => error.hint,
+        ),
+      );
+      return false;
+    }
+  }
+
+  /// Asks for the story key art, then points the story at the returned
+  /// URL. Display + dispatch only: generation runs server-side. Pending
+  /// name/description edits flush first so the cover prompt reads them;
+  /// a failed flush aborts with its failure.
+  Future<void> _onCoverGenerate(
+    CoverGenerateRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    emit(
+      state.copy(
+        operationKind: 'cover',
+        operationPhase: 'saving',
+        job: CreateJob.imaging,
+        jobNodeId: () => null,
+      ),
+    );
+    final flushed = await _saveStoryAwait(emit, finishJob: false);
+    if (!flushed || isClosed) return;
+    final freshStory = state.story;
+    if (freshStory == null) return;
+    emit(
+      state.copy(
+        operationPhase: 'generating',
+        job: CreateJob.imaging,
+        jobNodeId: () => null,
+        failure: () => null,
+      ),
+    );
+    try {
+      final url = await repository.generateStoryCover(
+        storyId: freshStory.storyId,
+        prompt: event.prompt,
+      );
+      if (isClosed || _closing.isCompleted) return;
+      final current = state.story;
+      if (current == null) return;
+      final next = url == null ? current : current.copy(coverUrl: () => url);
+      emit(
+        state.copy(
+          story: () => next,
+          stories: [
+            for (final entry in state.stories)
+              if (entry.storyId == next.storyId) next else entry,
+          ],
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => error.hint,
+        ),
+      );
+    }
+  }
+
   /// Zones ride the `choices` whitelist inside the full node doc, so
   /// saving zones is saving the open node.
   Future<void> _onZonesSaved(ZonesSaved event, Emitter<CreateState> emit) {
@@ -722,8 +958,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   }
 
   /// Asks for the node voice, then reloads the nodes so the take status
-  /// (and its reset approval) shows up. The backend enforces the
-  /// line-approval gate; a rejection lands as [failure].
+  /// shows up. The backend enforces the non-blank-line gate; a rejection
+  /// lands as [failure].
   Future<void> _onVoiceGenerate(
     VoiceGenerateRequested event,
     Emitter<CreateState> emit,
@@ -759,6 +995,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
+      await _persistStory();
       await _persistNode(story.storyId, targetId, force: force);
       if (isClosed) return false;
       if (finishJob) {
@@ -784,10 +1021,11 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     }
   }
 
-  /// Deletes the open node through `deleteNode`, then reloads the nodes so
-  /// the canvas drops it. The server guards the root and targeted nodes;
-  /// a rejection lands as [CreateState.failure] and nothing is removed.
-  /// When the open node is gone, the root reopens (or the first survivor).
+  /// Deletes the open node client-direct, then drops it locally so
+  /// the canvas drops it. The transaction guards the root and targeted
+  /// nodes; a rejection lands as [CreateState.failure] and nothing is
+  /// removed. When the open node is gone, the root reopens (or the first
+  /// survivor).
   Future<void> _onNodeDeleted(
     NodeDeleted event,
     Emitter<CreateState> emit,
@@ -804,7 +1042,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
-      await repository.deleteNode(storyId: story.storyId, nodeId: nodeId);
+      await drafts.delete(story.storyId, nodeId);
       final nodes = state.nodes.where((n) => n.nodeId != nodeId).toList();
       var open = state.openNodeId;
       if (!nodes.any((current) => current.nodeId == open)) {
@@ -833,8 +1071,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     }
   }
 
-  /// Publishes the draft through `publishStory`. A returned missing list
-  /// becomes [CreateState.failure] (the server changed nothing); an empty
+  /// Publishes the draft through the client publisher. A returned missing
+  /// list becomes [CreateState.failure] (nothing was written); an empty
   /// list marks [CreateState.publishedStoryId] and the view leaves for
   /// Explore. Transport rejections land as their phrase.
   Future<void> _onStoryPublished(
@@ -843,7 +1081,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   ) async {
     final story = state.story;
     if (story == null) return;
-    if (state.nodes.any((node) => _isDirty(node.nodeId))) {
+    if (hasUnsavedStoryEdits ||
+        state.nodes.any((node) => _isDirty(node.nodeId))) {
       emit(state.copy(failure: () => 'Save your changes before publishing.'));
       return;
     }
@@ -855,7 +1094,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       ),
     );
     try {
-      final missing = await repository.publishStory(storyId: story.storyId);
+      final service = publisher;
+      if (service == null) {
+        throw const AppFailure(
+          .failed,
+          detail: 'Publication persistence is not configured.',
+        );
+      }
+      final missing = await service.publish(story.storyId);
       if (missing.isNotEmpty) {
         emit(
           state.copy(
@@ -872,6 +1118,13 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           jobNodeId: () => null,
           failure: () => null,
           publishedStoryId: () => story.storyId,
+          stories: [
+            for (final entry in state.stories)
+              if (entry.storyId == story.storyId)
+                entry.copy(status: 'published')
+              else
+                entry,
+          ],
         ),
       );
     } on AppFailure catch (error) {
@@ -891,6 +1144,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   ) async {
     final story = state.story;
     if (story == null || _node(event.nodeId) == null) return;
+    emit(
+      state.copy(
+        operationKind: 'text',
+        operationPhase: 'saving',
+        job: CreateJob.saving,
+        jobNodeId: () => event.nodeId,
+      ),
+    );
     final flushed = await _saveOpenNodeAwait(
       emit,
       nodeId: event.nodeId,
@@ -898,7 +1159,13 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       force: false,
     );
     if (!flushed || isClosed) return;
-    emit(state.copy(job: CreateJob.generating, failure: () => null));
+    emit(
+      state.copy(
+        job: CreateJob.generating,
+        operationPhase: 'generating',
+        failure: () => null,
+      ),
+    );
     try {
       final proposal = await repository.generateNodeText(
         storyId: story.storyId,
@@ -909,12 +1176,20 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final node = _node(event.nodeId);
       final line = proposal.ttsText?.trim() ?? '';
       if (node == null || line.isEmpty) throw const AppFailure(.invalid);
-      _markEdited(event.nodeId);
+      _markEdited(
+        event.nodeId,
+        fields: const [
+          'ttsText',
+          'ttsStatus',
+          'ttsAudioUrl',
+          'ttsDurationSeconds',
+        ],
+      );
       _publishNode(
         _applyFields(
           node,
           NodeFieldChanged(nodeId: event.nodeId, ttsText: line),
-        ).copy(lineApproved: false, ttsApproved: false),
+        ),
         emit,
       );
       await _persistNode(story.storyId, event.nodeId);
@@ -965,7 +1240,18 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       );
       if (isClosed || _closing.isCompleted) return;
       final targetId = freshNode.nodeId;
-      _markEdited(targetId);
+      _markEdited(
+        targetId,
+        fields: const [
+          'title',
+          'ttsText',
+          'endingName',
+          'choices',
+          'ttsStatus',
+          'ttsAudioUrl',
+          'ttsDurationSeconds',
+        ],
+      );
       emit(
         state.copy(
           nodes: [
@@ -993,8 +1279,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
   }
 
   /// Asks for one node frame, then reloads the nodes so the resulting
-  /// status (and any approval reset) shows up. Display + dispatch only:
-  /// generation runs server-side.
+  /// status shows up. Display + dispatch only: generation runs server-side.
   Future<void> _onImageGenerate(
     ImageGenerateRequested event,
     Emitter<CreateState> emit,
@@ -1012,32 +1297,9 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
   }
 
-  /// Records a frame approval or rejection, then reloads the nodes so
-  /// inheritance side effects (an E approval opening the child video
-  /// gate) show up.
-  Future<void> _onImageApproval(
-    ImageApprovalChanged event,
-    Emitter<CreateState> emit,
-  ) async {
-    await _runImaging(
-      emit,
-      event.nodeId,
-      () => repository.approveNodeImage(
-        storyId: state.story!.storyId,
-        nodeId: event.nodeId,
-        which: event.which,
-        approved: event.approved,
-        expectedHash: event.which == 'start'
-            ? _node(event.nodeId)?.startHash
-            : _node(event.nodeId)?.endHash,
-      ),
-      saveEdits: false,
-    );
-  }
-
-  /// Asks for the node video (inheriting the approved parent E as S),
-  /// then reloads the nodes so the job status shows up. The backend
-  /// enforces the approval gate; a rejection lands as [failure]. When the
+  /// Asks for the node video (inheriting the parent clip's last frame
+  /// as S), then reloads the nodes so the job status shows up. The backend
+  /// enforces the ready-frame gate; a rejection lands as [failure]. When the
   /// backend reports the job still running, this re-asks until it reports
   /// done or [maxVideoPolls] is hit: the backend resumes the same stored
   /// job, so polls never bill a duplicate. Unknown nodes and missing
@@ -1238,6 +1500,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       );
       return;
     }
+    emit(
+      state.copy(
+        operationKind: 'video',
+        operationPhase: 'saving',
+        job: CreateJob.saving,
+        jobNodeId: () => event.nodeId,
+      ),
+    );
     final flushed = await _saveOpenNodeAwait(
       emit,
       nodeId: event.nodeId,
@@ -1250,6 +1520,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         : const Uuid().v4();
     emit(
       state.copy(
+        operationKind: 'video',
+        operationPhase: 'uploading',
         job: CreateJob.uploading,
         jobNodeId: () => event.nodeId,
         uploadProgress: () => 0,
@@ -1270,7 +1542,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       );
       // Bytes are up; the trigger has not run yet. Bytes done, outcome
       // unknown: pin progress at full while the job keeps running.
-      emit(state.copy(uploadProgress: () => 1));
+      emit(state.copy(uploadProgress: () => 1, operationPhase: 'processing'));
       await _refreshNode(story.storyId, event.nodeId, emit);
       var nodes = state.nodes;
       var marker = await repository.fetchUploadMarker(
@@ -1385,8 +1657,6 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
     final changed = event.ttsText!.trim() != node.ttsText.trim();
     next = next.copy(
       ttsText: event.ttsText,
-      lineApproved: changed ? false : null,
-      ttsApproved: changed ? false : null,
       ttsStatus: changed ? 'idle' : null,
       ttsAudioUrl: changed ? () => null : null,
       ttsDurationSeconds: changed ? () => null : null,
@@ -1395,19 +1665,9 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.visibility != null) {
     next = next.copy(visibility: event.visibility);
   }
-  if (event.lineApproved != null) {
-    next = next.copy(lineApproved: event.lineApproved);
-  }
-  if (event.ttsApproved != null) {
-    next = next.copy(ttsApproved: event.ttsApproved);
-  }
   if (event.startImagePrompt != null) {
     final cleaned = event.startImagePrompt!.trim();
     next = next.copy(startImagePrompt: () => cleaned.isEmpty ? null : cleaned);
-  }
-  if (event.endImagePrompt != null) {
-    final cleaned = event.endImagePrompt!.trim();
-    next = next.copy(endImagePrompt: () => cleaned.isEmpty ? null : cleaned);
   }
   if (event.videoPrompt != null) {
     final cleaned = event.videoPrompt!.trim();

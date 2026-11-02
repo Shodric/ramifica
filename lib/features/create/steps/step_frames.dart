@@ -3,16 +3,17 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 
-/// S2 Scenes: one frame panel per image. Each panel shows its prompt
-/// editor (2000 chars) before Generate / Another take, so the author
-/// revises the prompt that generation sends. The prompt edits stay local
-/// through [onStartPromptChanged]/[onEndPromptChanged]; the Generate
-/// buttons send the freshly edited text through [onImageGenerate].
+/// S2 Scenes: the root S panel. It shows its prompt editor (2000 chars)
+/// before Generate / Another take, so the author revises the prompt that
+/// generation sends. The prompt edits stay local through
+/// [onStartPromptChanged]; the Generate buttons send the freshly edited
+/// text through [onImageGenerate].
 ///
-/// Non-root nodes inherit S from their parent E: the start panel renders
-/// read-only with the [inheritedPrompt]. Busy blocks every control. A
-/// failed generation keeps the last image: panels render whatever URL
-/// the node carries.
+/// Non-root nodes inherit S from their parent clip's extracted last
+/// frame: the start panel renders read-only. Busy blocks every control.
+/// A failed generation keeps the last image: panels render whatever URL
+/// the node carries. Generated media is accepted as-is: regen replaces it.
+/// Approval fields are ignored (kept for compat until callers drop them).
 class StepFrames extends StatefulWidget {
   const StepFrames({
     super.key,
@@ -20,7 +21,6 @@ class StepFrames extends StatefulWidget {
     this.isRoot = false,
     this.inheritedImageUrl,
     this.inheritedCaption,
-    this.inheritedPrompt,
     required this.busy,
     this.generatingWhich,
     this.phase,
@@ -28,7 +28,6 @@ class StepFrames extends StatefulWidget {
     this.onImageGenerate,
     this.onImageApprovalChanged,
     this.onStartPromptChanged,
-    this.onEndPromptChanged,
   });
 
   final DraftNode node;
@@ -37,20 +36,18 @@ class StepFrames extends StatefulWidget {
   final bool isRoot;
   final String? inheritedImageUrl;
   final String? inheritedCaption;
-
-  /// Parent E prompt behind the inherited S, shown read-only.
-  final String? inheritedPrompt;
   final bool busy;
   final String? generatingWhich, phase;
   final bool showErrors;
 
-  /// Sends `which` (`start` or `end`) with the freshly edited prompt.
+  /// Sends `which` (`start` only) with the freshly edited prompt.
   final void Function(String which, String prompt)? onImageGenerate;
+
+  /// Legacy approval callback, ignored. Kept for compat until callers drop it.
   final void Function(String which, bool approved)? onImageApprovalChanged;
 
   /// Local edits; Save or Generate persists these values.
   final ValueChanged<String>? onStartPromptChanged;
-  final ValueChanged<String>? onEndPromptChanged;
 
   @override
   State<StepFrames> createState() => _StepFramesState();
@@ -60,18 +57,13 @@ class _StepFramesState extends State<StepFrames> {
   late final TextEditingController _start = TextEditingController(
     text: widget.node.startImagePrompt ?? '',
   );
-  late final TextEditingController _end = TextEditingController(
-    text: widget.node.endImagePrompt ?? '',
-  );
   late final FocusNode _startFocus = FocusNode();
-  late final FocusNode _endFocus = FocusNode();
 
   @override
   void didUpdateWidget(covariant StepFrames oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.node.nodeId != widget.node.nodeId) {
       _start.text = widget.node.startImagePrompt ?? '';
-      _end.text = widget.node.endImagePrompt ?? '';
       return;
     }
     // Polling reloads must not clobber in-flight edits: only sync a prompt
@@ -79,17 +71,12 @@ class _StepFramesState extends State<StepFrames> {
     if (!_startFocus.hasFocus) {
       _setIfDifferent(_start, widget.node.startImagePrompt ?? '');
     }
-    if (!_endFocus.hasFocus) {
-      _setIfDifferent(_end, widget.node.endImagePrompt ?? '');
-    }
   }
 
   @override
   void dispose() {
     _start.dispose();
-    _end.dispose();
     _startFocus.dispose();
-    _endFocus.dispose();
     super.dispose();
   }
 
@@ -106,45 +93,28 @@ class _StepFramesState extends State<StepFrames> {
             nodeId: nodeId,
             which: 'start',
             locallyGenerating: widget.generatingWhich == 'start',
+            error: node.mediaError,
             phase: widget.phase ?? node.generationPhase,
             title: 'Start frame',
             focus: _startFocus,
             prompt: _start,
             imageUrl: node.startImageSourceUrl,
-            status: node.startImageStatus,
+            status: node.generationExpired && node.startImageStatus == 'pending'
+                ? 'failed'
+                : node.startImageStatus,
             approved: node.startImageApproved,
             busy: widget.busy,
-            showError: widget.showErrors && !node.startImageApproved,
+            showError: widget.showErrors && node.startImageStatus != 'ready',
             onGenerate: widget.onImageGenerate,
             onApprovalChanged: widget.onImageApprovalChanged,
             onPromptChanged: widget.onStartPromptChanged,
           )
         else
           _InheritedPanel(
-            nodeId: nodeId,
             title: 'Start frame',
             caption: widget.inheritedCaption,
             imageUrl: widget.inheritedImageUrl,
-            prompt: widget.inheritedPrompt,
           ),
-        const SizedBox(height: 16),
-        _FramePanel(
-          nodeId: nodeId,
-          which: 'end',
-          locallyGenerating: widget.generatingWhich == 'end',
-          phase: widget.phase ?? node.generationPhase,
-          title: 'End frame',
-          focus: _endFocus,
-          prompt: _end,
-          imageUrl: node.endImageSourceUrl,
-          status: node.endImageStatus,
-          approved: node.endImageApproved,
-          busy: widget.busy,
-          showError: widget.showErrors && !node.endImageApproved,
-          onGenerate: widget.onImageGenerate,
-          onApprovalChanged: widget.onImageApprovalChanged,
-          onPromptChanged: widget.onEndPromptChanged,
-        ),
       ],
     );
   }
@@ -157,12 +127,12 @@ void _setIfDifferent(TextEditingController controller, String value) {
 /// One frame panel: prompt editor first, then the image (or its
 /// placeholder) with the [StatusPill] overlaid in the corner, a centered
 /// primary Generate while empty, and — once an image exists — a corner
-/// Another take plus Approve / Reject chips below. Gate/approval hints
-/// sit under the disabled control.
+/// Another take. Gate hints for missing frames sit under the panel.
 class _FramePanel extends StatelessWidget {
   const _FramePanel({
     required this.nodeId,
     this.locallyGenerating = false,
+    this.error,
     this.phase,
     required this.which,
     required this.title,
@@ -170,27 +140,30 @@ class _FramePanel extends StatelessWidget {
     required this.prompt,
     required this.imageUrl,
     required this.status,
-    required this.approved,
+    this.approved = false,
     required this.busy,
     required this.showError,
     required this.onGenerate,
-    required this.onApprovalChanged,
+    this.onApprovalChanged,
     required this.onPromptChanged,
   });
 
   final String nodeId;
   final String which;
   final bool locallyGenerating;
+  final String? error;
   final String? phase;
   final String title;
   final FocusNode focus;
   final TextEditingController prompt;
   final String? imageUrl;
   final String? status;
+  // Legacy approval flag, ignored: generated media is accepted as-is.
   final bool approved;
   final bool busy;
   final bool showError;
   final void Function(String which, String prompt)? onGenerate;
+  // Legacy approval callback, ignored. Kept for compat until callers drop it.
   final void Function(String which, bool approved)? onApprovalChanged;
   final ValueChanged<String>? onPromptChanged;
 
@@ -206,7 +179,7 @@ class _FramePanel extends StatelessWidget {
         Row(
           children: [
             Expanded(child: Text(title, style: RamificaText.label)),
-            if (showError && !approved)
+            if (showError)
               const Padding(
                 padding: EdgeInsets.only(right: 4),
                 child: Text('⚠', style: TextStyle(fontSize: 12)),
@@ -242,7 +215,7 @@ class _FramePanel extends StatelessWidget {
         Container(
           decoration: BoxDecoration(
             borderRadius: RamificaLayout.cardBorderRadius,
-            border: showError && !approved
+            border: showError
                 ? Border.all(color: RamificaColors.error, width: 1.5)
                 : Border.fromBorderSide(RamificaColors.inputBorder),
           ),
@@ -306,14 +279,12 @@ class _FramePanel extends StatelessWidget {
                     top: 8,
                     right: 8,
                     child: StatusPill(
-                      status: approved
-                          ? StatusPillState.approved
-                          : switch (status) {
-                              'pending' => StatusPillState.running,
-                              'ready' => StatusPillState.ready,
-                              'failed' => StatusPillState.failed,
-                              _ => StatusPillState.idle,
-                            },
+                      status: switch (status) {
+                        'pending' => StatusPillState.running,
+                        'ready' => StatusPillState.ready,
+                        'failed' => StatusPillState.failed,
+                        _ => StatusPillState.idle,
+                      },
                     ),
                   ),
                   if (url != null)
@@ -360,43 +331,19 @@ class _FramePanel extends StatelessWidget {
                   : 'Generating image…',
             ),
           ),
-        if (url != null) ...[
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  key: ValueKey('approve-$which-$nodeId'),
-                  onPressed: busy || approved
-                      ? null
-                      : () => onApprovalChanged?.call(which, true),
-                  child: const Text('Approve'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                key: ValueKey('reject-$which-$nodeId'),
-                onPressed: busy || !approved
-                    ? null
-                    : () => onApprovalChanged?.call(which, false),
-                child: const Text('Reject'),
-              ),
-            ],
-          ),
-        ],
-        if (showError && !approved)
+        if (showError)
           const Padding(
-            padding: EdgeInsets.only(top: 4),
+            padding: EdgeInsets.only(top: 8),
             child: Text(
-              '⚠ Approve this frame',
+              '⚠ Generate this frame',
               style: TextStyle(color: RamificaColors.error, fontSize: 12),
             ),
           ),
-        if (status == 'failed' && !approved)
-          const Padding(
-            padding: EdgeInsets.only(top: 4),
+        if (status == 'failed')
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'Generation failed — try again.',
+              error ?? 'Generation failed — try again.',
               style: RamificaText.meta,
             ),
           ),
@@ -405,57 +352,25 @@ class _FramePanel extends StatelessWidget {
   }
 }
 
-/// Read-only inherited S for non-root nodes, with the parent E prompt
-/// behind it when available.
-class _InheritedPanel extends StatefulWidget {
-  const _InheritedPanel({
-    required this.nodeId,
-    required this.title,
-    this.caption,
-    this.imageUrl,
-    this.prompt,
-  });
+/// Read-only inherited S for non-root nodes: the parent clip's
+/// extracted last frame once the parent clip is ready.
+class _InheritedPanel extends StatelessWidget {
+  const _InheritedPanel({required this.title, this.caption, this.imageUrl});
 
-  final String nodeId;
   final String title;
   final String? caption;
   final String? imageUrl;
-  final String? prompt;
-
-  @override
-  State<_InheritedPanel> createState() => _InheritedPanelState();
-}
-
-class _InheritedPanelState extends State<_InheritedPanel> {
-  late final TextEditingController _prompt = TextEditingController(
-    text: widget.prompt ?? '',
-  );
-
-  @override
-  void didUpdateWidget(covariant _InheritedPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.prompt != widget.prompt) {
-      _prompt.text = widget.prompt ?? '';
-    }
-  }
-
-  @override
-  void dispose() {
-    _prompt.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    final url = widget.imageUrl;
-    final inherited = _prompt.text.trim();
+    final url = imageUrl;
     return Column(
       crossAxisAlignment: .stretch,
       mainAxisSize: .min,
       children: [
         Row(
           children: [
-            Expanded(child: Text(widget.title, style: RamificaText.label)),
+            Expanded(child: Text(title, style: RamificaText.label)),
             const Padding(
               padding: EdgeInsets.only(left: 4),
               child: Text('Inherited', style: RamificaText.meta),
@@ -463,24 +378,6 @@ class _InheritedPanelState extends State<_InheritedPanel> {
           ],
         ),
         const SizedBox(height: 8),
-        if (inherited.isNotEmpty)
-          TextField(
-            key: ValueKey('prompt-start-${widget.nodeId}'),
-            controller: _prompt,
-            readOnly: true,
-            enabled: false,
-            maxLines: 2,
-            decoration: const InputDecoration(
-              labelText: 'Image prompt',
-              filled: true,
-              fillColor: RamificaColors.inputFill,
-              disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(12)),
-                borderSide: RamificaColors.inputBorder,
-              ),
-            ),
-          ),
-        if (inherited.isNotEmpty) const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
             borderRadius: RamificaLayout.cardBorderRadius,
@@ -495,7 +392,7 @@ class _InheritedPanelState extends State<_InheritedPanel> {
                       color: RamificaColors.inputFill,
                       child: Center(
                         child: Text(
-                          widget.caption ?? 'No parent frame yet.',
+                          caption ?? 'No parent clip yet.',
                           style: RamificaText.caption,
                         ),
                       ),
@@ -513,9 +410,9 @@ class _InheritedPanelState extends State<_InheritedPanel> {
             ),
           ),
         ),
-        if (widget.caption != null) ...[
-          const SizedBox(height: 4),
-          Text(widget.caption!, style: RamificaText.meta),
+        if (caption != null) ...[
+          const SizedBox(height: 8),
+          Text(caption!, style: RamificaText.meta),
         ],
       ],
     );

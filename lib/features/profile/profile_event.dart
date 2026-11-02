@@ -17,6 +17,12 @@ final class ProfileRequested extends ProfileEvent {
   final String? authorId;
 }
 
+/// Loads the signed-in user's own creations for the Creations tab.
+/// Ignored on foreign profiles: drafts stay private.
+final class ProfileDraftsRequested extends ProfileEvent {
+  const ProfileDraftsRequested();
+}
+
 /// Flips the follow on the loaded foreign profile. Ignored unless a
 /// foreign profile is loaded; self-follow is a no-op (no call, no state
 /// change) and is guarded here, not in the repository.

@@ -26,7 +26,7 @@ class ZoneMarker extends StatefulWidget {
     required this.nodeId,
     required this.choices,
     required this.targets,
-    this.endImageUrl,
+    this.frameUrl,
     this.busy = false,
     this.onZoneMoved,
     this.onZoneAdded,
@@ -50,8 +50,9 @@ class ZoneMarker extends StatefulWidget {
   /// one; endings included, since choices lead there).
   final List<DraftNode> targets;
 
-  /// The last frame to draw zones over; null while missing/generating.
-  final String? endImageUrl;
+  /// The clip's extracted last frame to draw zones over; null while
+  /// the clip is missing/generating.
+  final String? frameUrl;
 
   /// While a save or generation runs, editing disables.
   final bool busy;
@@ -249,11 +250,11 @@ class _ZoneMarkerState extends State<ZoneMarker> {
   }
 
   Widget _frameImage() {
-    final url = widget.endImageUrl;
+    final url = widget.frameUrl;
     if (url == null) {
       return const Center(
         child: Text(
-          'Generate the end frame to place zones.',
+          'Generate the clip to place zones.',
           style: RamificaText.meta,
         ),
       );
@@ -264,7 +265,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         url,
         fit: .cover,
         errorBuilder: (_, _, _) => const Center(
-          child: Text('End frame unavailable.', style: RamificaText.meta),
+          child: Text('Frame unavailable.', style: RamificaText.meta),
         ),
       ),
     );
@@ -371,27 +372,11 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                 borderRadius: BorderRadius.circular(4),
                 border: selected ? Border.all(color: accent) : null,
               ),
-              child: Row(
-                mainAxisSize: .min,
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: accent,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      '${index + 1}. ${choice.label}',
-                      maxLines: 1,
-                      overflow: .ellipsis,
-                      style: RamificaText.labelSM.copyWith(fontSize: 10),
-                    ),
-                  ),
-                ],
+              child: Text(
+                choice.label,
+                maxLines: 1,
+                overflow: .ellipsis,
+                style: RamificaText.labelSM.copyWith(fontSize: 10),
               ),
             ),
           ],
@@ -433,14 +418,13 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         ? RamificaColors.hotspot
         : RamificaColors.nodeActive;
     final slot = choice.slot ?? String.fromCharCode(65 + index);
-    final dest = widget.choiceDestinations?[choice.choiceId] ?? 'Scene —';
     final hasError = widget.errorChoiceIds?.contains(choice.choiceId) ?? false;
     return Container(
       key: ValueKey('zone-card-${choice.choiceId}'),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: RamificaColors.containerBase,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
         border: hasError ? Border.all(color: RamificaColors.error) : null,
       ),
       child: Column(
@@ -449,8 +433,9 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         children: [
           Row(
             children: [
-              _previewMini(accent),
-              const SizedBox(width: 8),
+              const SizedBox(width: 14),
+              _previewMini(accent, slot, choice),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: .start,
@@ -458,39 +443,40 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                   children: [
                     Text(
                       'Option $slot',
-                      style: RamificaText.labelSM.copyWith(color: accent),
+                      style: RamificaText.label.copyWith(
+                        color: choiceIconColor(choice.iconColor, accent),
+                      ),
                       maxLines: 1,
                       overflow: .ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.alt_route,
-                          size: 13,
-                          color: RamificaColors.nodeActive,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            dest,
-                            style: RamificaText.bodySM.copyWith(
-                              fontSize: 12,
-                              color: RamificaColors.textSecondary,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
                 ),
               ),
-              Text(
-                '(${choice.x.toStringAsFixed(2)}, ${choice.y.toStringAsFixed(2)})',
-                style: RamificaText.meta,
+              IconButton(
+                key: ValueKey('zone-delete-${choice.choiceId}'),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                tooltip: 'Delete zone',
+                onPressed: widget.busy
+                    ? null
+                    : () {
+                        setState(() {
+                          if (_selectedId == choice.choiceId) {
+                            _selectedId = null;
+                            _dragging = null;
+                          }
+                        });
+                        widget.onZoneRemoved?.call(choice.choiceId);
+                      },
+                color: RamificaColors.error,
+                style: IconButton.styleFrom(
+                  backgroundColor: RamificaColors.error.withValues(alpha: 0.1),
+                  fixedSize: const Size(32, 32),
+                  minimumSize: const Size(32, 32),
+                  padding: .zero,
+                ),
               ),
+              if (widget.onTune != null) SizedBox(width: 8),
               if (widget.onTune != null)
                 IconButton(
                   key: ValueKey('zone-tune-${choice.choiceId}'),
@@ -509,13 +495,14 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                 ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
           // Current icon left of the name field; tapping it opens the
           // icon picker modal. The label field hard-caps at 24 chars
-          // with a live counter — the client-side half of the publish
-          // label rule (the backend `saveNode` check is the other half).
+          // and only shows the counter at the cap — the client-side half
+          // of the publish label rule (the backend `saveNode` check is
+          // the other half).
           Row(
-            crossAxisAlignment: .start,
+            crossAxisAlignment: .center,
             children: [
               _iconButton(choice, index, accent),
               const SizedBox(width: 8),
@@ -531,12 +518,18 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                       enabled: !widget.busy,
                       maxLength: 24,
                       maxLengthEnforcement: .enforced,
-                      buildCounter: (
-                        _, {
-                        required int currentLength,
-                        required bool isFocused,
-                        required int? maxLength,
-                      }) => Text('$currentLength/24', style: RamificaText.meta),
+                      buildCounter:
+                          (
+                            _, {
+                            required int currentLength,
+                            required bool isFocused,
+                            required int? maxLength,
+                          }) => currentLength >= (maxLength ?? 24)
+                          ? Text(
+                              '$currentLength/${maxLength ?? 24}',
+                              style: RamificaText.meta,
+                            )
+                          : null,
                       decoration: _zoneInputDecoration(),
                       onChanged: (label) =>
                           widget.onLabelChanged?.call(choice.choiceId, label),
@@ -555,99 +548,103 @@ class _ZoneMarkerState extends State<ZoneMarker> {
               ),
             ],
           ),
-          Align(
-            alignment: .centerRight,
-            child: TextButton(
-              key: ValueKey('zone-delete-${choice.choiceId}'),
-              onPressed: widget.busy
-                  ? null
-                  : () {
-                      setState(() {
-                        if (_selectedId == choice.choiceId) {
-                          _selectedId = null;
-                          _dragging = null;
-                        }
-                      });
-                      widget.onZoneRemoved?.call(choice.choiceId);
-                    },
-              child: const Text('Delete zone'),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  /// 40px frame thumb for the fused card: the end frame when present, a
-  /// hotspot glyph placeholder otherwise.
-  Widget _previewMini(Color accent) {
-    final url = widget.endImageUrl;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 40,
-        height: 40,
-        color: RamificaColors.containerLowest,
-        child: url == null
-            ? Icon(Icons.image, size: 20, color: accent)
-            : Image.network(
-                url,
-                fit: .cover,
-                errorBuilder: (_, _, _) =>
-                    Icon(Icons.image_not_supported, size: 20, color: accent),
-              ),
-      ),
+  /// 40px frame thumb for the fused card: the frame when present, a
+  /// hotspot glyph placeholder otherwise. The glyph keeps its half-turn
+  /// (pointing down) and wears the selected hotspot color; option B
+  /// mirrors it horizontally.
+  Widget _previewMini(Color accent, String slot, DraftChoice choice) {
+    final glyph = Icon(
+      Icons.alt_route,
+      size: 20,
+      color: choiceIconColor(choice.iconColor, accent),
+    );
+    return RotatedBox(
+      quarterTurns: 2,
+      child: slot == 'B' ? Transform.flip(flipX: true, child: glyph) : glyph,
     );
   }
 
   /// The choice's current icon (or the legacy fallback when none is
-  /// stored), left of the name field. Tapping opens the picker modal;
-  /// the pick commits its persisted name through [onIconChanged].
+  /// stored), left of the name field. Tapping opens the fullscreen
+  /// picker; the pick commits its persisted name through [onIconChanged].
   Widget _iconButton(DraftChoice choice, int index, Color accent) {
+    final tint = choiceIconColor(choice.iconColor, accent);
     return IconButton(
       key: ValueKey('zone-icon-${choice.choiceId}'),
       tooltip: 'Hotspot icon',
-      icon: Icon(choiceIconData(choice.icon, index), size: 20),
+      icon: Icon(choiceIconData(choice.icon, index), size: 22),
       onPressed: widget.busy ? null : () => _pickIcon(choice, index, accent),
-      color: choiceIconColor(choice.iconColor, accent),
+      color: tint,
       style: IconButton.styleFrom(
-        backgroundColor: accent.withValues(alpha: 0.2),
-        fixedSize: const Size(40, 40),
-        minimumSize: const Size(40, 40),
+        backgroundColor: tint.withValues(alpha: 0.1),
+        fixedSize: const Size(48, 48),
+        minimumSize: const Size(48, 48),
         padding: .zero,
-        side: BorderSide(color: accent),
+        side: BorderSide(color: tint),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
 
-  /// Icon + color picker as a draggable modal sheet: it opens tall and
-  /// drags up to near full screen over the full catalog grid. Picking a
-  /// color commits at once and keeps the sheet open (the tile glyphs
-  /// preview it); picking an icon closes the sheet and reports the
-  /// persisted name. Dismissing keeps any color already picked.
+  /// Icon + color picker as a fullscreen dialog: search on top, color
+  /// palette, then the full catalog grid. One scrollable owns the page
+  /// padding, so the scrollbar travels over padding instead of content.
+  /// Picking a color commits at once and keeps the dialog open (the tile
+  /// glyphs preview it); picking an icon closes the dialog and reports
+  /// the persisted name. Dismissing keeps any color already picked.
+  /// Tiles are small squares that fit ~6 per phone row.
   Future<void> _pickIcon(DraftChoice choice, int index, Color accent) async {
     var pickedColor = choice.iconColor;
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.75,
-          minChildSize: 0.4,
-          maxChildSize: 0.95,
-          builder: (sheetContext, scrollController) {
-            return StatefulBuilder(
-              builder: (sheetContext, setSheetState) {
+    final search = TextEditingController();
+    try {
+      final picked = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return Dialog.fullscreen(
+            backgroundColor: RamificaColors.surface,
+            child: StatefulBuilder(
+              builder: (dialogContext, setSheetState) {
                 final tint = choiceIconColor(pickedColor, accent);
+                final searching = search.text.trim().isNotEmpty;
+                final matches = filterChoiceIcons(search.text);
                 return SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                     child: Column(
                       crossAxisAlignment: .stretch,
                       children: [
-                        const Text('Hotspot icon', style: RamificaText.label),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Hotspot icon',
+                                style: RamificaText.label,
+                              ),
+                            ),
+                            IconButton(
+                              key: const ValueKey('close-icon-picker'),
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.pop(dialogContext),
+                              icon: const Icon(Icons.close, size: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          key: const ValueKey('icon-picker-search'),
+                          controller: search,
+                          decoration: _zoneInputDecoration().copyWith(
+                            labelText: 'Search icons',
+                            hintText: 'Fire, moon, key…',
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                          ),
+                          onChanged: (_) => setSheetState(() {}),
+                        ),
                         const SizedBox(height: 12),
                         Wrap(
                           spacing: 8,
@@ -675,83 +672,125 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                           ],
                         ),
                         const SizedBox(height: 16),
-                        Expanded(
-                          child: GridView.builder(
-                            controller: scrollController,
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 4,
-                                  mainAxisSpacing: 8,
-                                  crossAxisSpacing: 8,
-                                  childAspectRatio: 0.85,
-                                ),
-                            itemCount: choiceIconOptions.length,
-                            itemBuilder: (context, i) {
-                              final option = choiceIconOptions[i];
-                              final selected = isChoiceIconSelected(
-                                choice.icon,
+                        if (matches.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Text(
+                              'No icons match that search.',
+                              textAlign: .center,
+                              style: RamificaText.meta,
+                            ),
+                          )
+                        else if (searching)
+                          _iconGrid(dialogContext, choice, index, tint, matches)
+                        else
+                          for (final section in kIconSectionOrder)
+                            if (_sectionIcons(section).isNotEmpty) ...[
+                              _sectionHeader(section),
+                              const SizedBox(height: 8),
+                              _iconGrid(
+                                dialogContext,
+                                choice,
                                 index,
-                                option.name,
-                              );
-                              return InkWell(
-                                key: ValueKey(
-                                  'zone-icon-${choice.choiceId}-${option.name}',
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () =>
-                                    Navigator.pop(sheetContext, option.name),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: selected
-                                        ? tint.withValues(alpha: 0.2)
-                                        : RamificaColors.containerHigh,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: selected
-                                        ? Border.all(color: tint)
-                                        : null,
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: .center,
-                                    children: [
-                                      Icon(
-                                        option.icon,
-                                        size: 22,
-                                        color: selected
-                                            ? tint
-                                            : RamificaColors.textSecondary,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        option.label,
-                                        style: RamificaText.caption.copyWith(
-                                          fontSize: 10,
-                                          color: selected
-                                              ? tint
-                                              : RamificaColors.textSecondary,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: .ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                                tint,
+                                _sectionIcons(section),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
                       ],
                     ),
                   ),
                 );
               },
-            );
-          },
+            ),
+          );
+        },
+      );
+      if (picked != null) {
+        widget.onIconChanged?.call(choice.choiceId, picked);
+      }
+    } finally {
+      search.dispose();
+    }
+  }
+
+  /// Catalog entries in [section], in catalog order.
+  List<ChoiceIconOption> _sectionIcons(String section) {
+    return choiceIconOptions
+        .where((option) => iconSectionOf(option.name) == section)
+        .toList();
+  }
+
+  /// Uppercase section header for the icon grid.
+  Widget _sectionHeader(String section) {
+    return Text(
+      (kIconSectionLabels[section] ?? section).toUpperCase(),
+      style: RamificaText.caption.copyWith(
+        color: RamificaColors.textSecondary,
+        letterSpacing: 1.2,
+      ),
+    );
+  }
+
+  /// Square icon tiles for [options]; tapping one closes the dialog with
+  /// its persisted name. The grid never scrolls itself: the dialog's
+  /// single scrollable owns all scrolling.
+  Widget _iconGrid(
+    BuildContext dialogContext,
+    DraftChoice choice,
+    int index,
+    Color tint,
+    List<ChoiceIconOption> options,
+  ) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 64,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 1.0,
+      ),
+      itemCount: options.length,
+      itemBuilder: (context, i) {
+        final option = options[i];
+        final selected = isChoiceIconSelected(choice.icon, index, option.name);
+        return InkWell(
+          key: ValueKey('zone-icon-${choice.choiceId}-${option.name}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => Navigator.pop(dialogContext, option.name),
+          child: Container(
+            decoration: BoxDecoration(
+              color: selected
+                  ? tint.withValues(alpha: 0.2)
+                  : RamificaColors.containerHigh,
+              borderRadius: BorderRadius.circular(8),
+              border: selected ? Border.all(color: tint) : null,
+            ),
+            child: Column(
+              mainAxisAlignment: .center,
+              children: [
+                Icon(
+                  option.icon,
+                  size: 22,
+                  color: selected ? tint : RamificaColors.textSecondary,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  option.label,
+                  style: RamificaText.caption.copyWith(
+                    fontSize: 9,
+                    color: selected ? tint : RamificaColors.textSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: .ellipsis,
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
-    if (picked != null) {
-      widget.onIconChanged?.call(choice.choiceId, picked);
-    }
   }
 
   /// One color in the picker's palette row. The selected swatch carries
@@ -873,7 +912,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
 /// Creator input styling: 6% white fill with a hotspot focus edge.
 InputDecoration _zoneInputDecoration() {
   return const InputDecoration(
-    labelText: 'Zone label',
+    hintText: 'Zone label',
     filled: true,
     fillColor: RamificaColors.inputFill,
     enabledBorder: OutlineInputBorder(

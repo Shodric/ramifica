@@ -25,6 +25,15 @@ final class DraftOpened extends CreateEvent {
   final String storyId;
 }
 
+/// Lists the author's own stories for the creations list. A null
+/// [authorId] falls back to the signed-in identity; blank ids fail
+/// without touching the network.
+final class StoriesRequested extends CreateEvent {
+  const StoriesRequested({this.authorId});
+
+  final String? authorId;
+}
+
 /// Taps a node on the canvas. Unknown ids are ignored.
 final class NodeSelected extends CreateEvent {
   const NodeSelected(this.nodeId);
@@ -60,10 +69,7 @@ final class NodeFieldChanged extends CreateEvent {
     this.choiceIcons,
     this.choiceIconColors,
     this.visibility,
-    this.lineApproved,
-    this.ttsApproved,
     this.startImagePrompt,
-    this.endImagePrompt,
     this.videoPrompt,
     this.endingName,
   });
@@ -88,21 +94,9 @@ final class NodeFieldChanged extends CreateEvent {
   /// `visible` or `secret`, or null to leave it.
   final String? visibility;
 
-  /// Narrator line approval, or null to leave it. Persists through
-  /// `saveNode`; the voice gate reads it before generating.
-  final bool? lineApproved;
-
-  /// Narrator take approval, or null to leave it. Fresh takes land
-  /// unapproved; the author approves after listening. Persists through
-  /// `saveNode`.
-  final bool? ttsApproved;
-
   /// S-frame prompt override (root only), or null to leave it. Blank
   /// clears to null so generation falls back to `buildImagePrompt`.
   final String? startImagePrompt;
-
-  /// E-frame prompt override, or null to leave it. Blank clears to null.
-  final String? endImagePrompt;
 
   /// Clip prompt override, or null to leave it. Blank clears to null so
   /// generation falls back to its default.
@@ -133,17 +127,17 @@ final class TextGenerateRequested extends CreateEvent {
   final bool regenerate;
 }
 
-/// Generates only the decision narration in S4, then saves it unapproved.
+/// Generates only the decision narration in S3, then saves it.
 final class NarrationGenerateRequested extends CreateEvent {
   const NarrationGenerateRequested(this.nodeId);
 
   final String nodeId;
 }
 
-/// Asks for a node frame via `generateNodeImage`. [which] is `start`
-/// (root only — the backend rejects it elsewhere) or `end` (any node).
-/// [prompt] is the revised prompt override; null or blank falls back to
-/// `buildImagePrompt`. `restartable`: a second tap cancels the first.
+/// Asks for the root S frame via `generateNodeImage`. [which] is `start`
+/// (root only — the backend rejects it elsewhere). [prompt] is the
+/// revised prompt override; null or blank falls back to `buildImagePrompt`.
+/// `restartable`: a second tap cancels the first.
 final class ImageGenerateRequested extends CreateEvent {
   const ImageGenerateRequested({
     required this.nodeId,
@@ -153,35 +147,19 @@ final class ImageGenerateRequested extends CreateEvent {
 
   final String nodeId;
 
-  /// `start` or `end`.
+  /// `start` only.
   final String which;
 
   /// Revised prompt override, or null to use the backend fallback.
   final String? prompt;
 }
 
-/// Approves (`approved: true`) or rejects (`approved: false`) one node
-/// frame via `approveNodeImage`. The backend records the approval; the
-/// bloc then reloads the nodes so inheritance side effects show up.
-final class ImageApprovalChanged extends CreateEvent {
-  const ImageApprovalChanged({
-    required this.nodeId,
-    required this.which,
-    required this.approved,
-  });
-
-  final String nodeId;
-
-  /// `start` or `end`.
-  final String which;
-
-  final bool approved;
-}
-
-/// Asks for the node video via `generateNodeVideo`. GATED server-side:
-/// the root needs its own S approved, any other node needs its parent E
-/// approved; the call inherits the parent E as S. [prompt] is the revised
-/// clip prompt; null or blank keeps the backend fallback. `restartable`.
+/// Asks for the node video via `generateNodeVideo`. GATED server-side on
+/// ready frames: the root needs its own S ready, any other node needs its
+/// parent clip ready; the call inherits the parent clip's extracted last
+/// frame as S. [prompt] is the revised clip prompt; null or blank keeps
+/// the backend fallback.
+/// `restartable`.
 final class VideoGenerateRequested extends CreateEvent {
   const VideoGenerateRequested(this.nodeId, {this.prompt});
 
@@ -266,9 +244,8 @@ final class ChoiceRemoved extends CreateEvent {
   final String choiceId;
 }
 
-/// Asks for the node voice via `generateNodeVoice`. GATED server-side:
-/// the line must be approved first (and non-blank); the call re-renders
-/// the take, which lands unapproved for the author to preview. The bloc
+/// Asks for the node voice via `generateNodeVoice`. GATED server-side on
+/// the non-blank narrator line; the call re-renders the take. The bloc
 /// reloads the nodes after so the take status shows up. `restartable`:
 /// a second tap cancels the first.
 final class VoiceGenerateRequested extends CreateEvent {
@@ -375,7 +352,6 @@ final class SceneProposal {
     this.title,
     this.ttsText,
     this.startImagePrompt,
-    this.endImagePrompt,
     this.videoPrompt,
     this.endingName,
     this.choices = const [],
@@ -431,7 +407,6 @@ final class SceneProposal {
       title: text(json['title']),
       ttsText: text(json['ttsText'] ?? json['narratorLine']),
       startImagePrompt: text(json['startImagePrompt']),
-      endImagePrompt: text(json['endImagePrompt']),
       videoPrompt: text(json['videoPrompt']),
       endingName: text(json['endingName']),
       choices: choices,
@@ -441,7 +416,6 @@ final class SceneProposal {
   final String? title;
   final String? ttsText;
   final String? startImagePrompt;
-  final String? endImagePrompt;
   final String? videoPrompt;
   final String? endingName;
 
@@ -450,13 +424,13 @@ final class SceneProposal {
 }
 
 /// Applies a reviewed S1 [proposal] to [nodeId]: flushes pending edits,
-/// reloads, then completes solo-vacíos plus missing branches — staying
-/// on the same scene. `droppable`: a second Apply while one is in flight
-/// is dropped. Occupied slots keep ids/target/geometry/default and only
-/// fill empty style; free slots create via `createNode` with the
-/// reproducible `v1:author:story:parent:slot` key and link with
-/// `_linkChoice`. A narration change invalidates approvals + voice.
-/// Never approves nor generates media.
+/// then overwrites reviewed non-empty fields (title, narrator line,
+/// start/end/video prompts, endingName) plus per-slot option label/icon/color
+/// — staying on the same scene. `droppable`: a second Apply while one is in
+/// flight is dropped. Occupied slots keep ids/target/geometry/default and
+/// never delete; free slots create via the reproducible
+/// `v1:author:story:parent:slot` key. A narration change idles the voice.
+/// Never generates media.
 final class SceneProposalApplied extends CreateEvent {
   const SceneProposalApplied({required this.nodeId, required this.proposal});
 
@@ -473,4 +447,31 @@ final class DraftNodesObserved extends CreateEvent {
   final String storyId;
   final List<DraftNode> nodes;
   final Object? error;
+}
+
+/// Local story fields, persisted by Save or before an explicit AI operation.
+final class StoryFieldChanged extends CreateEvent {
+  const StoryFieldChanged({this.title, this.synopsis});
+  final String? title, synopsis;
+}
+
+/// Persists the story fields (title/synopsis) without touching any node.
+/// [completion] resolves after the latest local revision is persisted, or
+/// with false on failure — mirroring [NodeSaved].
+final class StorySaved extends CreateEvent {
+  const StorySaved({this.completion});
+
+  final Completer<bool>? completion;
+}
+
+/// Asks for the story key art via `generateStoryCover`. Flushes pending
+/// story edits first so the cover prompt reads the latest title and
+/// synopsis. [prompt] is an author override; null or blank falls back to
+/// the story bible prompt. `droppable`: a second tap while one cover is
+/// in flight is dropped.
+final class CoverGenerateRequested extends CreateEvent {
+  const CoverGenerateRequested({this.prompt});
+
+  /// Revised cover prompt override, or null to use the fallback.
+  final String? prompt;
 }

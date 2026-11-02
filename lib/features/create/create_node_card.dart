@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
@@ -5,10 +7,10 @@ import 'package:ramifica/data/models/draft_node.dart';
 /// Fixed card geometry. The canvas centers every card on its layout
 /// position, so constant size keeps edges, minis, and the minimap exact.
 const createCardWidth = 170.0;
-const createCardHeight = 172.0;
+const createCardHeight = 240.0;
 
 /// Stitch-style node card on the draft canvas: thumbnail (or empty
-/// placeholder), title, scene/branch facts, and status badges. Taps select.
+/// placeholder), title, and status badges. Taps select.
 /// Durations render as plain media facts only — never triggers or countdowns.
 class CreateNodeCard extends StatelessWidget {
   const CreateNodeCard({
@@ -35,16 +37,8 @@ class CreateNodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final thumbnail = node.endImageSourceUrl ?? node.startImageSourceUrl;
+    final thumbnail = node.videoFrameLastUrl ?? node.startImageSourceUrl;
     final title = node.title.trim().isEmpty ? '(untitled)' : node.title.trim();
-    final children = node.childIds.length;
-    final sub = node.isEnding
-        ? 'Branch end'
-        : children == 0
-        ? 'No children assigned'
-        : children == 1
-        ? 'Lone branch'
-        : '$children branches';
     final dim = isOrphan ? 0.45 : 1.0;
     return Opacity(
       opacity: dim,
@@ -54,7 +48,6 @@ class CreateNodeCard extends StatelessWidget {
           width: createCardWidth,
           height: createCardHeight,
           decoration: BoxDecoration(
-            color: RamificaColors.containerHigh,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isOpen
@@ -73,8 +66,7 @@ class CreateNodeCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: .stretch,
             children: [
-              SizedBox(
-                height: 84,
+              Expanded(
                 child: Stack(
                   fit: .expand,
                   children: [
@@ -82,7 +74,10 @@ class CreateNodeCard extends StatelessWidget {
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(13),
                       ),
-                      child: CreateNodeThumb(url: thumbnail),
+                      child: Container(
+                        color: RamificaColors.containerHigh,
+                        child: CreateNodeThumb(url: thumbnail),
+                      ),
                     ),
                     if (isOpen)
                       const Positioned(
@@ -99,58 +94,55 @@ class CreateNodeCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: .start,
-                    children: [
-                      Text(
-                        slotPath.isEmpty
-                            ? 'Scene $sceneIndex'
-                            : 'Scene $sceneIndex - $slotPath',
-                        style: RamificaText.caption.copyWith(
-                          color: RamificaColors.textSecondary,
-                        ),
-                      ),
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: .ellipsis,
-                        style: RamificaText.body.copyWith(
-                          color: RamificaColors.textPrimary,
-                        ),
-                      ),
-                      const Spacer(),
-                      Row(
-                        children: [
-                          if (node.secret)
-                            const Padding(
-                              padding: EdgeInsets.only(right: 4),
-                              child: Icon(
-                                Icons.lock_outline,
-                                size: 12,
-                                color: RamificaColors.textSecondary,
-                              ),
-                            ),
-                          Expanded(
-                            child: Text(
-                              sub,
-                              maxLines: 1,
-                              overflow: .ellipsis,
-                              style: RamificaText.caption.copyWith(
-                                color: isOrphan
-                                    ? RamificaColors.textSecondary
-                                    : RamificaColors.nodeActive,
-                              ),
-                            ),
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(13),
+                ),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                  child: Container(
+                    color: RamificaColors.containerHigh.withValues(alpha: 0.65),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Column(
+                      mainAxisSize: .min,
+                      crossAxisAlignment: .start,
+                      children: [
+                        Text(
+                          slotPath.isEmpty
+                              ? 'Scene $sceneIndex'
+                              : 'Scene $sceneIndex - $slotPath',
+                          style: RamificaText.caption.copyWith(
+                            color: RamificaColors.textSecondary,
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: .ellipsis,
+                                style: RamificaText.body.copyWith(
+                                  color: RamificaColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                            if (node.secret)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.lock_outline,
+                                  size: 12,
+                                  color: RamificaColors.textSecondary,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -169,18 +161,25 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: RamificaColors.surface.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: RamificaColors.hotspot),
-      ),
-      child: Text(
-        label,
-        style: RamificaText.caption.copyWith(
-          color: RamificaColors.textPrimary,
-          fontSize: 10,
+    // Blur only behind the pill text, leaving the thumbnail sharp.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: RamificaColors.surface.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: RamificaColors.hotspot),
+          ),
+          child: Text(
+            label,
+            style: RamificaText.caption.copyWith(
+              color: RamificaColors.textPrimary,
+              fontSize: 10,
+            ),
+          ),
         ),
       ),
     );

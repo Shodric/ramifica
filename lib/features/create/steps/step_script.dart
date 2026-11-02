@@ -12,15 +12,17 @@ import 'package:ramifica/features/create/dictation/dictation_controls.dart';
 import 'package:ramifica/features/create/voice_recorder.dart';
 
 /// S1 Script: scene direction (typed or dictated) plus a reviewable Spark
-/// proposal, then the manual title / ending name / visibility
-/// editors. [showErrors] renders error text under each manual field;
-/// correcting a field clears its own error live.
+/// proposal, then the manual title / ending name editors. New scenes are
+/// secret until the player reveals them; there is no visibility toggle.
+/// [showErrors] renders error text under each manual field; correcting a
+/// field clears its own error live.
 ///
 /// Format is proposal-only: [propose] calls `generateNodeText` and the
 /// answer stays in widget state as an editable accordion — the node is
 /// never mutated. [onApplyProposal] sends the reviewed [SceneProposal]
-/// (fields plus up to two branches); the bloc completes solo-vacíos plus
-/// missing branches. Null [propose] hides the whole proposal block.
+/// (every non-empty field plus up to two branches); Apply overwrites with
+/// each non-empty reviewed value and creates missing branches.
+/// Null [propose] hides the whole proposal block.
 class StepScript extends StatefulWidget {
   const StepScript({
     super.key,
@@ -37,7 +39,6 @@ class StepScript extends StatefulWidget {
     this.onApplyProposal,
     this.onTitleChanged,
     this.onEndingNameChanged,
-    this.onVisibilityChanged,
   });
 
   final DraftNode node;
@@ -71,7 +72,6 @@ class StepScript extends StatefulWidget {
 
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onEndingNameChanged;
-  final ValueChanged<String>? onVisibilityChanged;
 
   @override
   StepScriptState createState() => StepScriptState();
@@ -105,9 +105,10 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
   SceneProposal? _proposal;
 
   // Editable accordion copies, seeded from [_proposal] on Format.
+  // Every non-empty reviewed value overwrites on Apply; blanks are skipped.
   final TextEditingController _pTitle = TextEditingController();
+  final TextEditingController _pLine = TextEditingController();
   final TextEditingController _pStart = TextEditingController();
-  final TextEditingController _pEnd = TextEditingController();
   final TextEditingController _pVideo = TextEditingController();
   final TextEditingController _pEnding = TextEditingController();
   final List<_ChoiceEdit> _pChoices = [];
@@ -190,8 +191,8 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     _proposal = null;
     _formatOpen = false;
     _pTitle.clear();
+    _pLine.clear();
     _pStart.clear();
-    _pEnd.clear();
     _pVideo.clear();
     _pEnding.clear();
     _disposeChoices();
@@ -215,8 +216,8 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     _direction.dispose();
     _directionFocus.dispose();
     _pTitle.dispose();
+    _pLine.dispose();
     _pStart.dispose();
-    _pEnd.dispose();
     _pVideo.dispose();
     _pEnding.dispose();
     _disposeChoices();
@@ -261,8 +262,8 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       }
       final proposal = SceneProposal(
         title: _clip(answer.title, 40),
+        ttsText: _clip(answer.ttsText, 280),
         startImagePrompt: _clip(start, 2000),
-        endImagePrompt: _clip(answer.endImagePrompt, 2000),
         videoPrompt: _clip(answer.videoPrompt, 2000),
         endingName: widget.node.isEnding ? _clip(answer.endingName, 40) : null,
         choices: choices,
@@ -274,8 +275,8 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       setState(() {
         _proposal = proposal;
         _pTitle.text = proposal.title ?? '';
+        _pLine.text = proposal.ttsText ?? '';
         _pStart.text = proposal.startImagePrompt ?? '';
-        _pEnd.text = proposal.endImagePrompt ?? '';
         _pVideo.text = proposal.videoPrompt ?? '';
         _pEnding.text = proposal.endingName ?? '';
         _disposeChoices();
@@ -301,63 +302,32 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
 
   bool _isEmptyProposal(SceneProposal proposal) {
     return (proposal.title == null || proposal.title!.isEmpty) &&
+        (proposal.ttsText == null || proposal.ttsText!.isEmpty) &&
         (proposal.startImagePrompt == null ||
             proposal.startImagePrompt!.isEmpty) &&
-        (proposal.endImagePrompt == null || proposal.endImagePrompt!.isEmpty) &&
         (proposal.videoPrompt == null || proposal.videoPrompt!.isEmpty) &&
         (proposal.endingName == null || proposal.endingName!.isEmpty) &&
         proposal.choices.isEmpty;
   }
 
-  /// Applicable (field, branch) counts of the accordion against the node:
-  /// only-vacíos fields plus non-empty option labels. Endings never carry
-  /// branches; children never carry a start prompt.
+  /// Counts what Apply WILL write: every non-empty reviewed text field plus
+  /// every non-empty proposed option (overwrite or new branch, max two).
+  /// Endings never carry branches; child start prompts are forced null.
   ({int fields, int branches}) _applyCounts() {
     if (_proposal == null) return (fields: 0, branches: 0);
     final node = widget.node;
     var fields = 0;
-    if (_pTitle.text.trim().isNotEmpty && node.title.trim().isEmpty) {
-      fields++;
-    }
-    if (widget.isRoot &&
-        _pStart.text.trim().isNotEmpty &&
-        (node.startImagePrompt?.trim().isEmpty ?? true)) {
-      fields++;
-    }
-    if (_pEnd.text.trim().isNotEmpty &&
-        (node.endImagePrompt?.trim().isEmpty ?? true)) {
-      fields++;
-    }
-    if (_pVideo.text.trim().isNotEmpty &&
-        (node.videoPrompt?.trim().isEmpty ?? true)) {
-      fields++;
-    }
-    if (node.isEnding &&
-        _pEnding.text.trim().isNotEmpty &&
-        (node.endingName?.trim().isEmpty ?? true)) {
-      fields++;
-    }
+    if (_pTitle.text.trim().isNotEmpty) fields++;
+    if (_pLine.text.trim().isNotEmpty) fields++;
+    if (widget.isRoot && _pStart.text.trim().isNotEmpty) fields++;
+    if (_pVideo.text.trim().isNotEmpty) fields++;
+    if (node.isEnding && _pEnding.text.trim().isNotEmpty) fields++;
     var branches = 0;
     if (!node.isEnding) {
-      final occupied = _choicesBySlot(node.choices);
-      final proposed = _pChoices
-          .where((c) => c.label.text.trim().isNotEmpty)
-          .take(2)
-          .toList();
-      for (var i = 0; i < proposed.length; i++) {
-        final existing = occupied[i == 0 ? 'A' : 'B'];
-        if (existing == null) {
-          if (node.choices.length + branches < 2) branches++;
-        } else {
-          if (existing.label.trim().isEmpty) fields++;
-          if ((existing.icon?.trim().isEmpty ?? true) &&
-              proposed[i].icon != null) {
-            fields++;
-          }
-          if ((existing.iconColor?.trim().isEmpty ?? true) &&
-              proposed[i].iconColor != null) {
-            fields++;
-          }
+      for (final choice in _pChoices) {
+        if (choice.label.text.trim().isNotEmpty) {
+          branches++;
+          if (branches >= 2) break;
         }
       }
     }
@@ -382,10 +352,10 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     widget.onApplyProposal?.call(
       SceneProposal(
         title: _clip(_nullIfBlank(_pTitle.text), 40),
+        ttsText: _clip(_nullIfBlank(_pLine.text), 280),
         startImagePrompt: widget.isRoot
             ? _clip(_nullIfBlank(_pStart.text), 2000)
             : null,
-        endImagePrompt: _clip(_nullIfBlank(_pEnd.text), 2000),
         videoPrompt: _clip(_nullIfBlank(_pVideo.text), 2000),
         endingName: node.isEnding
             ? _clip(_nullIfBlank(_pEnding.text), 40)
@@ -414,142 +384,155 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
         !_proposing &&
         !transcribing &&
         applicable > 0;
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        TextField(
-          key: ValueKey('script-direction-$nodeId'),
-          controller: _direction,
-          focusNode: _directionFocus,
-          enabled: !widget.busy,
-          readOnly: transcribing,
-          minLines: 3,
-          maxLines: 5,
-          decoration: _scriptInputDecoration(
-            labelText: 'Scene direction',
-            hintText: 'Dictate or type what Spark should propose…',
-          ),
-          onChanged: (_) => setState(() {
-            _proposalGen++;
-            _clearProposal();
-          }),
-        ),
-        const SizedBox(height: 8),
-        DictationVoiceBar(
-          prefix: 'script-direction',
-          label: 'Dictate direction',
-          recording: _dictation.recording,
-          waves: _dictation.waves,
-          elapsed: _dictation.elapsed,
-          onTap: widget.busy || _dictation.sending || _proposing
-              ? null
-              : _dictation.toggle,
-        ),
-        if (_dictation.hint != null || _hint != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            _hint ?? _dictation.hint ?? '',
-            style: RamificaText.meta.copyWith(color: RamificaColors.error),
-          ),
-        ],
-        if (widget.propose != null) ...[
-          const SizedBox(height: 8),
-          _ProposalBar(
-            nodeId: nodeId,
-            proposing: _proposing,
-            hasProposal: _proposal != null,
-            open: _formatOpen,
-            onFormat: widget.busy || transcribing || _proposing
-                ? null
-                : (directionReady ? _format : null),
-            onToggle: () => setState(() => _formatOpen = !_formatOpen),
-          ),
-          if (_proposal != null && _formatOpen) ...[
-            const SizedBox(height: 8),
-            _ProposalAccordion(
-              nodeId: nodeId,
-              node: node,
-              isRoot: widget.isRoot,
-              busy: widget.busy,
-              title: _pTitle,
-              start: _pStart,
-              end: _pEnd,
-              video: _pVideo,
-              ending: _pEnding,
-              choices: _pChoices,
-              onChanged: () => setState(() {}),
-              onAddChoice: _pChoices.length >= 2
-                  ? null
-                  : () => setState(() => _pChoices.add(_ChoiceEdit.empty())),
-              onRemoveChoice: (index) => setState(() {
-                _pChoices[index].label.dispose();
-                _pChoices.removeAt(index);
-              }),
-            ),
-            const SizedBox(height: 8),
-            FilledButton(
-              key: ValueKey('script-apply-$nodeId'),
-              onPressed: canApply ? _apply : null,
-              child: Text(_applyLabel(counts)),
-            ),
-          ] else if (_proposal != null && !_formatOpen) ...[
-            const SizedBox(height: 8),
-            FilledButton(
-              key: ValueKey('script-apply-$nodeId'),
-              onPressed: canApply ? _apply : null,
-              child: Text(_applyLabel(counts)),
-            ),
-          ],
-        ],
-        const SizedBox(height: 24),
-        TextField(
-          key: ValueKey('title-$nodeId'),
-          controller: _title,
-          enabled: !widget.busy,
-          maxLength: 40,
-          decoration:
-              _scriptInputDecoration(
-                labelText: 'Scene title',
-                hintText: 'The temple door',
-              ).copyWith(
-                errorText: titleError
-                    ? 'Give it a title (1-40 characters)'
-                    : null,
-              ),
-          onChanged: widget.onTitleChanged,
-        ),
-        const SizedBox(height: 8),
-        if (node.isEnding) ...[
-          TextField(
-            key: ValueKey('ending-name-$nodeId'),
-            controller: _endingName,
-            enabled: !widget.busy,
-            maxLength: 40,
-            decoration: _scriptInputDecoration(
-              labelText: 'Ending name',
-              hintText: 'Dawn',
-            ),
-            onChanged: widget.onEndingNameChanged,
-          ),
-          const SizedBox(height: 8),
-        ],
-        const SizedBox(height: 16),
-        Row(
+    final direction = TextField(
+      key: ValueKey('script-direction-$nodeId'),
+      controller: _direction,
+      focusNode: _directionFocus,
+      enabled: !widget.busy,
+      readOnly: transcribing,
+      expands: true,
+      maxLines: null,
+      minLines: null,
+      textAlignVertical: .top,
+      decoration: _scriptInputDecoration(
+        hintText: 'Dictate or type what Spark should propose…',
+      ),
+      onChanged: (_) => setState(() {
+        _proposalGen++;
+        _clearProposal();
+      }),
+    );
+    Widget accordion() => _ProposalAccordion(
+      nodeId: nodeId,
+      node: node,
+      isRoot: widget.isRoot,
+      busy: widget.busy,
+      title: _pTitle,
+      line: _pLine,
+      start: _pStart,
+      video: _pVideo,
+      ending: _pEnding,
+      choices: _pChoices,
+      onChanged: () => setState(() {}),
+      onAddChoice: _pChoices.length >= 2
+          ? null
+          : () => setState(() => _pChoices.add(_ChoiceEdit.empty())),
+      onRemoveChoice: (index) => setState(() {
+        _pChoices[index].label.dispose();
+        _pChoices.removeAt(index);
+      }),
+    );
+    // Bounded (the app step area): the direction field fills the leftover
+    // height with no outer scroll; the open proposal accordion scrolls
+    // within its own share. Unbounded (a scrollable parent): a fixed tall
+    // direction box, page scrolls as before.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.maxHeight.isFinite;
+        return Column(
+          crossAxisAlignment: .stretch,
+          mainAxisSize: bounded ? .max : .min,
           children: [
-            const Text('Secret', style: RamificaText.meta),
-            const SizedBox(width: 8),
-            Switch(
-              value: node.secret,
-              onChanged: widget.busy
-                  ? null
-                  : (secret) => widget.onVisibilityChanged?.call(
-                      secret ? 'secret' : 'visible',
-                    ),
+            TextField(
+              key: ValueKey('title-$nodeId'),
+              controller: _title,
+              enabled: !widget.busy,
+              maxLength: 40,
+              buildCounter:
+                  (
+                    _, {
+                    required int currentLength,
+                    required bool isFocused,
+                    required int? maxLength,
+                  }) => currentLength >= (maxLength ?? 40)
+                  ? Text(
+                      '$currentLength/${maxLength ?? 40}',
+                      style: RamificaText.meta,
+                    )
+                  : null,
+              decoration:
+                  _scriptInputDecoration(
+                    labelText: 'Scene title',
+                    hintText: 'The temple door',
+                  ).copyWith(
+                    errorText: titleError
+                        ? 'Give it a title (1-40 characters)'
+                        : null,
+                  ),
+              onChanged: widget.onTitleChanged,
             ),
+            const SizedBox(height: 8),
+            bounded
+                ? Expanded(child: direction)
+                : SizedBox(height: 320, child: direction),
+            const SizedBox(height: 8),
+            DictationVoiceBar(
+              prefix: 'script-direction',
+              label: 'Dictate direction',
+              recording: _dictation.recording,
+              waves: _dictation.waves,
+              elapsed: _dictation.elapsed,
+              onTap: widget.busy || _dictation.sending || _proposing
+                  ? null
+                  : _dictation.toggle,
+            ),
+            if (_dictation.hint != null || _hint != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _hint ?? _dictation.hint ?? '',
+                style: RamificaText.meta.copyWith(color: RamificaColors.error),
+              ),
+            ],
+            if (widget.propose != null) ...[
+              const SizedBox(height: 8),
+              _ProposalBar(
+                nodeId: nodeId,
+                proposing: _proposing,
+                hasProposal: _proposal != null,
+                open: _formatOpen,
+                onFormat: widget.busy || transcribing || _proposing
+                    ? null
+                    : (directionReady ? _format : null),
+                onToggle: () => setState(() => _formatOpen = !_formatOpen),
+              ),
+              if (_proposal != null && _formatOpen) ...[
+                const SizedBox(height: 8),
+                bounded
+                    ? Expanded(child: SingleChildScrollView(child: accordion()))
+                    : accordion(),
+                const SizedBox(height: 8),
+                FilledButton(
+                  key: ValueKey('script-apply-$nodeId'),
+                  onPressed: canApply ? _apply : null,
+                  child: Text(_applyLabel(counts)),
+                ),
+              ] else if (_proposal != null && !_formatOpen) ...[
+                const SizedBox(height: 8),
+                FilledButton(
+                  key: ValueKey('script-apply-$nodeId'),
+                  onPressed: canApply ? _apply : null,
+                  child: Text(_applyLabel(counts)),
+                ),
+              ],
+            ],
+            if (node.isEnding) ...[
+              const SizedBox(height: 8),
+              TextField(
+                key: ValueKey('ending-name-$nodeId'),
+                controller: _endingName,
+                enabled: !widget.busy,
+                maxLength: 40,
+                decoration: _scriptInputDecoration(
+                  labelText: 'Ending name',
+                  hintText: 'Dawn',
+                ),
+                onChanged: widget.onEndingNameChanged,
+              ),
+              const SizedBox(height: 8),
+            ],
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -623,7 +606,7 @@ class _ChoiceEdit {
 }
 
 InputDecoration _scriptInputDecoration({
-  required String labelText,
+  String? labelText,
   required String hintText,
 }) {
   return InputDecoration(
@@ -716,8 +699,9 @@ class _ProposalBar extends StatelessWidget {
   }
 }
 
-/// catalog selects, and the ending name on endings. The start prompt row
-/// hides on children (S is inherited); options hide on endings.
+/// Editable proposal: every field stays editable and Apply overwrites with
+/// each non-empty reviewed value. The start prompt row hides on children
+/// (S is inherited); options hide on endings.
 class _ProposalAccordion extends StatelessWidget {
   const _ProposalAccordion({
     required this.nodeId,
@@ -725,8 +709,8 @@ class _ProposalAccordion extends StatelessWidget {
     required this.isRoot,
     required this.busy,
     required this.title,
+    required this.line,
     required this.start,
-    required this.end,
     required this.video,
     required this.ending,
     required this.choices,
@@ -740,8 +724,8 @@ class _ProposalAccordion extends StatelessWidget {
   final bool isRoot;
   final bool busy;
   final TextEditingController title;
+  final TextEditingController line;
   final TextEditingController start;
-  final TextEditingController end;
   final TextEditingController video;
   final TextEditingController ending;
   final List<_ChoiceEdit> choices;
@@ -768,23 +752,28 @@ class _ProposalAccordion extends StatelessWidget {
             _ProposalField(
               fieldKey: ValueKey('script-prop-title-$nodeId'),
               controller: title,
-              existing: node.title,
               label: 'Title',
-              stepName: 'Script',
               busy: busy,
               maxLength: 40,
               maxLines: 1,
               onChanged: onChanged,
             ),
             const SizedBox(height: 8),
+            _ProposalField(
+              fieldKey: ValueKey('script-prop-line-$nodeId'),
+              controller: line,
+              label: 'Narrator line',
+              busy: busy,
+              maxLength: 280,
+              maxLines: 3,
+              onChanged: onChanged,
+            ),
             if (isRoot) ...[
               const SizedBox(height: 8),
               _ProposalField(
                 fieldKey: ValueKey('script-prop-start-$nodeId'),
                 controller: start,
-                existing: node.startImagePrompt ?? '',
                 label: 'Start image prompt',
-                stepName: 'Scenes',
                 busy: busy,
                 maxLength: 2000,
                 maxLines: 4,
@@ -793,30 +782,16 @@ class _ProposalAccordion extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             _ProposalField(
-              fieldKey: ValueKey('script-prop-end-$nodeId'),
-              controller: end,
-              existing: node.endImagePrompt ?? '',
-              label: 'End image prompt',
-              stepName: 'Scenes',
-              busy: busy,
-              maxLength: 2000,
-              maxLines: 4,
-              onChanged: onChanged,
-            ),
-            const SizedBox(height: 8),
-            _ProposalField(
               fieldKey: ValueKey('script-prop-video-$nodeId'),
               controller: video,
-              existing: node.videoPrompt ?? '',
               label: 'Video prompt',
-              stepName: 'Clip',
               busy: busy,
               maxLength: 2000,
               maxLines: 4,
               onChanged: onChanged,
             ),
             if (!node.isEnding) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               Text('Options', style: RamificaText.labelSM),
               const SizedBox(height: 8),
               for (var i = 0; i < choices.length; i++)
@@ -824,7 +799,6 @@ class _ProposalAccordion extends StatelessWidget {
                   nodeId: nodeId,
                   index: i,
                   edit: choices[i],
-                  existing: _choicesBySlot(node.choices)[i == 0 ? 'A' : 'B'],
                   busy: busy,
                   onChanged: onChanged,
                   onRemove: () => onRemoveChoice(i),
@@ -842,9 +816,7 @@ class _ProposalAccordion extends StatelessWidget {
               _ProposalField(
                 fieldKey: ValueKey('script-prop-ending-$nodeId'),
                 controller: ending,
-                existing: node.endingName ?? '',
                 label: 'Ending name',
-                stepName: 'Script',
                 busy: busy,
                 maxLength: 40,
                 maxLines: 1,
@@ -859,12 +831,12 @@ class _ProposalAccordion extends StatelessWidget {
 }
 
 /// One editable option row: label plus icon/color catalog selects.
+/// All three always stay editable; Apply overwrites per slot.
 class _OptionRow extends StatelessWidget {
   const _OptionRow({
     required this.nodeId,
     required this.index,
     required this.edit,
-    this.existing,
     required this.busy,
     required this.onChanged,
     required this.onRemove,
@@ -873,7 +845,6 @@ class _OptionRow extends StatelessWidget {
   final String nodeId;
   final int index;
   final _ChoiceEdit edit;
-  final DraftChoice? existing;
   final bool busy;
   final VoidCallback onChanged;
   final VoidCallback onRemove;
@@ -892,9 +863,7 @@ class _OptionRow extends StatelessWidget {
                 child: _ProposalField(
                   fieldKey: ValueKey('script-prop-opt-label-$nodeId-$index'),
                   controller: edit.label,
-                  existing: existing?.label ?? '',
                   label: 'Option ${index == 0 ? 'A' : 'B'}',
-                  stepName: 'Options',
                   busy: busy,
                   maxLength: 24,
                   maxLines: 1,
@@ -916,7 +885,7 @@ class _OptionRow extends StatelessWidget {
                 child: DropdownButtonFormField<String?>(
                   isExpanded: true,
                   key: ValueKey('script-prop-opt-icon-$nodeId-$index'),
-                  initialValue: _knownIcon(existing?.icon) ?? edit.icon,
+                  initialValue: edit.icon,
                   decoration: _scriptInputDecoration(
                     labelText: 'Icon',
                     hintText: 'None',
@@ -932,8 +901,7 @@ class _OptionRow extends StatelessWidget {
                         child: Text(option.label),
                       ),
                   ],
-                  onChanged:
-                      busy || (existing?.icon?.trim().isNotEmpty ?? false)
+                  onChanged: busy
                       ? null
                       : (value) {
                           edit.icon = value;
@@ -946,8 +914,7 @@ class _OptionRow extends StatelessWidget {
                 child: DropdownButtonFormField<String?>(
                   isExpanded: true,
                   key: ValueKey('script-prop-opt-color-$nodeId-$index'),
-                  initialValue:
-                      _knownColor(existing?.iconColor) ?? edit.iconColor,
+                  initialValue: edit.iconColor,
                   decoration: _scriptInputDecoration(
                     labelText: 'Color',
                     hintText: 'Auto',
@@ -963,8 +930,7 @@ class _OptionRow extends StatelessWidget {
                         child: Text(option.label),
                       ),
                   ],
-                  onChanged:
-                      busy || (existing?.iconColor?.trim().isNotEmpty ?? false)
+                  onChanged: busy
                       ? null
                       : (value) {
                           edit.iconColor = value;
@@ -980,35 +946,11 @@ class _OptionRow extends StatelessWidget {
   }
 }
 
-Map<String, DraftChoice> _choicesBySlot(List<DraftChoice> choices) {
-  final occupied = <String, DraftChoice>{};
-  final legacy = <DraftChoice>[];
-  for (final choice in choices) {
-    if ((choice.slot == 'A' || choice.slot == 'B') &&
-        !occupied.containsKey(choice.slot)) {
-      occupied[choice.slot!] = choice;
-    } else {
-      legacy.add(choice);
-    }
-  }
-  for (final choice in legacy) {
-    for (final slot in const ['A', 'B']) {
-      if (!occupied.containsKey(slot)) {
-        occupied[slot] = choice;
-        break;
-      }
-    }
-  }
-  return occupied;
-}
-
 class _ProposalField extends StatelessWidget {
   const _ProposalField({
     required this.fieldKey,
     required this.controller,
-    required this.existing,
     required this.label,
-    required this.stepName,
     required this.busy,
     required this.maxLength,
     required this.maxLines,
@@ -1016,29 +958,13 @@ class _ProposalField extends StatelessWidget {
   });
   final Key fieldKey;
   final TextEditingController controller;
-  final String existing;
   final String label;
-  final String stepName;
   final bool busy;
   final int maxLength;
   final int maxLines;
   final VoidCallback onChanged;
   @override
   Widget build(BuildContext context) {
-    if (existing.trim().isNotEmpty) {
-      return InputDecorator(
-        key: fieldKey,
-        decoration: _scriptInputDecoration(
-          labelText: label,
-          hintText: '',
-        ).copyWith(helperText: 'Kept. Edit in $stepName.'),
-        child: Text(
-          existing,
-          maxLines: maxLines,
-          overflow: TextOverflow.ellipsis,
-        ),
-      );
-    }
     return TextField(
       key: fieldKey,
       controller: controller,

@@ -1,3 +1,4 @@
+import 'package:ramifica/data/models/draft_story.dart';
 import 'package:ramifica/data/models/user.dart';
 
 enum ProfilePhase { loading, loaded, failed, signedOut }
@@ -31,6 +32,7 @@ class ProfileState {
     this.toggling = false,
     this.saving = false,
     this.failure,
+    this.drafts = const [],
   });
 
   final ProfilePhase phase;
@@ -47,6 +49,10 @@ class ProfileState {
   final bool saving;
   final String? failure;
 
+  /// The signed-in user's own creations, newest first. Loaded on demand
+  /// for the Creations tab; never loaded on foreign profiles.
+  final List<DraftStory> drafts;
+
   ProfileState copy({
     ProfilePhase Function()? phase,
     String? uid,
@@ -61,6 +67,7 @@ class ProfileState {
     bool? toggling,
     bool? saving,
     String? Function()? failure,
+    List<DraftStory>? drafts,
   }) {
     return ProfileState(
       phase: phase == null ? this.phase : phase(),
@@ -78,6 +85,7 @@ class ProfileState {
       toggling: toggling ?? this.toggling,
       saving: saving ?? this.saving,
       failure: failure == null ? this.failure : failure(),
+      drafts: drafts ?? this.drafts,
     );
   }
 
@@ -96,7 +104,8 @@ class ProfileState {
         other.followingCount == followingCount &&
         other.toggling == toggling &&
         other.saving == saving &&
-        other.failure == failure;
+        other.failure == failure &&
+        _sameDrafts(other.drafts, drafts);
   }
 
   @override
@@ -114,5 +123,14 @@ class ProfileState {
     toggling,
     saving,
     failure,
+    Object.hashAll(drafts),
   );
+}
+
+bool _sameDrafts(List<DraftStory> a, List<DraftStory> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

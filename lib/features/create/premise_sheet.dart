@@ -87,7 +87,8 @@ class PremiseSheet extends StatefulWidget {
   /// The wizard footer commits this draft. Typing and dictation share it.
   final PremiseDraftChanged? onDraft;
 
-  /// Inside the node wizard the shell already pads the page, and
+  /// Inside the node wizard the sheet renders bare: the screen pads
+  /// the Idea step itself, so this must not add its own padding.
   final bool embedded;
 
   @override
@@ -338,7 +339,7 @@ class _PremiseSheetState extends State<PremiseSheet>
                   onToggle: () => setState(() => _formatOpen = !_formatOpen),
                 ),
               ],
-              if (!widget.embedded && widget.onApply != null) ...[
+              if (widget.onApply != null) ...[
                 const SizedBox(height: 8),
                 FilledButton(
                   key: const ValueKey('premise-apply'),

@@ -1,3 +1,10 @@
+// A schema change requires a new running client, including already-open tabs.
+self.addEventListener("activate", function (event) {
+  event.waitUntil(self.clients.matchAll({type: "window"}).then(function (clients) {
+    return Promise.all(clients.map(function (client) { return client.navigate(client.url); }));
+  }));
+});
+
 // Ramifica shell. Workbox is loaded from the CDN on first install.
 // The browser keeps the imported script with this worker after that.
 // If the CDN is unreachable, this file installs with no fetch handlers.
@@ -70,8 +77,7 @@ if (self.workbox) {
 
   workbox.precaching.precacheAndRoute(shellPrecache);
 
-  // Document navigations, including /story/**. storyPage is not deployed,
-  // so that path is still this app.
+  // Document navigations, including /story/**, open the SPA.
   workbox.routing.registerRoute(
     function (context) {
       return context.request.mode === "navigate";

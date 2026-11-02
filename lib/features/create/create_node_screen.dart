@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/app_failure.dart';
@@ -57,6 +58,11 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   final _sessionId = const Uuid().v4();
   var _stepIndex = 0;
   var _previewOpen = false;
+  // True while a child node screen is pushed on top: the covered step
+  // players must stay paused and released until this screen is back.
+  var _childOpen = false;
+  Timer? _generationExpiry;
+  String? _expiryAt;
 
   /// Idea sits before Script. The root stepper leads with that chip.
   /// Continue commits it and leaves. Child nodes hide it.
@@ -69,6 +75,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     // The script dictation take must not outlive the screen: late socket
     // events after this are ignored by the controller generation guard.
     unawaited(_scriptKey.currentState?.stopDictation());
+    _generationExpiry?.cancel();
     super.dispose();
   }
 
@@ -96,7 +103,11 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   }
 
   void _save() {
-    widget.bloc.add(NodeSaved(nodeId: widget.nodeId));
+    if (_premise && widget.bloc.state.isRoot(widget.nodeId)) {
+      _premiseKey.currentState?.commit();
+    } else {
+      widget.bloc.add(NodeSaved(nodeId: widget.nodeId));
+    }
   }
 
   // Generation handlers flush the latest edits inside the bloc write queue.
@@ -116,7 +127,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
 
   String _statusText(CreateState state) {
     if (state.job == CreateJob.saving) return 'Saving...';
-    if (widget.bloc.hasUnsavedNodeEdits(widget.nodeId)) {
+    if (widget.bloc.hasUnsavedStoryEdits ||
+        widget.bloc.hasUnsavedNodeEdits(widget.nodeId)) {
       return 'Unsaved changes';
     }
     return 'No changes';
@@ -136,7 +148,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       });
       return;
     }
-    if (_premise && isRoot) _premiseKey.currentState?.commit();
     _stopScriptDictation();
     setState(() {
       _premise = false;
@@ -146,7 +157,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   }
 
   void _leavePremise() {
-    _premiseKey.currentState?.commit();
     _stopScriptDictation();
     setState(() {
       _premise = false;
@@ -157,6 +167,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
 
   void _onContinue(DraftNode node, bool isRoot) {
     if (_premise && isRoot) {
+      _premiseKey.currentState?.commit();
       _leavePremise();
       return;
     }
@@ -220,6 +231,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         builder: (context, state) {
           final scene = sceneIndexes(state.nodes, state.story?.rootNodeId);
           final number = scene[widget.nodeId];
+          final badges = levelBadges(state.nodes, state.story?.rootNodeId);
+          final badge = badges[widget.nodeId];
           if (number == null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (context.mounted) Navigator.of(context).maybePop();
@@ -227,6 +240,20 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
             return const Scaffold(body: SizedBox.shrink());
           }
           final node = state.nodes.firstWhere((n) => n.nodeId == widget.nodeId);
+          if (_expiryAt != node.generationExpiresAt) {
+            _expiryAt = node.generationExpiresAt;
+            _generationExpiry?.cancel();
+            final expiry = DateTime.tryParse(_expiryAt ?? '');
+            if (expiry != null && expiry.isAfter(DateTime.now())) {
+              _generationExpiry = Timer(
+                expiry.difference(DateTime.now()) +
+                    const Duration(milliseconds: 10),
+                () {
+                  if (mounted) setState(() {});
+                },
+              );
+            }
+          }
           final isRoot = state.isRoot(widget.nodeId);
           final busy =
               state.job == CreateJob.saving ||
@@ -240,6 +267,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
           final stepIndex = _stepIndex.clamp(0, wizardStepCount - 1);
           final showPremise = _premise && isRoot;
           final parent = state.parentOf(node);
+          final incoming = _incomingChoice(parent, state.nodes, widget.nodeId);
           return PopScope(
             canPop: true,
             child: Scaffold(
@@ -254,57 +282,145 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                   onPressed: () => Navigator.of(context).maybePop(),
                 ),
                 titleSpacing: 0,
-                title: Text('Create', style: RamificaText.headlineSM),
+                title: Column(
+                  crossAxisAlignment: .start,
+                  mainAxisSize: .min,
+                  children: [
+                    Text(
+                      isRoot
+                          ? ((state.story?.title.trim().isNotEmpty ?? false)
+                                ? state.story!.title.trim()
+                                : 'Untitled story')
+                          : (node.title.trim().isNotEmpty
+                                ? node.title.trim()
+                                : 'Untitled scene'),
+                      style: RamificaText.headlineSM,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Row(
+                      mainAxisSize: .min,
+                      children: [
+                        Text(
+                          badge == null || badge.isEmpty
+                              ? 'Scene $number'
+                              : node.isEnding
+                              ? '$badge · Final'
+                              : badge,
+                          key: const ValueKey('scene-level-badge'),
+                          style: RamificaText.meta,
+                        ),
+                        if (isRoot) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              node.title.trim().isNotEmpty
+                                  ? node.title.trim()
+                                  : 'Untitled scene',
+                              style: RamificaText.meta,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ] else if (incoming != null) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: _IncomingChoiceLabel(
+                              choice: incoming.choice,
+                              index: incoming.index,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
                 actions: [
-                  if (!showPremise)
-                    TextButton.icon(
+                  if (state.job == CreateJob.saving)
+                    const Padding(
+                      key: ValueKey('wizard-saving'),
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    IconButton(
                       key: const ValueKey('wizard-save'),
+                      tooltip: 'Save',
                       onPressed: busy ? null : _save,
                       icon: const Icon(Icons.save_outlined, size: 20),
-                      label: const Text('Save'),
+                      color: RamificaColors.textPrimary,
                     ),
-                  IconButton(
-                    key: ValueKey('preview-node-${widget.nodeId}'),
-                    tooltip: 'Preview',
-                    icon: const Icon(Icons.visibility, size: 22),
-                    color: RamificaColors.nodeActive,
-                    onPressed: busy
-                        ? null
-                        : () async {
-                            setState(() => _previewOpen = true);
-                            await showCreatePreview(context, node: node);
-                            if (mounted) setState(() => _previewOpen = false);
-                          },
-                  ),
+                  if (node.videoStatus == 'ready' &&
+                      (node.videoUrl ?? '').isNotEmpty)
+                    IconButton(
+                      key: ValueKey('preview-node-${widget.nodeId}'),
+                      tooltip: 'Preview',
+                      icon: const Icon(Icons.visibility, size: 22),
+                      color: RamificaColors.textPrimary,
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              setState(() => _previewOpen = true);
+                              await showCreatePreview(context, node: node);
+                              if (mounted) {
+                                setState(() => _previewOpen = false);
+                              }
+                            },
+                    ),
+                  const SizedBox(width: 8),
                 ],
               ),
               body: SafeArea(
+                // Horizontal page padding lives on each scrollable and
+                // section, never outside: the scrollbar travels over
+                // padding instead of content.
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: const EdgeInsets.only(top: 16),
                   child: Column(
                     crossAxisAlignment: .stretch,
                     children: [
-                      WizardHeader(
-                        sceneNumber: number,
-                        sceneTotal: state.nodes.length,
-                        title: node.title,
-                        status: state.statusOf(widget.nodeId),
-                        stepIndex: showPremise ? -1 : stepIndex,
-                        firstIncomplete: firstIncomplete,
-                        showIdea: isRoot,
-                        ideaCurrent: showPremise,
-                        ideaDone: !showPremise && _ideaFilled(state, node),
-                        onIdea: () => _openIdea(isRoot),
-                        onStepTap: (index) => _goTo(index, node, isRoot),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: WizardHeader(
+                          sceneNumber: number,
+                          sceneTotal: state.nodes.length,
+                          title: node.title,
+                          status: state.statusOf(widget.nodeId),
+                          stepIndex: showPremise ? -1 : stepIndex,
+                          firstIncomplete: firstIncomplete,
+                          showIdea: isRoot,
+                          ideaCurrent: showPremise,
+                          ideaDone: !showPremise && _ideaFilled(state, node),
+                          onIdea: () => _openIdea(isRoot),
+                          onStepTap: (index) => _goTo(index, node, isRoot),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Expanded(
                         child: showPremise
-                            ? WizardPremise(key: _premiseKey)
+                            ? Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  16,
+                                ),
+                                child: WizardPremise(key: _premiseKey),
+                              )
                             : IndexedStack(
                                 index: stepIndex,
                                 children: [
-                                  _StepScroll(
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      0,
+                                      16,
+                                      16,
+                                    ),
                                     child: StepScript(
                                       key: _scriptKey,
                                       node: node,
@@ -366,15 +482,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           ),
                                         ),
                                       ),
-                                      onVisibilityChanged: (visibility) =>
-                                          _edited(
-                                            () => widget.bloc.add(
-                                              NodeFieldChanged(
-                                                nodeId: widget.nodeId,
-                                                visibility: visibility,
-                                              ),
-                                            ),
-                                          ),
                                     ),
                                   ),
                                   _StepScroll(
@@ -385,21 +492,18 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             'startImage',
                                           )
                                           ? 'start'
-                                          : state.generating(
-                                              widget.nodeId,
-                                              'endImage',
-                                            )
-                                          ? 'end'
                                           : null,
-                                      phase: state.operationPhase,
+                                      phase: state.operationPhase == 'saving'
+                                          ? 'saving'
+                                          : node.generationPhase ??
+                                                state.operationPhase,
                                       node: node,
                                       isRoot: isRoot,
                                       inheritedImageUrl:
-                                          parent?.endImageSourceUrl,
+                                          parent?.videoFrameLastUrl,
                                       inheritedCaption: parent == null
                                           ? null
                                           : 'Inherited from Scene ${scene[parent.nodeId] ?? '—'}',
-                                      inheritedPrompt: parent?.endImagePrompt,
                                       busy: busy,
                                       showErrors: _showErrors[1],
                                       onStartPromptChanged: (value) => _edited(
@@ -410,24 +514,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           ),
                                         ),
                                       ),
-                                      onEndPromptChanged: (value) => _edited(
-                                        () => widget.bloc.add(
-                                          NodeFieldChanged(
-                                            nodeId: widget.nodeId,
-                                            endImagePrompt: value,
-                                          ),
-                                        ),
-                                      ),
-                                      onImageApprovalChanged:
-                                          (which, approved) => _runMedia(
-                                            () => widget.bloc.add(
-                                              ImageApprovalChanged(
-                                                nodeId: widget.nodeId,
-                                                which: which,
-                                                approved: approved,
-                                              ),
-                                            ),
-                                          ),
                                       onImageGenerate: (which, prompt) =>
                                           _runMedia(
                                             () => widget.bloc.add(
@@ -441,10 +527,148 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                     ),
                                   ),
                                   _StepScroll(
-                                    child: StepHotspots(
+                                    child: StepVoice(
+                                      active:
+                                          !showPremise &&
+                                          stepIndex == 2 &&
+                                          !_previewOpen &&
+                                          !_childOpen,
+                                      generating: state.generating(
+                                        widget.nodeId,
+                                        'voice',
+                                      ),
+                                      generatingLine: state.generating(
+                                        widget.nodeId,
+                                        'text',
+                                      ),
+                                      phase: state.operationPhase == 'saving'
+                                          ? 'saving'
+                                          : node.generationPhase ??
+                                                state.operationPhase,
+                                      onLineChanged: (value) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeFieldChanged(
+                                            nodeId: widget.nodeId,
+                                            ttsText: value,
+                                          ),
+                                        ),
+                                      ),
+                                      onLineGenerate: () => widget.bloc.add(
+                                        NarrationGenerateRequested(
+                                          widget.nodeId,
+                                        ),
+                                      ),
                                       node: node,
                                       busy: busy,
                                       showErrors: _showErrors[2],
+                                      onVoiceGenerate: () => _runMedia(
+                                        () => widget.bloc.add(
+                                          VoiceGenerateRequested(widget.nodeId),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      0,
+                                      16,
+                                      16,
+                                    ),
+                                    child: StepClip(
+                                      active:
+                                          !showPremise &&
+                                          stepIndex == 3 &&
+                                          !_previewOpen &&
+                                          !_childOpen,
+                                      generating: state.generating(
+                                        widget.nodeId,
+                                        'video',
+                                      ),
+                                      phase: state.operationPhase == 'saving'
+                                          ? 'saving'
+                                          : node.generationPhase ??
+                                                state.operationPhase,
+                                      node: node,
+                                      busy: busy,
+                                      showErrors: _showErrors[3],
+                                      videoGateMessage: state.videoGateMessage(
+                                        node,
+                                      ),
+                                      videoDesynced: state.videoDesynced(node),
+                                      uploadProgress:
+                                          state.job == CreateJob.uploading &&
+                                              state.jobNodeId == widget.nodeId
+                                          ? state.uploadProgress
+                                          : null,
+                                      onVideoPromptChanged: (value) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeFieldChanged(
+                                            nodeId: widget.nodeId,
+                                            videoPrompt: value,
+                                          ),
+                                        ),
+                                      ),
+                                      onVideoGenerate: (prompt) => _runMedia(
+                                        () => widget.bloc.add(
+                                          VideoGenerateRequested(
+                                            widget.nodeId,
+                                            prompt: prompt,
+                                          ),
+                                        ),
+                                      ),
+                                      onUploadVideo: widget.pickVideo == null
+                                          ? null
+                                          : () async {
+                                              try {
+                                                final picked =
+                                                    await widget.pickVideo!();
+                                                if (!context.mounted ||
+                                                    picked == null) {
+                                                  return;
+                                                }
+                                                _runMedia(
+                                                  () => widget.bloc.add(
+                                                    VideoUploadRequested(
+                                                      nodeId: widget.nodeId,
+                                                      contentType:
+                                                          picked.contentType,
+                                                      bytes: picked.bytes,
+                                                      takeId: widget
+                                                          .newTakeId(),
+                                                    ),
+                                                  ),
+                                                );
+                                              } on AppFailure catch (error) {
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(error.hint),
+                                                    ),
+                                                  );
+                                                }
+                                              } catch (_) {
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Could not read the selected clip. Try again.',
+                                                          ),
+                                                        ),
+                                                      );
+                                                }
+                                              }
+                                            },
+                                    ),
+                                  ),
+                                  _StepScroll(
+                                    child: StepHotspots(
+                                      node: node,
+                                      busy: busy,
+                                      showErrors: _showErrors[4],
                                       isRoot: isRoot,
                                       focusChoiceId: state.focusChoiceId,
                                       targetTitles: {
@@ -479,9 +703,13 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           ),
                                         ),
                                       ),
-                                      onOpenChild: (targetId) {
+                                      onOpenChild: (targetId) async {
                                         widget.bloc.add(NodeSelected(targetId));
-                                        Navigator.of(context).push(
+                                        // Covered players must not keep
+                                        // playing behind the child screen.
+                                        _stopScriptDictation();
+                                        setState(() => _childOpen = true);
+                                        await Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (_) => CreateNodeScreen(
                                               bloc: widget.bloc,
@@ -491,6 +719,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             ),
                                           ),
                                         );
+                                        if (mounted) {
+                                          setState(() => _childOpen = false);
+                                        }
                                       },
                                       onZoneRemoved: (choiceId) => _edited(
                                         () => widget.bloc.add(
@@ -542,141 +773,32 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           .deleteBlockReason(widget.nodeId),
                                     ),
                                   ),
-                                  _StepScroll(
-                                    child: StepVoice(
-                                      active:
-                                          !showPremise &&
-                                          stepIndex == 3 &&
-                                          !_previewOpen,
-                                      generating: state.generating(
-                                        widget.nodeId,
-                                        'voice',
-                                      ),
-                                      phase: state.operationPhase,
-                                      onLineChanged: (value) => _edited(
-                                        () => widget.bloc.add(
-                                          NodeFieldChanged(
-                                            nodeId: widget.nodeId,
-                                            ttsText: value,
-                                          ),
-                                        ),
-                                      ),
-                                      onLineApprovalChanged: (approved) =>
-                                          _edited(
-                                            () => widget.bloc.add(
-                                              NodeFieldChanged(
-                                                nodeId: widget.nodeId,
-                                                lineApproved: approved,
-                                              ),
-                                            ),
-                                          ),
-                                      onLineGenerate: () => widget.bloc.add(
-                                        NarrationGenerateRequested(
-                                          widget.nodeId,
-                                        ),
-                                      ),
-                                      node: node,
-                                      busy: busy,
-                                      showErrors: _showErrors[3],
-                                      onVoiceGenerate: () => _runMedia(
-                                        () => widget.bloc.add(
-                                          VoiceGenerateRequested(widget.nodeId),
-                                        ),
-                                      ),
-                                      onVoiceApprovalChanged: (approved) =>
-                                          _edited(
-                                            () => widget.bloc.add(
-                                              NodeFieldChanged(
-                                                nodeId: widget.nodeId,
-                                                ttsApproved: approved,
-                                              ),
-                                            ),
-                                          ),
-                                    ),
-                                  ),
-                                  _StepScroll(
-                                    child: StepClip(
-                                      active:
-                                          !showPremise &&
-                                          stepIndex == 4 &&
-                                          !_previewOpen,
-                                      generating: state.generating(
-                                        widget.nodeId,
-                                        'video',
-                                      ),
-                                      phase: state.operationPhase,
-                                      node: node,
-                                      inheritedPrompt: parent?.endImagePrompt,
-                                      busy: busy,
-                                      showErrors: _showErrors[4],
-                                      videoGateMessage: state.videoGateMessage(
-                                        node,
-                                      ),
-                                      videoDesynced: state.videoDesynced(node),
-                                      uploadProgress:
-                                          state.job == CreateJob.uploading &&
-                                              state.jobNodeId == widget.nodeId
-                                          ? state.uploadProgress
-                                          : null,
-                                      onVideoPromptChanged: (value) => _edited(
-                                        () => widget.bloc.add(
-                                          NodeFieldChanged(
-                                            nodeId: widget.nodeId,
-                                            videoPrompt: value,
-                                          ),
-                                        ),
-                                      ),
-                                      onVideoGenerate: (prompt) => _runMedia(
-                                        () => widget.bloc.add(
-                                          VideoGenerateRequested(
-                                            widget.nodeId,
-                                            prompt: prompt,
-                                          ),
-                                        ),
-                                      ),
-                                      onUploadVideo: widget.pickVideo == null
-                                          ? null
-                                          : () async {
-                                              final picked =
-                                                  await widget.pickVideo!();
-                                              if (!context.mounted ||
-                                                  picked == null) {
-                                                return;
-                                              }
-                                              _runMedia(
-                                                () => widget.bloc.add(
-                                                  VideoUploadRequested(
-                                                    nodeId: widget.nodeId,
-                                                    contentType:
-                                                        picked.contentType,
-                                                    bytes: picked.bytes,
-                                                    takeId: widget.newTakeId(),
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                    ),
-                                  ),
                                 ],
                               ),
                       ),
                       if (state.failure != null)
                         Padding(
-                          padding: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           child: FailureText(message: state.failure!),
                         )
                       else if (_banner != null)
-                        WizardBanner(text: _banner!),
-                      WizardFooter(
-                        statusText: _statusText(state),
-                        canGoBack: showPremise
-                            ? false
-                            : stepIndex > 0 || isRoot,
-                        busy: busy,
-                        onBack: _onBack,
-                        onContinue: () => _onContinue(node, isRoot),
-                        isLastStep:
-                            !showPremise && stepIndex == wizardStepCount - 1,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: WizardBanner(text: _banner!),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: WizardFooter(
+                          statusText: _statusText(state),
+                          canGoBack: showPremise
+                              ? false
+                              : stepIndex > 0 || isRoot,
+                          busy: busy,
+                          onBack: _onBack,
+                          onContinue: () => _onContinue(node, isRoot),
+                          isLastStep:
+                              !showPremise && stepIndex == wizardStepCount - 1,
+                        ),
                       ),
                     ],
                   ),
@@ -702,7 +824,7 @@ class _StepScroll extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: child,
     );
   }
@@ -725,6 +847,69 @@ String _targetTitle(
   final title = target?.title.trim() ?? '';
   if (title.isEmpty) return 'Scene $number';
   return 'Scene $number ($title)';
+}
+
+/// Incoming choice into [nodeId] with its index in the linking parent,
+/// for the AppBar choice chip. Prefers the recorded parent's link; falls
+/// back to the first choice anywhere pointing at the node, so legacy
+/// nodes without `startFromNodeId` still show it. Null for the root and
+/// unlinked nodes.
+({DraftChoice choice, int index})? _incomingChoice(
+  DraftNode? parent,
+  List<DraftNode> nodes,
+  String nodeId,
+) {
+  if (parent != null) {
+    for (var i = 0; i < parent.choices.length; i++) {
+      if (parent.choices[i].targetNodeId == nodeId) {
+        return (choice: parent.choices[i], index: i);
+      }
+    }
+  }
+  for (final node in nodes) {
+    for (var i = 0; i < node.choices.length; i++) {
+      if (node.choices[i].targetNodeId == nodeId) {
+        return (choice: node.choices[i], index: i);
+      }
+    }
+  }
+  return null;
+}
+
+/// AppBar label for the choice taken to reach a child: the author's
+/// icon and label in the author's color. Empty labels read `Option A/B`.
+class _IncomingChoiceLabel extends StatelessWidget {
+  const _IncomingChoiceLabel({required this.choice, required this.index});
+
+  final DraftChoice choice;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = choiceIconColor(
+      choice.iconColor,
+      choice.slot == 'B' ? RamificaColors.nodeActive : RamificaColors.hotspot,
+    );
+    final label = choice.label.trim().isNotEmpty
+        ? choice.label.trim()
+        : 'Option ${(choice.slot?.trim().isNotEmpty ?? false) ? choice.slot!.trim() : (index == 0 ? 'A' : 'B')}';
+    return Row(
+      key: const ValueKey('incoming-choice'),
+      mainAxisSize: .min,
+      children: [
+        Icon(choiceIconData(choice.icon, index), size: 12, color: accent),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: RamificaText.meta.copyWith(color: accent),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// True when the root idea was committed: synopsis, else the narrator line.

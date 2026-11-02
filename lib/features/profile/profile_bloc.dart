@@ -2,6 +2,7 @@ import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/auth_exception.dart';
+import 'package:ramifica/data/models/draft_story.dart';
 import 'package:ramifica/data/models/user.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
@@ -15,9 +16,14 @@ import 'package:ramifica/features/profile/profile_state.dart';
 /// and saves go through [users] (`users/{uid}`); follow state goes
 /// through [follows] (`follows/{uid}/authors/{authorId}`).
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
-  ProfileBloc({required this.auth, required this.users, required this.follows})
-    : super(const ProfileState()) {
+  ProfileBloc({
+    required this.auth,
+    required this.users,
+    required this.follows,
+    this.fetchAuthorStories,
+  }) : super(const ProfileState()) {
     on<ProfileRequested>(_onRequested, transformer: restartable());
+    on<ProfileDraftsRequested>(_onDrafts, transformer: restartable());
     on<FollowToggled>(_onToggled);
     on<ProfileSaved>(_onSaved);
     on<SignOutRequested>(_onSignOut);
@@ -26,6 +32,28 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final AuthRepository auth;
   final UserDirectory users;
   final FollowRepository follows;
+
+  /// Lists the signed-in user's stories, newest first. Null in tests or
+  /// contexts without a story source: drafts stay empty.
+  final Future<List<DraftStory>> Function({required String authorId})?
+  fetchAuthorStories;
+
+  Future<void> _onDrafts(
+    ProfileDraftsRequested event,
+    Emitter<ProfileState> emit,
+  ) async {
+    final read = fetchAuthorStories;
+    final uid = auth.auth.currentIdentity?.uid.trim() ?? '';
+    if (read == null || uid.isEmpty) return;
+    try {
+      final drafts = await read(authorId: uid);
+      if (emit.isDone) return;
+      emit(state.copy(drafts: drafts, failure: () => null));
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(state.copy(failure: () => error.hint));
+    }
+  }
 
   Future<void> _onRequested(
     ProfileRequested event,

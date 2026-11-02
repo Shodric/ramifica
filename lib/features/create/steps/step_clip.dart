@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/features/create/clip_preview.dart';
 import 'package:ramifica/app/theme.dart';
-import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 
-/// S5 Clip: video prompt editor, status, desync notice, gate hint under
+/// S4 Clip: video prompt editor, status, desync notice, gate hint under
 /// the disabled control, generate / another-take, and optional mp4/mov
 /// upload with progress. The video Generate button stays outlined so the
 /// gated state keeps its existing contract.
@@ -17,7 +16,6 @@ class StepClip extends StatefulWidget {
   const StepClip({
     super.key,
     required this.node,
-    this.inheritedPrompt,
     required this.busy,
     this.active = true,
     this.generating = false,
@@ -33,8 +31,6 @@ class StepClip extends StatefulWidget {
 
   final DraftNode node;
 
-  /// Parent E prompt behind the inherited S, shown as the fallback hint.
-  final String? inheritedPrompt;
   final bool busy;
   final bool active, generating;
   final String? phase;
@@ -86,169 +82,161 @@ class _StepClipState extends State<StepClip> {
   Widget build(BuildContext context) {
     final node = widget.node;
     final nodeId = node.nodeId;
-    final status = switch (node.videoStatus) {
-      'ready' => StatusPillState.ready,
-      'pending' => StatusPillState.running,
-      'failed' => StatusPillState.failed,
-      _ => StatusPillState.idle,
-    };
-    final generating = widget.generating || node.videoStatus == 'pending';
-    final inherited = widget.inheritedPrompt?.trim() ?? '';
+    final generating =
+        widget.generating ||
+        node.videoStatus == 'pending' ||
+        (node.generationKind == 'video' && node.generationPhase != null);
     final pendingJob =
         node.videoStatus == 'pending' &&
         (node.videoJobId?.startsWith('or_') ?? false);
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        if (node.videoUrl?.isNotEmpty == true) ...[
-          ClipPreview(
-            key: ValueKey('clip-preview-$nodeId'),
-            url: node.videoUrl!,
-            active: widget.active,
-            generating: generating,
-            phase: widget.phase ?? node.generationPhase,
-            width: node.videoWidth,
-            height: node.videoHeight,
-            durationSeconds: node.durationSeconds,
-          ),
-          const SizedBox(height: 12),
-        ] else if (generating)
-          const SizedBox(
-            height: 180,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        if (generating)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  (widget.phase ?? node.generationPhase) == 'saving'
-                      ? 'Saving changes…'
-                      : (widget.phase ?? node.generationPhase) == 'processing'
-                      ? 'Processing video…'
-                      : 'Generating video…',
-                ),
-              ],
-            ),
-          ),
-        if (node.videoStatus == 'failed')
-          const Text(
-            'Video generation failed. Retry Generate or Another take.',
-          ),
-        if (node.videoStatus == 'ready' &&
-            (node.videoWidth != 480 ||
-                node.videoHeight != 854 ||
-                (node.videoSource == 'generated' &&
-                    ((node.durationSeconds ?? 0) - 10).abs() > 1 / 30)))
-          const Text(
-            'Replace this clip before publishing: new clips must be 480 × 854; AI clips must last 10 seconds.',
-          ),
-        Row(
+    // Bounded (the app step area): the player fills the leftover height
+    // with no outer scroll. Unbounded (a scrollable parent): the fixed
+    // player box, page scrolls as before.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.maxHeight.isFinite;
+        Widget player() => ClipPreview(
+          key: ValueKey('clip-preview-$nodeId'),
+          url: node.videoUrl!,
+          active: widget.active,
+          generating: generating,
+          phase: widget.phase ?? node.generationPhase,
+          width: node.videoWidth,
+          height: node.videoHeight,
+          durationSeconds: node.durationSeconds,
+          expand: bounded,
+        );
+        return Column(
+          crossAxisAlignment: .stretch,
+          mainAxisSize: bounded ? .max : .min,
           children: [
-            StatusPill(status: status),
-            if (widget.videoDesynced) ...[
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Out of sync — regenerate to inherit again.',
-                  style: RamificaText.meta.copyWith(
-                    color: RamificaColors.error,
-                  ),
+            if (node.videoUrl?.isNotEmpty == true) ...[
+              bounded ? Expanded(child: player()) : player(),
+              const SizedBox(height: 8),
+            ] else if (generating)
+              bounded
+                  ? const Expanded(
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  : const SizedBox(
+                      height: 180,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+            if (generating)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      (widget.phase ?? node.generationPhase) == 'saving'
+                          ? 'Saving changes…'
+                          : (widget.phase ?? node.generationPhase) ==
+                                'processing'
+                          ? 'Processing video…'
+                          : 'Generating video…',
+                    ),
+                  ],
                 ),
+              ),
+            if (node.videoStatus == 'failed')
+              const Text(
+                'Video generation failed. Retry Generate or Another take.',
+              ),
+            if (node.videoStatus == 'ready' &&
+                (node.durationSeconds == null || node.durationSeconds! <= 0))
+              const Text(
+                'This clip has no measured duration; regenerate or re-upload it before publishing.',
+              ),
+            if (widget.videoGateMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(widget.videoGateMessage!, style: RamificaText.meta),
+            ],
+            const SizedBox(height: 8),
+            TextField(
+              key: ValueKey('video-prompt-$nodeId'),
+              controller: _prompt,
+              focusNode: _focus,
+              enabled: !widget.busy && !pendingJob,
+              maxLength: 2000,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Video prompt',
+                hintText: 'How the clip should move…',
+                filled: true,
+                fillColor: RamificaColors.inputFill,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  borderSide: RamificaColors.inputBorder,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  borderSide: RamificaColors.inputFocusedBorder,
+                ),
+              ),
+              onChanged: widget.onVideoPromptChanged,
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: ValueKey('gen-video-$nodeId'),
+              onPressed: widget.busy || widget.videoGateMessage != null
+                  ? null
+                  : () => widget.onVideoGenerate?.call(
+                      pendingJob ? (node.videoPrompt ?? '') : _prompt.text,
+                    ),
+              child: Text(
+                generating && widget.busy
+                    ? "Generating video…"
+                    : pendingJob
+                    ? 'Continue generation'
+                    : (node.videoUrl == null
+                          ? 'Generate video'
+                          : 'Another take'),
+              ),
+            ),
+            if (widget.onUploadVideo != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                key: ValueKey('upload-video-$nodeId'),
+                onPressed: widget.busy || widget.uploadProgress != null
+                    ? null
+                    : widget.onUploadVideo,
+                child: const Text('Upload clip'),
+              ),
+            ],
+            if (widget.uploadProgress != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: widget.uploadProgress!.clamp(0, 1),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
+                    style: RamificaText.meta,
+                  ),
+                ],
+              ),
+            ],
+            if (widget.showErrors && node.videoStatus != 'ready') ...[
+              const SizedBox(height: 8),
+              const Text(
+                '⚠ Generate the clip',
+                style: TextStyle(color: RamificaColors.error, fontSize: 12),
               ),
             ],
           ],
-        ),
-        if (widget.videoGateMessage != null) ...[
-          const SizedBox(height: 4),
-          Text(widget.videoGateMessage!, style: RamificaText.meta),
-        ],
-        const SizedBox(height: 8),
-        TextField(
-          key: ValueKey('video-prompt-$nodeId'),
-          controller: _prompt,
-          focusNode: _focus,
-          enabled: !widget.busy && !pendingJob,
-          maxLength: 2000,
-          minLines: 2,
-          maxLines: 4,
-          decoration: InputDecoration(
-            labelText: 'Video prompt',
-            hintText: inherited.isNotEmpty
-                ? 'Inherited S: $inherited'
-                : 'How the clip should move…',
-            filled: true,
-            fillColor: RamificaColors.inputFill,
-            enabledBorder: const OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: RamificaColors.inputBorder,
-            ),
-            focusedBorder: const OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: RamificaColors.inputFocusedBorder,
-            ),
-          ),
-          onChanged: widget.onVideoPromptChanged,
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton(
-          key: ValueKey('gen-video-$nodeId'),
-          onPressed: widget.busy || widget.videoGateMessage != null
-              ? null
-              : () => widget.onVideoGenerate?.call(
-                  pendingJob ? (node.videoPrompt ?? '') : _prompt.text,
-                ),
-          child: Text(
-            generating && widget.busy
-                ? "Generating video…"
-                : pendingJob
-                ? 'Continue generation'
-                : (node.videoUrl == null ? 'Generate video' : 'Another take'),
-          ),
-        ),
-        if (widget.onUploadVideo != null) ...[
-          const SizedBox(height: 8),
-          OutlinedButton(
-            key: ValueKey('upload-video-$nodeId'),
-            onPressed: widget.busy || widget.uploadProgress != null
-                ? null
-                : widget.onUploadVideo,
-            child: const Text('Upload clip'),
-          ),
-        ],
-        if (widget.uploadProgress != null) ...[
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: LinearProgressIndicator(
-                  value: widget.uploadProgress!.clamp(0, 1),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
-                style: RamificaText.meta,
-              ),
-            ],
-          ),
-        ],
-        if (widget.showErrors && node.videoStatus != 'ready') ...[
-          const SizedBox(height: 4),
-          const Text(
-            '⚠ Generate the clip',
-            style: TextStyle(color: RamificaColors.error, fontSize: 12),
-          ),
-        ],
-      ],
+        );
+      },
     );
   }
 }

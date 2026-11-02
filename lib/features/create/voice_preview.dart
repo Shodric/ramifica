@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:video_player/video_player.dart';
 
 @immutable
@@ -68,7 +69,7 @@ class VideoVoicePlayback implements VoicePlayback {
     controller.addListener(_sync);
     await previous?.dispose();
     try {
-      await controller.initialize();
+      await controller.initialize().timeout(const Duration(seconds: 20));
       if (_disposed || _controller != controller) return;
       _sync();
     } catch (error) {
@@ -161,7 +162,11 @@ class _VoicePreviewState extends State<VoicePreview> {
     if (old.audioUrl != widget.audioUrl || old.nodeId != widget.nodeId) {
       _drag = null;
       unawaited(_replace());
-    } else if (!widget.active || widget.busy) {
+    } else if (!widget.active) {
+      // Leaving P3 (step change, preview, child node): pause and release
+      // the controller so narration never plays behind video or preview.
+      unawaited(_player.stop());
+    } else if (widget.busy) {
       unawaited(_player.pause());
     } else if (!old.active) {
       unawaited(_player.prepare(widget.audioUrl));
@@ -184,81 +189,98 @@ class _VoicePreviewState extends State<VoicePreview> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      ValueListenableBuilder<VoicePlaybackState>(
-        valueListenable: _player.state,
-        builder: (context, value, _) {
-          final duration = value.duration > Duration.zero
-              ? value.duration
-              : Duration(
-                  milliseconds: ((widget.durationSeconds ?? 0) * 1000).round(),
-                );
-          final max = duration.inMilliseconds.toDouble();
-          final enabled = widget.active && !widget.busy && value.ready;
-          return Column(
-            key: ValueKey('voice-preview-${widget.nodeId}'),
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (value.error != null)
+  Widget build(BuildContext context) => !widget.active
+      ? const SizedBox.shrink()
+      : ValueListenableBuilder<VoicePlaybackState>(
+          valueListenable: _player.state,
+          builder: (context, value, _) {
+            final duration = value.duration > Duration.zero
+                ? value.duration
+                : Duration(
+                    milliseconds: ((widget.durationSeconds ?? 0) * 1000)
+                        .round(),
+                  );
+            final max = duration.inMilliseconds.toDouble();
+            final enabled = widget.active && !widget.busy && value.ready;
+            return Column(
+              key: ValueKey('voice-preview-${widget.nodeId}'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (value.error != null)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          value.error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => unawaited(_replace()),
+                        child: const Text('Retry audio'),
+                      ),
+                    ],
+                  ),
                 Row(
                   children: [
+                    IconButton(
+                      key: ValueKey('voice-play-${widget.nodeId}'),
+                      tooltip: value.playing ? 'Pause audio' : 'Play audio',
+                      onPressed: enabled
+                          ? () => unawaited(
+                              value.playing
+                                  ? _player.pause()
+                                  : _player.play(widget.audioUrl),
+                            )
+                          : null,
+                      icon: Icon(
+                        value.playing ? Icons.pause : Icons.play_arrow,
+                      ),
+                    ),
+                    Text(mediaTime(value.position)),
                     Expanded(
-                      child: Text(
-                        value.error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          // White at 25%: the remaining path stays visible
+                          // on the dark surface next to the played portion.
+                          inactiveTrackColor: RamificaColors.textPrimary
+                              .withValues(alpha: 0.25),
+                        ),
+                        child: Slider(
+                          key: ValueKey('voice-seek-${widget.nodeId}'),
+                          value:
+                              (_drag ??
+                                      value.position.inMilliseconds.toDouble())
+                                  .clamp(0, max > 0 ? max : 1),
+                          max: max > 0 ? max : 1,
+                          onChanged: enabled && max > 0
+                              ? (v) => setState(() => _drag = v)
+                              : null,
+                          onChangeEnd: enabled
+                              ? (v) {
+                                  unawaited(
+                                    _player.seek(
+                                      Duration(milliseconds: v.round()),
+                                    ),
+                                  );
+                                  setState(() => _drag = null);
+                                }
+                              : null,
                         ),
                       ),
                     ),
-                    TextButton(
-                      onPressed: () => unawaited(_replace()),
-                      child: const Text('Retry audio'),
-                    ),
+                    Text(mediaTime(duration)),
                   ],
                 ),
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: value.playing ? 'Pause audio' : 'Play audio',
-                    onPressed: enabled
-                        ? () => unawaited(
-                            value.playing
-                                ? _player.pause()
-                                : _player.play(widget.audioUrl),
-                          )
-                        : null,
-                    icon: Icon(value.playing ? Icons.pause : Icons.play_arrow),
-                  ),
-                  Text(mediaTime(value.position)),
-                  Expanded(
-                    child: Slider(
-                      key: ValueKey('voice-seek-${widget.nodeId}'),
-                      value: (_drag ?? value.position.inMilliseconds.toDouble())
-                          .clamp(0, max > 0 ? max : 1),
-                      max: max > 0 ? max : 1,
-                      onChanged: enabled && max > 0
-                          ? (v) => setState(() => _drag = v)
-                          : null,
-                      onChangeEnd: enabled
-                          ? (v) {
-                              unawaited(
-                                _player.seek(Duration(milliseconds: v.round())),
-                              );
-                              setState(() => _drag = null);
-                            }
-                          : null,
-                    ),
-                  ),
-                  Text(mediaTime(duration)),
+                if (value.loading || value.buffering) ...[
+                  const LinearProgressIndicator(),
+                  Text(value.loading ? 'Loading audio…' : 'Buffering audio…'),
                 ],
-              ),
-              if (value.loading || value.buffering) ...[
-                const LinearProgressIndicator(),
-                Text(value.loading ? 'Loading audio…' : 'Buffering audio…'),
               ],
-            ],
-          );
-        },
-      );
+            );
+          },
+        );
 }
