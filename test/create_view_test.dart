@@ -505,7 +505,7 @@ void main() {
       });
     });
 
-    testWidgets('typing stays local until Save is pressed', (tester) async {
+    testWidgets('typing stays local until Continue is pressed', (tester) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
 
@@ -522,7 +522,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
       expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
-      await tester.tap(find.byKey(const ValueKey('wizard-save')));
+
+      // Complete the step through the public event, like navigation does.
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsText: 'A line'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pumpAndSettle();
 
       final save = calls.singleWhere((call) => call.name == 'saveNode');
@@ -530,24 +534,28 @@ void main() {
         (key, value) => MapEntry(key.toString(), value),
       );
       expect(sent['title'], 'Typed root');
+      expect(sent['ttsText'], 'A line');
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+      // Advanced to Scenes.
+      expect(find.byKey(const ValueKey('prompt-start-node_1')), findsOneWidget);
     });
 
-    testWidgets('the save action spins while saving', (tester) async {
+    testWidgets('continue spins while saving', (tester) async {
       final gate = Completer<void>();
-      await _pumpDraft(tester, null, null, () => gate.future);
+      final bloc = await _pumpDraft(tester, null, null, () => gate.future);
       await _openNode(tester, 'node_1');
 
       await tester.enterText(
         find.byKey(const ValueKey('title-node_1')),
         'Typed root',
       );
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsText: 'A line'));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('wizard-save')));
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pump();
 
       expect(find.byKey(const ValueKey('wizard-saving')), findsOneWidget);
-      expect(find.byKey(const ValueKey('wizard-save')), findsNothing);
-      // The footer label swaps for a spinner while busy.
+      // The step label swaps for a spinner while busy.
       expect(find.text('Continue'), findsNothing);
       expect(
         find.descendant(
@@ -559,9 +567,142 @@ void main() {
 
       gate.complete();
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('wizard-save')), findsOneWidget);
       expect(find.byKey(const ValueKey('wizard-saving')), findsNothing);
       expect(find.text('Continue'), findsOneWidget);
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+    });
+
+    testWidgets('the scene direction persists on Continue and reseeds', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_1')),
+        'A haunted terminal',
+      );
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', ttsText: 'A line'));
+      await tester.pumpAndSettle();
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      expect(
+        (save.data['node'] as Map)['sceneDirection'],
+        'A haunted terminal',
+      );
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CreateNodeScreen), findsNothing);
+
+      await _openNode(tester, 'node_1');
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('script-direction-node_1')),
+            )
+            .controller
+            ?.text,
+        'A haunted terminal',
+      );
+    });
+
+    testWidgets('leaving with edits asks: stay keeps the screen', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('title-node_1')),
+        'Typed root',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unsaved changes'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('leave-stay')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
+      expect(bloc.state.openNode!.title, 'Typed root');
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+      expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
+    });
+
+    testWidgets('leaving with edits asks: discard drops them and pops', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('title-node_1')),
+        'Typed root',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('leave-discard')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CreateNodeScreen), findsNothing);
+      expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+      expect(bloc.state.openNode?.title, 'Root');
+    });
+
+    testWidgets('leaving with edits asks: save exits persisted', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('title-node_1')),
+        'Typed root',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('leave-save')));
+      await tester.pumpAndSettle();
+
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      expect((save.data['node'] as Map)['title'], 'Typed root');
+      expect(find.byType(CreateNodeScreen), findsNothing);
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+    });
+
+    testWidgets('system back with edits asks instead of popping', (
+      tester,
+    ) async {
+      await _pumpDraft(tester, []);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('title-node_1')),
+        'Typed root',
+      );
+      await tester.pump();
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unsaved changes'), findsOneWidget);
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
     });
 
     testWidgets('the scene title counter only shows at the limit', (
@@ -646,7 +787,7 @@ void main() {
       expect(find.byKey(const ValueKey('incoming-choice')), findsNothing);
     });
 
-    testWidgets('step changes and leaving keep node edits local', (
+    testWidgets('step changes keep edits local, Continue persists them', (
       tester,
     ) async {
       final calls = <_Call>[];
@@ -666,15 +807,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('wizard-step-1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.arrow_back));
-      await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 5));
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
       expect(bloc.state.openNode!.startImagePrompt, 'Keep this local');
-      await _openNode(tester, 'node_1');
-      await tester.tap(find.byKey(const ValueKey('wizard-save')));
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pumpAndSettle();
       expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
       expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
@@ -741,7 +877,7 @@ void main() {
       expect(find.byKey(const ValueKey('approve-end-node_1')), findsNothing);
 
       // Back to the canvas, then tapping the leaf opens its own screen.
-      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
       await tester.pumpAndSettle();
       await _openNode(tester, 'node_2');
       expect(bloc.state.openNodeId, 'node_2');
@@ -762,7 +898,7 @@ void main() {
       await _openNode(tester, 'node_1');
       expect(badge().data, 'root');
 
-      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.tap(find.byKey(const ValueKey('wizard-leave')));
       await tester.pumpAndSettle();
       await _openNode(tester, 'node_2');
       expect(badge().data, '1a · Final');
@@ -1434,29 +1570,31 @@ void main() {
       expect(find.byTooltip('Play audio'), findsOneWidget);
     });
 
-    testWidgets(
-      'zone edits stay local until the scene Save button is pressed',
-      (tester) async {
-        final calls = <_Call>[];
-        await _pumpDraft(tester, calls);
+    testWidgets('zone edits stay local until Finish is pressed', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      await _pumpDraft(tester, calls);
 
-        await _openNode(tester, 'node_1', step: 4);
+      await _openNode(tester, 'node_1', step: 4);
 
-        expect(find.byKey(const ValueKey('save-zones-node_1')), findsNothing);
-        calls.clear();
-        await tester.enterText(
-          find.byKey(const ValueKey('zone-label-c1')),
-          'Edited option',
-        );
-        await tester.pump();
-        await tester.pump(const Duration(seconds: 5));
-        await tester.pumpAndSettle();
-        expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
-        await tester.tap(find.byKey(const ValueKey('wizard-save')));
-        await tester.pumpAndSettle();
-        expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
-      },
-    );
+      expect(find.byKey(const ValueKey('save-zones-node_1')), findsNothing);
+      calls.clear();
+      await tester.enterText(
+        find.byKey(const ValueKey('zone-label-c1')),
+        'Edited option',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
+      final finish = find.byKey(const ValueKey('wizard-continue'));
+      await tester.ensureVisible(finish);
+      await tester.pumpAndSettle();
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
+    });
 
     testWidgets('the root shows no delete button', (tester) async {
       await _pumpDraft(tester);

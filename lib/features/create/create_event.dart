@@ -72,6 +72,7 @@ final class NodeFieldChanged extends CreateEvent {
     this.startImagePrompt,
     this.videoPrompt,
     this.endingName,
+    this.sceneDirection,
   });
 
   final String nodeId;
@@ -104,6 +105,17 @@ final class NodeFieldChanged extends CreateEvent {
 
   /// Ending name (endings only), or null to leave it. Blank clears.
   final String? endingName;
+
+  /// Scene direction (proposal input), or null to leave it. Blank clears.
+  final String? sceneDirection;
+}
+
+/// Drops unsaved edits for [nodeId] and the story, restoring the stored
+/// docs. No writes happen; used by the leave confirmation.
+final class EditsDiscarded extends CreateEvent {
+  const EditsDiscarded({required this.nodeId});
+
+  final String nodeId;
 }
 
 /// Persists the selected node, or the open node when no id is supplied.

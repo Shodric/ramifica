@@ -26,16 +26,20 @@ import 'package:ramifica/features/create/steps/step_voice.dart';
 import 'package:ramifica/features/create/steps/wizard_gates.dart';
 import 'package:uuid/uuid.dart';
 
-/// Fullscreen node editor as a stepped wizard: Idea (root only), Script,
+/// Leave-confirmation answer: stay, drop edits, or save before exit.
+enum _LeaveChoice { stay, discard, save }
+
+/// Fullscreen node editor as a stepped wizard: Idea (root only), Info,
 /// Scenes, Options, Voice, Clip. One step shows at a time ([IndexedStack]
-/// keeps controllers alive). Continue runs the step predicate and reports
-/// the first missing piece inline, never as a toast. On Script, Continue
-/// first auto-proposes from the direction and applies it. Back and
-/// revisits are always free; jumping forward stops at the first
-/// incomplete step.
+/// keeps controllers alive). Continue saves the pending edits, runs the
+/// step predicate, and reports the first missing piece inline, never as
+/// a toast. On Info, Continue first auto-proposes from the direction and
+/// applies it. Revisits are always free; jumping forward stops at the
+/// first incomplete step.
 ///
-/// Manual edits stay in the bloc until Save or a generation request. Typing,
-/// changing steps, and leaving the editor do not write to the repository.
+/// Manual edits stay in the bloc until Continue, Finish, or a generation
+/// request persists them. Typing, changing steps, and leaving the editor
+/// do not write to the repository; leaving with edits asks first.
 class CreateNodeScreen extends StatefulWidget {
   const CreateNodeScreen({
     super.key,
@@ -66,13 +70,13 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   Timer? _generationExpiry;
   String? _expiryAt;
 
-  /// Idea sits before Script. The root stepper leads with that chip.
+  /// Idea sits before Info. The root stepper leads with that chip.
   /// Continue commits it and leaves. Child nodes hide it.
   var _premise = true;
   final List<bool> _showErrors = List.filled(wizardStepCount, false);
   String? _banner;
 
-  /// A Script Continue is mid propose+apply. Disables the footer while
+  /// An Info Continue is mid propose+apply. Disables the footer while
   /// the proposal round-trips.
   var _scriptProposing = false;
 
@@ -108,19 +112,73 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     }
   }
 
-  void _save() {
-    if (_premise && widget.bloc.state.isRoot(widget.nodeId)) {
-      _premiseKey.currentState?.commit();
-    } else {
-      widget.bloc.add(NodeSaved(nodeId: widget.nodeId));
-    }
-  }
-
   // Generation handlers flush the latest edits inside the bloc write queue.
   void _runMedia(VoidCallback dispatch) => dispatch();
 
+  /// Persists pending edits, if any. False keeps the step: the failure
+  /// surfaces through the shared failure text.
+  Future<bool> _flushEdits(String nodeId) async {
+    if (!widget.bloc.hasUnsavedNodeEdits(nodeId) &&
+        !widget.bloc.hasUnsavedStoryEdits) {
+      return true;
+    }
+    return widget.bloc.flushNode(nodeId);
+  }
+
+  /// Leaves to the canvas, confirming when edits are unsaved.
+  Future<void> _maybeLeave() async {
+    final bloc = widget.bloc;
+    final dirty =
+        bloc.hasUnsavedStoryEdits || bloc.hasUnsavedNodeEdits(widget.nodeId);
+    if (!dirty) {
+      if (mounted) Navigator.of(context).maybePop();
+      return;
+    }
+    final choice = await showDialog<_LeaveChoice>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: const Text('Save your edits before leaving this scene?'),
+        actions: [
+          TextButton(
+            key: const ValueKey('leave-stay'),
+            onPressed: () => Navigator.pop(dialogContext, _LeaveChoice.stay),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            key: const ValueKey('leave-discard'),
+            onPressed: () => Navigator.pop(dialogContext, _LeaveChoice.discard),
+            child: Text(
+              'Discard',
+              style: TextStyle(color: RamificaColors.danger),
+            ),
+          ),
+          FilledButton(
+            key: const ValueKey('leave-save'),
+            onPressed: () => Navigator.pop(dialogContext, _LeaveChoice.save),
+            child: const Text('Save & exit'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case null:
+      case _LeaveChoice.stay:
+        return;
+      case _LeaveChoice.discard:
+        bloc.add(EditsDiscarded(nodeId: widget.nodeId));
+        Navigator.of(context).maybePop();
+      case _LeaveChoice.save:
+        _stopScriptDictation();
+        if (await bloc.flushNode(widget.nodeId) && mounted) {
+          Navigator.of(context).maybePop();
+        }
+    }
+  }
+
   /// Next visible logical step after [_stepIndex], or null on the last one.
-  /// Children skip Scenes, so Script advances straight to Voice.
+  /// Children skip Scenes, so Info advances straight to Voice.
   int? _nextStep(bool isRoot) {
     final steps = wizardSteps(isRoot: isRoot);
     final at = steps.indexOf(_stepIndex);
@@ -159,7 +217,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     });
   }
 
-  void _onContinue(DraftNode node, bool isRoot) {
+  Future<void> _onContinue(DraftNode node, bool isRoot) async {
     if (_premise && isRoot) {
       _premiseKey.currentState?.commit();
       _leavePremise();
@@ -182,19 +240,21 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       return;
     }
     _stopScriptDictation();
+    if (!await _flushEdits(node.nodeId)) return;
+    if (!mounted) return;
     final next = _nextStep(isRoot);
     if (next != null) {
       setState(() {
         _stepIndex = next;
         _banner = null;
       });
-    } else if (mounted) {
+    } else {
       // Last step complete: back to the canvas.
       Navigator.of(context).maybePop();
     }
   }
 
-  /// Script Continue: complete steps advance without proposing; otherwise
+  /// Info Continue: complete steps advance without proposing; otherwise
   /// the direction is proposed and auto-applied, then the gate re-checks
   /// on the fresh node. Propose failures surface as inline step hints;
   /// apply failures do too, via [StepScriptState.showError].
@@ -203,6 +263,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     final missing = firstMissingForStep(step: 0, node: node, isRoot: isRoot);
     if (missing == null) {
       _stopScriptDictation();
+      if (!mounted || _stepIndex != 0) return;
+      if (!await _flushEdits(node.nodeId)) return;
       if (!mounted || _stepIndex != 0) return;
       final next = _nextStep(isRoot);
       setState(() {
@@ -260,6 +322,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         return;
       }
       _stopScriptDictation();
+      // Catches edits typed while the proposal was in flight.
+      if (!await _flushEdits(node.nodeId)) return;
+      if (!mounted || _stepIndex != 0) return;
       final next = _nextStep(isRoot);
       setState(() {
         if (next != null) _stepIndex = next;
@@ -353,8 +418,14 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
             onContinue: () => _onContinue(node, isRoot),
             isLastStep: !showPremise && stepIndex == wizardStepCount - 1,
           );
+          final dirty =
+              widget.bloc.hasUnsavedStoryEdits ||
+              widget.bloc.hasUnsavedNodeEdits(widget.nodeId);
           return PopScope(
-            canPop: true,
+            canPop: !dirty,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop) _maybeLeave();
+            },
             child: Scaffold(
               backgroundColor: RamificaColors.surface,
               appBar: AppBar(
@@ -362,9 +433,11 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                 surfaceTintColor: Colors.transparent,
                 elevation: 0,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back, size: 24),
+                  key: const ValueKey('wizard-leave'),
+                  tooltip: 'Back to scenes',
+                  icon: const Icon(Icons.chevron_left, size: 28),
                   color: RamificaColors.textPrimary,
-                  onPressed: () => Navigator.of(context).maybePop(),
+                  onPressed: _maybeLeave,
                 ),
                 titleSpacing: 0,
                 title: Column(
@@ -421,6 +494,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                   ],
                 ),
                 actions: [
+                  // Saving indicator only: Continue and Finish persist.
                   if (state.job == CreateJob.saving)
                     const Padding(
                       key: ValueKey('wizard-saving'),
@@ -430,14 +504,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                    )
-                  else
-                    IconButton(
-                      key: const ValueKey('wizard-save'),
-                      tooltip: 'Save',
-                      onPressed: busy ? null : _save,
-                      icon: const Icon(Icons.save_outlined, size: 20),
-                      color: RamificaColors.textPrimary,
                     ),
                   if (node.videoStatus == 'ready' &&
                       (node.videoUrl ?? '').isNotEmpty)
@@ -566,6 +632,14 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           NodeFieldChanged(
                                             nodeId: widget.nodeId,
                                             endingName: value,
+                                          ),
+                                        ),
+                                      ),
+                                      onDirectionChanged: (value) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeFieldChanged(
+                                            nodeId: widget.nodeId,
+                                            sceneDirection: value,
                                           ),
                                         ),
                                       ),

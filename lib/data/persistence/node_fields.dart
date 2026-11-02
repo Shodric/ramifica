@@ -22,6 +22,7 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
     'choices': [for (final choice in node.choices) choice.toJson()],
     'startImagePrompt': clean(node.startImagePrompt),
     'videoPrompt': clean(node.videoPrompt),
+    'sceneDirection': clean(node.sceneDirection),
   };
   if (fields['ttsText'] != storedText) {
     fields['ttsStatus'] = 'idle';

@@ -2,19 +2,13 @@ import 'package:ramifica/data/models/draft_node.dart';
 
 /// Wizard step predicates: the single definition of "complete", used by the
 /// step footer (Continue) and the stepper chips. Steps after Idea:
-/// Script, Scenes, Voice, Clip, Options. Idea is a root-only chip.
+/// Info, Scenes, Voice, Clip, Options. Idea is a root-only chip.
 /// Options sits last so zones land on the finished clip's last frame.
 ///
 /// Step ids are logical and stable: Scenes is always 1, even though
 /// children skip it (see [wizardSteps]). Chips keep logical keys so
 /// Voice is `wizard-step-2` on every node.
-const wizardStepTitles = <String>[
-  'Script',
-  'Scenes',
-  'Voice',
-  'Clip',
-  'Options',
-];
+const wizardStepTitles = <String>['Info', 'Scenes', 'Voice', 'Clip', 'Options'];
 
 const wizardStepCount = 5;
 
@@ -31,7 +25,7 @@ int wizardDisplayIndex({required int step, required bool isRoot}) =>
 /// The first missing piece of [step] for [node], in UI-facing words, or
 /// null when the step is complete.
 ///
-/// * Script needs a title plus the narrator line; generated media is
+/// * Info needs a title plus the narrator line; generated media is
 ///   accepted as-is (regen replaces it).
 /// * Scenes needs the root S ready. Children skip the step entirely
 ///   and inherit S from the parent clip's last frame; the Clip gate

@@ -423,7 +423,7 @@ void validateAuthorNode(Json node) {
   text('title', 40);
   text('endingName', 40);
   text('ttsText', 1000);
-  for (final key in ['startImagePrompt', 'videoPrompt']) {
+  for (final key in ['startImagePrompt', 'videoPrompt', 'sceneDirection']) {
     text(key, 2000);
   }
   if (!['visible', 'secret'].contains(node['visibility'])) {

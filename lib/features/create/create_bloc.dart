@@ -76,6 +76,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<NodeFieldChanged>(_onFieldChanged);
     on<NodeSaved>(_serialized(_onNodeSaved));
     on<StorySaved>(_serialized(_onStorySaved));
+    on<EditsDiscarded>(_serialized(_onEditsDiscarded));
     on<CoverGenerateRequested>(
       _serialized(_onCoverGenerate),
       transformer: droppable(),
@@ -971,6 +972,44 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     );
   }
 
+  /// Restores the stored node + story docs over unsaved edits. Fetch
+  /// failures leave the local edits in place: nothing is lost.
+  Future<void> _onEditsDiscarded(
+    EditsDiscarded event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null || isClosed) return;
+    _editGeneration[event.nodeId] = _savedGeneration[event.nodeId] ?? 0;
+    _dirtyFields.remove(event.nodeId);
+    _storyEditGeneration = _storySavedGeneration;
+    try {
+      final fresh = await repository.fetchNode(story.storyId, event.nodeId);
+      final draft = await repository.fetchDraft(story.storyId);
+      if (isClosed || emit.isDone) return;
+      emit(
+        state.copy(
+          nodes: fresh == null
+              ? null
+              : [
+                  for (final node in state.nodes)
+                    if (node.nodeId == fresh.nodeId) fresh else node,
+                ],
+          story: draft == null ? null : () => draft,
+          stories: draft == null
+              ? null
+              : [
+                  for (final entry in state.stories)
+                    if (entry.storyId == draft.storyId) draft else entry,
+                ],
+          failure: () => null,
+        ),
+      );
+    } on AppFailure {
+      // Offline or gone: the unsaved edits stay put.
+    }
+  }
+
   Future<void> _onNodeSaved(NodeSaved event, Emitter<CreateState> emit) async {
     try {
       final saved = await _saveOpenNodeAwait(emit, nodeId: event.nodeId);
@@ -1830,6 +1869,10 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.endingName != null) {
     final cleaned = event.endingName!.trim();
     next = next.copy(endingName: () => cleaned.isEmpty ? null : cleaned);
+  }
+  if (event.sceneDirection != null) {
+    final cleaned = event.sceneDirection!.trim();
+    next = next.copy(sceneDirection: () => cleaned.isEmpty ? null : cleaned);
   }
   final labels = event.choiceLabels;
   if (labels != null && labels.isNotEmpty) {

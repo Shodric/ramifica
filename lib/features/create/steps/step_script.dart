@@ -36,6 +36,7 @@ class StepScript extends StatefulWidget {
     this.propose,
     this.onTitleChanged,
     this.onEndingNameChanged,
+    this.onDirectionChanged,
     this.active = true,
     this.continueAction,
   });
@@ -74,6 +75,10 @@ class StepScript extends StatefulWidget {
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onEndingNameChanged;
 
+  /// Direction edits, persisted like any other node field. Dictated
+  /// finals report here too; the listening placeholder never does.
+  final ValueChanged<String>? onDirectionChanged;
+
   @override
   StepScriptState createState() => StepScriptState();
 }
@@ -86,7 +91,9 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     text: widget.node.endingName ?? '',
   );
   String _beforeDictation = '';
-  final TextEditingController _direction = TextEditingController();
+  late final TextEditingController _direction = TextEditingController(
+    text: widget.node.sceneDirection ?? '',
+  );
   late final FocusNode _directionFocus = FocusNode();
   late final DictationController _dictation = DictationController(
     seedRecorder: widget.recorder,
@@ -225,11 +232,14 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       _direction.text = text;
     };
     // Finals always win, even over a focused field.
-    _dictation.onFinal = (text) =>
-        _direction.text = text.trim().isEmpty ? _beforeDictation : text;
+    _dictation.onFinal = (text) {
+      _direction.text = text.trim().isEmpty ? _beforeDictation : text;
+      _notifyDirection();
+    };
     _dictation.onEmptyTake = () {
       if (_direction.text == listeningPlaceholder) {
         _direction.text = _beforeDictation;
+        _notifyDirection();
       }
     };
     _dictation.onCap = () {
@@ -264,13 +274,24 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       _proposalGen++;
       _proposing = false;
       _dictation.cancel();
-      _direction.clear();
+      _direction.text = widget.node.sceneDirection ?? '';
       _title.text = widget.node.title;
       _endingName.text = widget.node.endingName ?? '';
     } else {
       _setIfDifferent(_title, widget.node.title);
       _setIfDifferent(_endingName, widget.node.endingName ?? '');
+      // Never clobber typing, live captions, or the placeholder.
+      if (!_directionFocus.hasFocus && !_dictation.recording) {
+        _setIfDifferent(_direction, widget.node.sceneDirection ?? '');
+      }
     }
+  }
+
+  /// Reports the field to the node, except the listening placeholder.
+  void _notifyDirection() {
+    final text = _direction.text;
+    if (text == listeningPlaceholder) return;
+    widget.onDirectionChanged?.call(text);
   }
 
   @override
@@ -313,12 +334,28 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       expands: true,
       maxLines: null,
       minLines: null,
+      maxLength: 2000,
+      buildCounter:
+          (
+            _, {
+            required int currentLength,
+            required bool isFocused,
+            required int? maxLength,
+          }) => currentLength >= (maxLength ?? 2000)
+          ? Text(
+              '$currentLength/${maxLength ?? 2000}',
+              style: RamificaText.meta,
+            )
+          : null,
       textAlignVertical: .top,
       decoration: _scriptInputDecoration(
         hintText: 'Dictate or type what Spark should propose…',
       ),
-      // Invalidates an in-flight proposal; the stale answer is discarded.
-      onChanged: (_) => _proposalGen++,
+      onChanged: (_) {
+        // Invalidates an in-flight proposal; the stale answer is discarded.
+        _proposalGen++;
+        _notifyDirection();
+      },
     );
     // Bounded (the app step area): the direction field fills the leftover
     // height with no outer scroll. Unbounded (a scrollable parent): a

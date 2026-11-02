@@ -165,6 +165,7 @@ class DraftNode {
     this.generationExpiresAt,
     this.mediaError,
     this.videoPrompt,
+    this.sceneDirection,
     this.startImageSourceUrl,
     this.startImageStatus = 'idle',
     this.startHash,
@@ -216,6 +217,7 @@ class DraftNode {
       generationExpiresAt: _optionalString(data['generationExpiresAt']),
       mediaError: _optionalString(data['mediaError']),
       videoPrompt: _optionalString(data['videoPrompt']),
+      sceneDirection: _optionalString(data['sceneDirection']),
       startImageSourceUrl: _optionalString(data['startImageSourceUrl']),
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
       startHash: _optionalString(data['startHash']),
@@ -282,6 +284,7 @@ class DraftNode {
 
   final String? mediaError;
   final String? videoPrompt;
+  final String? sceneDirection;
 
   /// S frame (root only): the source URL, generation status, and content
   /// hash. Non-root nodes inherit S from their parent clip's extracted
@@ -368,6 +371,7 @@ class DraftNode {
       'generationExpiresAt': generationExpiresAt,
       'mediaError': mediaError,
       'videoPrompt': videoPrompt,
+      'sceneDirection': sceneDirection,
       'startImageSourceUrl': startImageSourceUrl,
       'startImageStatus': startImageStatus,
       'startHash': startHash,
@@ -412,6 +416,7 @@ class DraftNode {
     String? Function()? generationExpiresAt,
     String? Function()? mediaError,
     String? Function()? videoPrompt,
+    String? Function()? sceneDirection,
     String? Function()? startImageSourceUrl,
     String? startImageStatus,
     String? Function()? startHash,
@@ -477,6 +482,9 @@ class DraftNode {
           : generationExpiresAt(),
       mediaError: mediaError == null ? this.mediaError : mediaError(),
       videoPrompt: videoPrompt == null ? this.videoPrompt : videoPrompt(),
+      sceneDirection: sceneDirection == null
+          ? this.sceneDirection
+          : sceneDirection(),
       startImageSourceUrl: startImageSourceUrl == null
           ? this.startImageSourceUrl
           : startImageSourceUrl(),
@@ -534,6 +542,7 @@ class DraftNode {
         other.generationExpiresAt == generationExpiresAt &&
         other.mediaError == mediaError &&
         other.videoPrompt == videoPrompt &&
+        other.sceneDirection == sceneDirection &&
         other.startImageSourceUrl == startImageSourceUrl &&
         other.startImageStatus == startImageStatus &&
         other.startHash == startHash &&
@@ -579,6 +588,7 @@ class DraftNode {
     generationExpiresAt,
     mediaError,
     videoPrompt,
+    sceneDirection,
     startImageSourceUrl,
     startImageStatus,
     startHash,

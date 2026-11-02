@@ -285,6 +285,62 @@ void main() {
       expect(sent['title'], 'Typed');
     });
 
+    test('direction edits persist through the explicit save', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const NodeFieldChanged(nodeId: 'node_1', sceneDirection: 'A storm'),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.openNode?.sceneDirection == 'A storm',
+      );
+      expect(calls, isEmpty);
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+
+      bloc.add(const NodeSaved());
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            state.openNode?.sceneDirection == 'A storm',
+      );
+      final save = calls.singleWhere((call) => call.name == 'saveNode');
+      final sent = (save.data['node'] as Map).map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      expect(sent['sceneDirection'], 'A storm');
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', sceneDirection: '  '));
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.openNode?.sceneDirection == null &&
+            bloc.hasUnsavedNodeEdits('node_1'),
+      );
+    });
+
+    test('EditsDiscarded restores the stored node and clears dirt', () async {
+      final bloc = CreateBloc(repository: _repo(null));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      final storedTitle = bloc.state.openNode!.title;
+
+      bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
+      await bloc.stream.firstWhere((state) => state.openNode?.title == 'Typed');
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+
+      bloc.add(const EditsDiscarded(nodeId: 'node_1'));
+      final clean = await bloc.stream.firstWhere(
+        (state) => !bloc.hasUnsavedNodeEdits('node_1'),
+      );
+      expect(clean.openNode?.title, storedTitle);
+    });
+
     test('generation fills empty fields without clobbering edits', () async {
       final bloc = CreateBloc(repository: _repo(null));
       addTearDown(bloc.close);
