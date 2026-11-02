@@ -141,21 +141,22 @@ class DraftNode {
     this.videoStatus = 'idle',
     this.videoSource,
     this.videoFromHash,
-    this.videoToHash,
     this.videoJobId,
     this.requestId,
     this.videoWidth,
     this.videoHeight,
     this.durationSeconds,
     this.videoFrameLastUrl,
+    this.videoFrameLastHash,
     this.videoFrameLastBlurData,
     this.thumbnailUrl,
     this.startImageWidth,
     this.startImageHeight,
-    this.endImageWidth,
-    this.endImageHeight,
     this.generationKind,
     this.generationPhase,
+    this.generationStartedAt,
+    this.generationExpiresAt,
+    this.mediaError,
     this.videoPrompt,
     this.startImageSourceUrl,
     this.startImageStatus = 'idle',
@@ -163,13 +164,7 @@ class DraftNode {
     this.startImagePrompt,
     this.startImageApproved = false,
     this.startFromNodeId,
-    this.startParentEndHash,
-    this.endImageSourceUrl,
-    this.endImageStatus = 'idle',
-    this.endHash,
-    this.endImagePrompt,
-    this.endImageSource,
-    this.endImageApproved = false,
+    this.startParentFrameHash,
     this.ttsText = '',
     this.lineApproved = false,
     this.ttsAudioUrl,
@@ -197,21 +192,22 @@ class DraftNode {
       videoStatus: _optionalString(data['videoStatus']) ?? 'idle',
       videoSource: _optionalString(data['videoSource']),
       videoFromHash: _optionalString(data['videoFromHash']),
-      videoToHash: _optionalString(data['videoToHash']),
       videoJobId: _optionalString(data['videoJobId']),
       requestId: _optionalString(data['requestId']),
       videoWidth: _optionalInt(data['videoWidth']),
       videoHeight: _optionalInt(data['videoHeight']),
       durationSeconds: _optionalDouble(data['durationSeconds']),
       videoFrameLastUrl: _optionalString(data['videoFrameLastUrl']),
+      videoFrameLastHash: _optionalString(data['videoFrameLastHash']),
       videoFrameLastBlurData: _optionalString(data['videoFrameLastBlurData']),
       thumbnailUrl: _optionalString(data['thumbnailUrl']),
       startImageWidth: _optionalInt(data['startImageWidth']),
       startImageHeight: _optionalInt(data['startImageHeight']),
-      endImageWidth: _optionalInt(data['endImageWidth']),
-      endImageHeight: _optionalInt(data['endImageHeight']),
       generationKind: _optionalString(data['generationKind']),
       generationPhase: _optionalString(data['generationPhase']),
+      generationStartedAt: _optionalString(data['generationStartedAt']),
+      generationExpiresAt: _optionalString(data['generationExpiresAt']),
+      mediaError: _optionalString(data['mediaError']),
       videoPrompt: _optionalString(data['videoPrompt']),
       startImageSourceUrl: _optionalString(data['startImageSourceUrl']),
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
@@ -219,13 +215,7 @@ class DraftNode {
       startImagePrompt: _optionalString(data['startImagePrompt']),
       startImageApproved: data['startImageApproved'] == true,
       startFromNodeId: _optionalString(data['startFromNodeId']),
-      startParentEndHash: _optionalString(data['startParentEndHash']),
-      endImageSourceUrl: _optionalString(data['endImageSourceUrl']),
-      endImageStatus: _optionalString(data['endImageStatus']) ?? 'idle',
-      endHash: _optionalString(data['endHash']),
-      endImagePrompt: _optionalString(data['endImagePrompt']),
-      endImageSource: _optionalString(data['endImageSource']),
-      endImageApproved: data['endImageApproved'] == true,
+      startParentFrameHash: _optionalString(data['startParentFrameHash']),
       ttsText: _optionalString(data['ttsText']) ?? '',
       lineApproved: data['lineApproved'] == true,
       ttsAudioUrl: _optionalString(data['ttsAudioUrl']),
@@ -256,57 +246,67 @@ class DraftNode {
   final String? videoStatus;
   final String? videoSource;
   final String? videoFromHash;
-  final String? videoToHash;
   final String? videoJobId;
   final String? requestId;
   final int? videoWidth;
   final int? videoHeight;
   final double? durationSeconds;
   final String? videoFrameLastUrl;
+
+  /// sha8 of the extracted last frame. Children inherit S from the
+  /// parent clip by this hash link (see [startParentFrameHash]).
+  final String? videoFrameLastHash;
   final String? videoFrameLastBlurData;
   final String? thumbnailUrl;
   final int? startImageWidth;
   final int? startImageHeight;
-  final int? endImageWidth;
-  final int? endImageHeight;
   final String? generationKind;
   final String? generationPhase;
+  final String? generationStartedAt, generationExpiresAt;
+  bool get generationExpired {
+    if (generationExpiresAt == null) {
+      return startImageStatus == 'pending' || ttsStatus == 'pending';
+    }
+    return generationKind != null &&
+        generationPhase != null &&
+        DateTime.tryParse(generationExpiresAt!)?.isBefore(DateTime.now()) ==
+            true;
+  }
+
+  final String? mediaError;
   final String? videoPrompt;
 
-  /// S frame (root only): the source URL, generation status, content
-  /// hash, and author approval. Non-root nodes inherit S from their
-  /// parent E instead (see [startFromNodeId]/[startParentEndHash]).
+  /// S frame (root only): the source URL, generation status, and content
+  /// hash. Non-root nodes inherit S from their parent clip's extracted
+  /// last frame instead (see [startFromNodeId]/[startParentFrameHash]).
   final String? startImageSourceUrl;
   final String? startImageStatus;
   final String? startHash;
   final String? startImagePrompt;
+
+  /// Ignored legacy: old docs carry this flag, but no gate reads it.
+  /// Generated media is accepted as-is; regen replaces it.
   final bool startImageApproved;
 
-  /// Hash link to the parent E this node's S was inherited from.
-  /// Desync detection compares it against the parent's [endHash].
+  /// Hash link to the parent clip's last frame this node's S was
+  /// inherited from. Desync detection compares it against the
+  /// parent's [videoFrameLastHash].
   final String? startFromNodeId;
-  final String? startParentEndHash;
-
-  /// E frame (every node): the source URL, generation status, content
-  /// hash, and author approval. Children inherit this as their S.
-  final String? endImageSourceUrl;
-  final String? endImageStatus;
-  final String? endHash;
-  final String? endImagePrompt;
-  final String? endImageSource;
-  final bool endImageApproved;
+  final String? startParentFrameHash;
 
   /// The narrator line. Manual editing is the point: the view edits this
   /// in bloc state and only an explicit save sends it to the server.
   final String ttsText;
+
+  /// Ignored legacy: old docs carry this flag, but no gate reads it.
+  /// The line is accepted as-is.
   final bool lineApproved;
   final String? ttsAudioUrl;
   final String? ttsStatus;
   final double? ttsDurationSeconds;
 
-  /// The narrator take approval. Set when the author approves the
-  /// generated voice (`generateNodeVoice` always lands unapproved);
-  /// editing the line idles the voice and clears this server-side.
+  /// Ignored legacy: old docs carry this flag, but no gate reads it.
+  /// The generated voice is accepted as-is; regen replaces it.
   final bool ttsApproved;
   final List<DraftChoice> choices;
 
@@ -319,14 +319,15 @@ class DraftNode {
   ];
 
   /// True when this non-root node's video is stale: it inherited S from
-  /// its parent E, the parent regenerated E since, and the backend forced
-  /// this node's video back to `idle` (keeping the hashes as mismatch
-  /// evidence) until it re-inherits via `generateNodeVideo`.
+  /// its parent clip's last frame, the parent clip finished again since,
+  /// and the backend forced this node's video back to `idle` (keeping
+  /// the hashes as mismatch evidence) until it re-inherits via
+  /// `generateNodeVideo`.
   bool isVideoDesyncedFrom(DraftNode? parent) {
     if (startFromNodeId == null || parent == null) return false;
     if (videoStatus != 'idle') return false;
-    final inherited = startParentEndHash;
-    final current = parent.endHash;
+    final inherited = startParentFrameHash;
+    final current = parent.videoFrameLastHash;
     if (inherited == null || inherited.isEmpty) return false;
     if (current == null || current.isEmpty) return false;
     return inherited != current;
@@ -343,21 +344,22 @@ class DraftNode {
       'videoStatus': videoStatus,
       'videoSource': videoSource,
       'videoFromHash': videoFromHash,
-      'videoToHash': videoToHash,
       'videoJobId': videoJobId,
       'requestId': requestId,
       'videoWidth': videoWidth,
       'videoHeight': videoHeight,
       'durationSeconds': durationSeconds,
       'videoFrameLastUrl': videoFrameLastUrl,
+      'videoFrameLastHash': videoFrameLastHash,
       'videoFrameLastBlurData': videoFrameLastBlurData,
       'thumbnailUrl': thumbnailUrl,
       'startImageWidth': startImageWidth,
       'startImageHeight': startImageHeight,
-      'endImageWidth': endImageWidth,
-      'endImageHeight': endImageHeight,
       'generationKind': generationKind,
       'generationPhase': generationPhase,
+      'generationStartedAt': generationStartedAt,
+      'generationExpiresAt': generationExpiresAt,
+      'mediaError': mediaError,
       'videoPrompt': videoPrompt,
       'startImageSourceUrl': startImageSourceUrl,
       'startImageStatus': startImageStatus,
@@ -365,13 +367,7 @@ class DraftNode {
       'startImagePrompt': startImagePrompt,
       'startImageApproved': startImageApproved,
       'startFromNodeId': startFromNodeId,
-      'startParentEndHash': startParentEndHash,
-      'endImageSourceUrl': endImageSourceUrl,
-      'endImageStatus': endImageStatus,
-      'endHash': endHash,
-      'endImagePrompt': endImagePrompt,
-      'endImageSource': endImageSource,
-      'endImageApproved': endImageApproved,
+      'startParentFrameHash': startParentFrameHash,
       'ttsText': ttsText,
       'lineApproved': lineApproved,
       'ttsAudioUrl': ttsAudioUrl,
@@ -392,21 +388,22 @@ class DraftNode {
     String? videoStatus,
     String? Function()? videoSource,
     String? Function()? videoFromHash,
-    String? Function()? videoToHash,
     String? Function()? videoJobId,
     String? Function()? requestId,
     int? Function()? videoWidth,
     int? Function()? videoHeight,
     double? Function()? durationSeconds,
     String? Function()? videoFrameLastUrl,
+    String? Function()? videoFrameLastHash,
     String? Function()? videoFrameLastBlurData,
     String? Function()? thumbnailUrl,
     int? Function()? startImageWidth,
     int? Function()? startImageHeight,
-    int? Function()? endImageWidth,
-    int? Function()? endImageHeight,
     String? Function()? generationKind,
     String? Function()? generationPhase,
+    String? Function()? generationStartedAt,
+    String? Function()? generationExpiresAt,
+    String? Function()? mediaError,
     String? Function()? videoPrompt,
     String? Function()? startImageSourceUrl,
     String? startImageStatus,
@@ -414,13 +411,7 @@ class DraftNode {
     String? Function()? startImagePrompt,
     bool? startImageApproved,
     String? Function()? startFromNodeId,
-    String? Function()? startParentEndHash,
-    String? Function()? endImageSourceUrl,
-    String? endImageStatus,
-    String? Function()? endHash,
-    String? Function()? endImagePrompt,
-    String? Function()? endImageSource,
-    bool? endImageApproved,
+    String? Function()? startParentFrameHash,
     String? ttsText,
     bool? lineApproved,
     String? Function()? ttsAudioUrl,
@@ -442,7 +433,6 @@ class DraftNode {
       videoFromHash: videoFromHash == null
           ? this.videoFromHash
           : videoFromHash(),
-      videoToHash: videoToHash == null ? this.videoToHash : videoToHash(),
       videoJobId: videoJobId == null ? this.videoJobId : videoJobId(),
       requestId: requestId == null ? this.requestId : requestId(),
       videoWidth: videoWidth == null ? this.videoWidth : videoWidth(),
@@ -453,6 +443,9 @@ class DraftNode {
       videoFrameLastUrl: videoFrameLastUrl == null
           ? this.videoFrameLastUrl
           : videoFrameLastUrl(),
+      videoFrameLastHash: videoFrameLastHash == null
+          ? this.videoFrameLastHash
+          : videoFrameLastHash(),
       videoFrameLastBlurData: videoFrameLastBlurData == null
           ? this.videoFrameLastBlurData
           : videoFrameLastBlurData(),
@@ -463,18 +456,19 @@ class DraftNode {
       startImageHeight: startImageHeight == null
           ? this.startImageHeight
           : startImageHeight(),
-      endImageWidth: endImageWidth == null
-          ? this.endImageWidth
-          : endImageWidth(),
-      endImageHeight: endImageHeight == null
-          ? this.endImageHeight
-          : endImageHeight(),
       generationKind: generationKind == null
           ? this.generationKind
           : generationKind(),
       generationPhase: generationPhase == null
           ? this.generationPhase
           : generationPhase(),
+      generationStartedAt: generationStartedAt == null
+          ? this.generationStartedAt
+          : generationStartedAt(),
+      generationExpiresAt: generationExpiresAt == null
+          ? this.generationExpiresAt
+          : generationExpiresAt(),
+      mediaError: mediaError == null ? this.mediaError : mediaError(),
       videoPrompt: videoPrompt == null ? this.videoPrompt : videoPrompt(),
       startImageSourceUrl: startImageSourceUrl == null
           ? this.startImageSourceUrl
@@ -488,21 +482,9 @@ class DraftNode {
       startFromNodeId: startFromNodeId == null
           ? this.startFromNodeId
           : startFromNodeId(),
-      startParentEndHash: startParentEndHash == null
-          ? this.startParentEndHash
-          : startParentEndHash(),
-      endImageSourceUrl: endImageSourceUrl == null
-          ? this.endImageSourceUrl
-          : endImageSourceUrl(),
-      endImageStatus: endImageStatus ?? this.endImageStatus,
-      endHash: endHash == null ? this.endHash : endHash(),
-      endImagePrompt: endImagePrompt == null
-          ? this.endImagePrompt
-          : endImagePrompt(),
-      endImageSource: endImageSource == null
-          ? this.endImageSource
-          : endImageSource(),
-      endImageApproved: endImageApproved ?? this.endImageApproved,
+      startParentFrameHash: startParentFrameHash == null
+          ? this.startParentFrameHash
+          : startParentFrameHash(),
       ttsText: ttsText ?? this.ttsText,
       lineApproved: lineApproved ?? this.lineApproved,
       ttsAudioUrl: ttsAudioUrl == null ? this.ttsAudioUrl : ttsAudioUrl(),
@@ -528,21 +510,22 @@ class DraftNode {
         other.videoStatus == videoStatus &&
         other.videoSource == videoSource &&
         other.videoFromHash == videoFromHash &&
-        other.videoToHash == videoToHash &&
         other.videoJobId == videoJobId &&
         other.requestId == requestId &&
         other.videoWidth == videoWidth &&
         other.videoHeight == videoHeight &&
         other.durationSeconds == durationSeconds &&
         other.videoFrameLastUrl == videoFrameLastUrl &&
+        other.videoFrameLastHash == videoFrameLastHash &&
         other.videoFrameLastBlurData == videoFrameLastBlurData &&
         other.thumbnailUrl == thumbnailUrl &&
         other.startImageWidth == startImageWidth &&
         other.startImageHeight == startImageHeight &&
-        other.endImageWidth == endImageWidth &&
-        other.endImageHeight == endImageHeight &&
         other.generationKind == generationKind &&
         other.generationPhase == generationPhase &&
+        other.generationStartedAt == generationStartedAt &&
+        other.generationExpiresAt == generationExpiresAt &&
+        other.mediaError == mediaError &&
         other.videoPrompt == videoPrompt &&
         other.startImageSourceUrl == startImageSourceUrl &&
         other.startImageStatus == startImageStatus &&
@@ -550,13 +533,7 @@ class DraftNode {
         other.startImagePrompt == startImagePrompt &&
         other.startImageApproved == startImageApproved &&
         other.startFromNodeId == startFromNodeId &&
-        other.startParentEndHash == startParentEndHash &&
-        other.endImageSourceUrl == endImageSourceUrl &&
-        other.endImageStatus == endImageStatus &&
-        other.endHash == endHash &&
-        other.endImagePrompt == endImagePrompt &&
-        other.endImageSource == endImageSource &&
-        other.endImageApproved == endImageApproved &&
+        other.startParentFrameHash == startParentFrameHash &&
         other.ttsText == ttsText &&
         other.lineApproved == lineApproved &&
         other.ttsAudioUrl == ttsAudioUrl &&
@@ -578,21 +555,22 @@ class DraftNode {
     videoStatus,
     videoSource,
     videoFromHash,
-    videoToHash,
     videoJobId,
     requestId,
     videoWidth,
     videoHeight,
     durationSeconds,
     videoFrameLastUrl,
+    videoFrameLastHash,
     videoFrameLastBlurData,
     thumbnailUrl,
     startImageWidth,
     startImageHeight,
-    endImageWidth,
-    endImageHeight,
     generationKind,
     generationPhase,
+    generationStartedAt,
+    generationExpiresAt,
+    mediaError,
     videoPrompt,
     startImageSourceUrl,
     startImageStatus,
@@ -600,13 +578,7 @@ class DraftNode {
     startImagePrompt,
     startImageApproved,
     startFromNodeId,
-    startParentEndHash,
-    endImageSourceUrl,
-    endImageStatus,
-    endHash,
-    endImagePrompt,
-    endImageSource,
-    endImageApproved,
+    startParentFrameHash,
     ttsText,
     lineApproved,
     ttsAudioUrl,

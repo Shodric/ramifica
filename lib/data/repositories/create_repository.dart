@@ -1,5 +1,9 @@
 export 'package:ramifica/data/persistence/node_fields.dart';
+
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:ramifica/data/persistence/node_fields.dart';
 import 'package:ramifica/data/persistence/document_store.dart';
@@ -55,7 +59,6 @@ class GeneratedNodeText {
     this.choices = const [],
     this.endingName,
     this.startImagePrompt,
-    this.endImagePrompt,
     this.videoPrompt,
   });
 
@@ -66,7 +69,6 @@ class GeneratedNodeText {
       choices: _optionalChoices(json['choices'] ?? json['choiceLabels']),
       endingName: _optionalString(json['endingName']),
       startImagePrompt: _optionalString(json['startImagePrompt']),
-      endImagePrompt: _optionalString(json['endImagePrompt']),
       videoPrompt: _optionalString(json['videoPrompt']),
     );
   }
@@ -88,9 +90,6 @@ class GeneratedNodeText {
   /// Proposed S-frame (root) image prompt, or null when absent/legacy.
   final String? startImagePrompt;
 
-  /// Proposed E-frame image prompt, or null when absent/legacy.
-  final String? endImagePrompt;
-
   /// Proposed video prompt, or null when absent/legacy.
   final String? videoPrompt;
 
@@ -101,7 +100,6 @@ class GeneratedNodeText {
       choices.isEmpty &&
       (endingName == null || endingName!.isEmpty) &&
       (startImagePrompt == null || startImagePrompt!.isEmpty) &&
-      (endImagePrompt == null || endImagePrompt!.isEmpty) &&
       (videoPrompt == null || videoPrompt!.isEmpty);
 }
 
@@ -326,6 +324,7 @@ class CreateRepository {
     required this.fetchStoryDoc,
     required this.fetchNodeDocs,
     required this.callFunction,
+    this.fetchAuthorStoryDocs,
     this.saveNodeDoc,
     this.drafts,
     this.publisher,
@@ -411,7 +410,6 @@ class CreateRepository {
       'ttsText': proposal.ttsText,
       'endingName': proposal.endingName,
       'startImagePrompt': proposal.startImagePrompt,
-      'endImagePrompt': proposal.endImagePrompt,
       'videoPrompt': proposal.videoPrompt,
     },
     [
@@ -425,6 +423,13 @@ class CreateRepository {
     String storyId,
   )
   fetchNodeDocs;
+
+  /// Lists the author's own story docs: `(storyId, data)` entries.
+  /// Optional: tests may omit it, then [fetchAuthorStories] returns [].
+  final Future<List<MapEntry<String, Map<String, dynamic>>>> Function({
+    required String authorId,
+  })?
+  fetchAuthorStoryDocs;
 
   /// Calls a Create callable by name with the given payload.
   final Future<Map<String, dynamic>> Function(
@@ -505,6 +510,54 @@ class CreateRepository {
     return nodes;
   }
 
+  /// The author's own stories, newest first (missing dates sort last).
+  /// Malformed docs are skipped like in [fetchNodes]. Without a
+  /// [fetchAuthorStoryDocs] seam there is nothing to read: returns [].
+  /// Each story carries its scene and ending counts for the creations
+  /// list; a story whose nodes cannot be read keeps unknown (null)
+  /// counts instead of sinking the list.
+  Future<List<DraftStory>> fetchAuthorStories({
+    required String authorId,
+  }) async {
+    final author = authorId.trim();
+    if (author.isEmpty) throw const AppFailure(.invalid);
+    final read = fetchAuthorStoryDocs;
+    if (read == null) return const [];
+    final docs = await read(authorId: author);
+    final stories = <DraftStory>[];
+    for (final doc in docs) {
+      try {
+        stories.add(await _withCounts(DraftStory.fromDoc(doc.key, doc.value)));
+      } on AppFailure {
+        continue;
+      }
+    }
+    stories.sort((a, b) {
+      final au = a.updatedAt;
+      final bu = b.updatedAt;
+      if (au == null && bu == null) return a.title.compareTo(b.title);
+      if (au == null) return 1;
+      if (bu == null) return -1;
+      return bu.compareTo(au);
+    });
+    return stories;
+  }
+
+  /// Attaches scene and ending counts to [story] for the creations list.
+  /// Node reads are best-effort: on any failure the story keeps unknown
+  /// counts so one unreadable draft cannot sink the list.
+  Future<DraftStory> _withCounts(DraftStory story) async {
+    try {
+      final nodes = await fetchNodes(story.storyId);
+      return story.copy(
+        nodeCount: () => nodes.length,
+        endingCount: () => nodes.where((node) => node.isEnding).length,
+      );
+    } catch (_) {
+      return story;
+    }
+  }
+
   /// Adds a child node under [parentNodeId] through the `createNode`
   /// callable. Returns the new node id. With [requestId], the backend
   /// resolves the same child on retry (idempotent by author/story/parent
@@ -531,6 +584,9 @@ class CreateRepository {
     required String storyId,
     required String nodeId,
   }) async {
+    if (storyId.trim().isEmpty || nodeId.trim().isEmpty) {
+      throw const AppFailure(.invalid);
+    }
     await persistence.delete(documentId(storyId), documentId(nodeId));
   }
 
@@ -542,12 +598,14 @@ class CreateRepository {
   /// [AppFailure]; a blank id throws [AppFailure.invalid] without
   /// touching the network.
   Future<List<String>> publishStory({required String storyId}) async {
+    if (storyId.trim().isEmpty) throw const AppFailure(.invalid);
     final service = publisher;
-    if (service == null)
+    if (service == null) {
       throw const AppFailure(
         .failed,
         detail: 'Publication persistence is not configured.',
       );
+    }
     return await service.publish(documentId(storyId));
   }
 
@@ -574,7 +632,7 @@ class CreateRepository {
   /// The server also accepts an optional `context` key and a null
   /// `nodeId` for new-node proposals; the client always has an open node
   /// here, so it sends both ids and the optional author prompt.
-  /// [purpose] is `scene` for S1 or `narration` for S4. Omission retains
+  /// [purpose] is `scene` for S1 or `narration` for S3. Omission retains
   /// the legacy full proposal contract.
   Future<GeneratedNodeText> generateNodeText({
     required String storyId,
@@ -595,11 +653,11 @@ class CreateRepository {
     return proposal;
   }
 
-  /// Asks for a node frame via the `generateNodeImage` callable. [which]
-  /// is `start` (root only) or `end` (any node); anything else throws
-  /// [AppFailure.invalid] without touching the network. Generation is
-  /// server-side: this records intent, then the caller reloads the nodes
-  /// to read the resulting `pending`/`ready` status and approval reset.
+  /// Asks for the root S frame via the `generateNodeImage` callable.
+  /// [which] is `start` only; anything else throws [AppFailure.invalid]
+  /// without touching the network. Generation is server-side: this
+  /// records intent, then the caller reloads the nodes to read the
+  /// resulting `pending`/`ready` status.
   Future<void> generateNodeImage({
     required String storyId,
     required String nodeId,
@@ -609,7 +667,7 @@ class CreateRepository {
     final story = storyId.trim();
     final node = nodeId.trim();
     if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
-    if (which != 'start' && which != 'end') {
+    if (which != 'start') {
       throw const AppFailure(.invalid);
     }
     final data = {'storyId': story, 'nodeId': node, 'which': which};
@@ -618,29 +676,32 @@ class CreateRepository {
     await callFunction('generateNodeImage', data);
   }
 
-  /// Approves or rejects one node frame via the `approveNodeImage`
-  /// callable. The backend records the approval (an E approval lets
-  /// children inherit it as their S); the caller reloads the nodes after.
-  Future<void> approveNodeImage({
+  /// Asks for the story key art via the `generateStoryCover` callable.
+  /// Returns the public cover URL the backend wrote to the story doc, or
+  /// null when the payload carries none (the caller keeps the last good
+  /// cover). [prompt] is an author override; null or blank falls back to
+  /// the story bible prompt server-side.
+  Future<String?> generateStoryCover({
     required String storyId,
-    required String nodeId,
-    required String which,
-    required bool approved,
-    String? expectedHash,
-  }) => persistence.approveImage(
-    documentId(storyId),
-    documentId(nodeId),
-    which,
-    approved,
-    expectedHash,
-  );
+    String? prompt,
+  }) async {
+    final story = storyId.trim();
+    if (story.isEmpty) throw const AppFailure(.invalid);
+    final data = {'storyId': story};
+    final hint = prompt?.trim();
+    if (hint != null && hint.isNotEmpty) data['prompt'] = hint;
+    final payload = await callFunction('generateStoryCover', data);
+    final url = payload['coverUrl'];
+    return url is String && url.isNotEmpty ? url : null;
+  }
 
   /// Asks for the node video via the `generateNodeVideo` callable. GATED
-  /// server-side on the approved parent E (own S on the root); the call
-  /// inherits that E as this node's S. Returns whether the backend is
-  /// still working the job: true means the caller re-asks until the
-  /// backend reports done or the poll cap is hit. The caller reloads the
-  /// nodes to read the resulting `pending`/`ready` status.
+  /// server-side on ready frames: the root needs its own S ready, any other
+  /// node needs its parent clip ready; the call inherits the parent clip's
+  /// extracted last frame as this node's S. Returns whether the backend is
+  /// still working the job: true means the caller re-asks until the backend
+  /// reports done or the poll cap is hit. The caller reloads the nodes to
+  /// read the resulting `pending`/`ready` status.
   Future<bool> generateNodeVideo({
     required String storyId,
     required String nodeId,
@@ -710,11 +771,10 @@ class CreateRepository {
   }
 
   /// Renders the node voice via the `generateNodeVoice` callable. GATED
-  /// server-side on the approved, non-blank narrator line; every take
-  /// lands with `ttsApproved: false` for the author to preview. Records
-  /// intent; the caller reloads the nodes to read the resulting
-  /// `pending`/`ready` take. Without TTS credentials the backend records
-  /// `pending` instead of throwing.
+  /// server-side on the non-blank narrator line; the call re-renders the
+  /// take. Records intent; the caller reloads the nodes to read the
+  /// resulting `pending`/`ready` take. Without TTS credentials the backend
+  /// records `pending` instead of throwing.
   Future<void> generateNodeVoice({
     required String storyId,
     required String nodeId,
@@ -857,7 +917,48 @@ CreateRepository createFirebaseCreateRepository([
     },
     fetchNodeDoc: (storyId, nodeId) =>
         store.get('stories/${documentId(storyId)}/nodes/${documentId(nodeId)}'),
+    fetchAuthorStoryDocs: ({required String authorId}) =>
+        store.list('stories', equals: {'authorId': authorId}),
     callFunction: (name, data) => calls(name, data),
-    uploadVideoFile: uploadVideoFile,
+    uploadVideoFile: uploadVideoFile ?? uploadVideoToFirebase,
   );
+}
+
+Future<void> uploadVideoToFirebase({
+  required String path,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
+}) async {
+  final task = FirebaseStorage.instance
+      .ref(path)
+      .putData(
+        bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+        SettableMetadata(contentType: contentType),
+      );
+  final subscription = task.snapshotEvents.listen((snapshot) {
+    if (snapshot.totalBytes > 0) {
+      onProgress?.call(snapshot.bytesTransferred / snapshot.totalBytes);
+    }
+  }, onError: (Object _) {});
+  try {
+    await task.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        task.cancel();
+        throw const AppFailure(
+          .offline,
+          detail: 'Upload timed out. Try again.',
+        );
+      },
+    );
+  } on FirebaseException catch (error) {
+    throw AppFailure(
+      appFailureCodeFor(error.code),
+      detail: error.message,
+      cause: error,
+    );
+  } finally {
+    await subscription.cancel();
+  }
 }
