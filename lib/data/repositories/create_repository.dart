@@ -653,6 +653,41 @@ class CreateRepository {
     return proposal;
   }
 
+  /// Asks the decision model for one choice's hotspot styling. Fire-and-
+  /// forget from the bloc after an apply; nulls mean unusable and the
+  /// caller keeps the index fallback.
+  Future<({String? icon, String? iconColor})> decideChoiceIcon({
+    required String storyId,
+    required String nodeId,
+    required String choiceLabel,
+    List<String> siblingLabels = const [],
+    String? previousDecision,
+    String? sceneTitle,
+    String? narratorLine,
+    String? videoPrompt,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    final label = choiceLabel.trim();
+    if (story.isEmpty || node.isEmpty || label.isEmpty) {
+      throw const AppFailure(.invalid);
+    }
+    final data = <String, dynamic>{
+      'storyId': story,
+      'nodeId': node,
+      'choiceLabel': label,
+    };
+    if (siblingLabels.isNotEmpty) data['siblingLabels'] = siblingLabels;
+    if (previousDecision != null) data['previousDecision'] = previousDecision;
+    if (sceneTitle != null) data['sceneTitle'] = sceneTitle;
+    if (narratorLine != null) data['narratorLine'] = narratorLine;
+    if (videoPrompt != null) data['videoPrompt'] = videoPrompt;
+    final payload = await callFunction('decideChoiceIcon', data);
+    String? name(Object? value) =>
+        value is String && value.trim().isNotEmpty ? value : null;
+    return (icon: name(payload['icon']), iconColor: name(payload['iconColor']));
+  }
+
   /// Asks for the root S frame via the `generateNodeImage` callable.
   /// [which] is `start` only; anything else throws [AppFailure.invalid]
   /// without touching the network. Generation is server-side: this

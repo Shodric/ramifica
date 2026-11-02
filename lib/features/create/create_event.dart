@@ -339,12 +339,12 @@ final class SceneProposalChoice {
   final String? iconColor;
 }
 
-/// A reviewable S1 scene proposal: text plus visual prompts plus up to
-/// two branches. Proposal-only: the S1 accordion edits this outside the
-/// node until [SceneProposalApplied] completes solo-vacíos. All fields
-/// nullable; absent/blank/invalid normalize to null in the bloc.
-/// Children proposals carry `startImagePrompt: null` (S is inherited);
-/// endings carry `choices: []` with an optional [endingName].
+/// An auto-built S1 scene proposal: text plus visual prompts plus up to
+/// two branches. Proposal-only: Continue builds this from the direction
+/// and [SceneProposalApplied] writes it. All fields nullable;
+/// absent/blank/invalid normalize to null in the bloc. Children
+/// proposals carry `startImagePrompt: null` (S is inherited); endings
+/// carry `choices: []` with an optional [endingName].
 /// Accepts legacy shapes via [SceneProposal.fromJson]: plain-string
 /// choices and `choiceLabels` maps, missing prompts.
 final class SceneProposal {
@@ -423,22 +423,49 @@ final class SceneProposal {
   final List<SceneProposalChoice> choices;
 }
 
-/// Applies a reviewed S1 [proposal] to [nodeId]: flushes pending edits,
-/// then overwrites reviewed non-empty fields (title, narrator line,
-/// start/end/video prompts, endingName) plus per-slot option label/icon/color
-/// — staying on the same scene. `droppable`: a second Apply while one is in
-/// flight is dropped. Occupied slots keep ids/target/geometry/default and
-/// never delete; free slots create via the reproducible
-/// `v1:author:story:parent:slot` key. A narration change idles the voice.
-/// Never generates media.
+/// Applies an auto-built S1 [proposal] to [nodeId]: flushes pending edits,
+/// then overwrites non-empty fields (narrator line, start/video prompts)
+/// plus per-slot option label/icon/color — staying on the same scene.
+/// The manual title and ending name arrive null (preserved).
+/// `droppable`: a second Apply while one is in flight is dropped.
+/// Occupied slots keep ids/target/geometry/default and never delete; free
+/// slots create via the reproducible `v1:author:story:parent:slot` key.
+/// A narration change idles the voice. Never generates media.
 final class SceneProposalApplied extends CreateEvent {
-  const SceneProposalApplied({required this.nodeId, required this.proposal});
+  const SceneProposalApplied({
+    required this.nodeId,
+    required this.proposal,
+    this.completion,
+  });
 
   /// Scene that gains the proposal.
   final String nodeId;
 
-  /// Reviewed proposal from the S1 accordion.
+  /// Auto-built proposal from the S1 direction. Every non-empty value
+  /// overwrites; the manual title and ending name are preserved.
   final SceneProposal proposal;
+
+  /// Resolves after the proposal is persisted, or with false on failure —
+  /// mirroring [NodeSaved].
+  final Completer<bool>? completion;
+}
+
+/// A background icon decision landed for one choice. Fills the styling
+/// only when the choice is still unstyled (null or the link placeholder
+/// pair): a manual (or earlier) pick wins by check-at-merge, then the
+/// node is saved.
+final class ChoiceIconDecided extends CreateEvent {
+  const ChoiceIconDecided({
+    required this.nodeId,
+    required this.choiceId,
+    this.icon,
+    this.iconColor,
+  });
+
+  final String nodeId;
+  final String choiceId;
+  final String? icon;
+  final String? iconColor;
 }
 
 /// A live draft snapshot; stale-story events are ignored by the bloc.

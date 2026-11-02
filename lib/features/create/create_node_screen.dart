@@ -29,8 +29,10 @@ import 'package:uuid/uuid.dart';
 /// Fullscreen node editor as a stepped wizard: Idea (root only), Script,
 /// Scenes, Options, Voice, Clip. One step shows at a time ([IndexedStack]
 /// keeps controllers alive). Continue runs the step predicate and reports
-/// the first missing piece inline, never as a toast. Back and revisits are
-/// always free; jumping forward stops at the first incomplete step.
+/// the first missing piece inline, never as a toast. On Script, Continue
+/// first auto-proposes from the direction and applies it. Back and
+/// revisits are always free; jumping forward stops at the first
+/// incomplete step.
 ///
 /// Manual edits stay in the bloc until Save or a generation request. Typing,
 /// changing steps, and leaving the editor do not write to the repository.
@@ -69,6 +71,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   var _premise = true;
   final List<bool> _showErrors = List.filled(wizardStepCount, false);
   String? _banner;
+
+  /// A Script Continue is mid propose+apply. Disables the footer while
+  /// the proposal round-trips.
+  var _scriptProposing = false;
 
   @override
   void dispose() {
@@ -126,6 +132,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   }
 
   String _statusText(CreateState state) {
+    if (_scriptProposing) return 'Proposing scene…';
     if (state.job == CreateJob.saving) return 'Saving...';
     if (widget.bloc.hasUnsavedStoryEdits ||
         widget.bloc.hasUnsavedNodeEdits(widget.nodeId)) {
@@ -171,6 +178,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       _leavePremise();
       return;
     }
+    if (_stepIndex == 0) {
+      _onContinueScript(node, isRoot);
+      return;
+    }
     final missing = firstMissingForStep(
       step: _stepIndex,
       node: node,
@@ -191,6 +202,97 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       });
     } else {
       _snack('Scene ready ✓', amber: false);
+    }
+  }
+
+  /// Script Continue: complete steps advance without proposing; otherwise
+  /// the direction is proposed and auto-applied, then the gate re-checks
+  /// on the fresh node. Propose failures surface as inline step hints;
+  /// apply failures do too, via [StepScriptState.showError].
+  Future<void> _onContinueScript(DraftNode node, bool isRoot) async {
+    if (_scriptProposing) return;
+    final missing = firstMissingForStep(step: 0, node: node, isRoot: isRoot);
+    if (missing == null) {
+      _stopScriptDictation();
+      if (!mounted || _stepIndex != 0) return;
+      setState(() {
+        _stepIndex++;
+        _banner = null;
+      });
+      return;
+    }
+    final script = _scriptKey.currentState;
+    if (script == null || !script.directionReady) {
+      setState(() {
+        _showErrors[0] = true;
+        _banner = 'a scene direction to propose from';
+      });
+      return;
+    }
+    setState(() => _scriptProposing = true);
+    try {
+      final proposal = await script.proposeDirection();
+      if (!mounted || _stepIndex != 0) return;
+      if (proposal == null) {
+        setState(() {
+          _showErrors[0] = true;
+          _banner = null;
+        });
+        return;
+      }
+      final applied = await _applyProposal(node.nodeId, proposal);
+      if (!mounted || _stepIndex != 0) return;
+      if (!applied) {
+        script.showError(
+          widget.bloc.state.failure ??
+              'Could not apply the proposal. Try again.',
+        );
+        setState(() {
+          _showErrors[0] = true;
+          _banner = null;
+        });
+        return;
+      }
+      final fresh = widget.bloc.state.nodes.singleWhere(
+        (n) => n.nodeId == node.nodeId,
+        orElse: () => node,
+      );
+      final stillMissing = firstMissingForStep(
+        step: 0,
+        node: fresh,
+        isRoot: isRoot,
+      );
+      if (stillMissing != null) {
+        setState(() {
+          _showErrors[0] = true;
+          _banner = stillMissing;
+        });
+        return;
+      }
+      _stopScriptDictation();
+      setState(() {
+        _stepIndex++;
+        _banner = null;
+      });
+    } finally {
+      if (mounted) setState(() => _scriptProposing = false);
+    }
+  }
+
+  /// Dispatches the auto-built proposal and waits for persistence.
+  Future<bool> _applyProposal(String nodeId, SceneProposal proposal) async {
+    final completion = Completer<bool>();
+    widget.bloc.add(
+      SceneProposalApplied(
+        nodeId: nodeId,
+        proposal: proposal,
+        completion: completion,
+      ),
+    );
+    try {
+      return await completion.future.timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      return false;
     }
   }
 
@@ -459,13 +561,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                               purpose: 'scene',
                                             );
                                       },
-                                      onApplyProposal: (proposal) =>
-                                          widget.bloc.add(
-                                            SceneProposalApplied(
-                                              nodeId: widget.nodeId,
-                                              proposal: proposal,
-                                            ),
-                                          ),
                                       onTitleChanged: (value) => _edited(
                                         () => widget.bloc.add(
                                           NodeFieldChanged(
@@ -793,7 +888,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                           canGoBack: showPremise
                               ? false
                               : stepIndex > 0 || isRoot,
-                          busy: busy,
+                          busy: busy || _scriptProposing,
                           onBack: _onBack,
                           onContinue: () => _onContinue(node, isRoot),
                           isLastStep:

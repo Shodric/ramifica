@@ -89,6 +89,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<ZoneMoved>(_onZoneMoved);
     on<ChoiceAdded>(_onChoiceAdded);
     on<ChoiceRemoved>(_onChoiceRemoved);
+    on<ChoiceIconDecided>(_onChoiceIconDecided);
     on<TextGenerateRequested>(
       _serialized(_onGenerate),
       transformer: droppable(),
@@ -612,7 +613,10 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     Emitter<CreateState> emit,
   ) async {
     final story = state.story;
-    if (story == null || _node(event.nodeId) == null) return;
+    if (story == null || _node(event.nodeId) == null) {
+      _completeProposal(event, false);
+      return;
+    }
     emit(
       state.copy(
         job: CreateJob.saving,
@@ -627,6 +631,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         finishJob: false,
         force: false,
       )) {
+        _completeProposal(event, false);
         return;
       }
       final p = event.proposal;
@@ -645,7 +650,10 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
             {'label': c.label, 'icon': c.icon, 'iconColor': c.iconColor},
         ],
       );
-      if (isClosed || _closing.isCompleted) return;
+      if (isClosed || _closing.isCompleted) {
+        _completeProposal(event, false);
+        return;
+      }
       emit(
         state.copy(
           nodes: _mergeChanged(change.nodes),
@@ -654,6 +662,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           focusChoiceId: () => null,
         ),
       );
+      _decideIcons(event.nodeId, event.proposal);
+      _completeProposal(event, true);
     } on AppFailure catch (error) {
       if (!isClosed) {
         emit(
@@ -664,7 +674,150 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           ),
         );
       }
+      _completeProposal(event, false);
     }
+  }
+
+  void _completeProposal(SceneProposalApplied event, bool applied) {
+    if (!(event.completion?.isCompleted ?? true)) {
+      event.completion!.complete(applied);
+    }
+  }
+
+  /// Fires one icon decision per unstyled choice, without awaiting: the
+  /// user only sees icons at the Options step, so each answer merges when
+  /// it lands via [ChoiceIconDecided]. Manual picks are set by then or
+  /// win at merge time.
+  void _decideIcons(String nodeId, SceneProposal proposal) {
+    final story = state.story;
+    if (story == null || isClosed) return;
+    final node = _node(nodeId);
+    if (node == null) return;
+    final previous = _incomingLabel(node);
+    for (final choice in node.choices) {
+      if (!_needsIcon(choice)) continue;
+      final label = choice.label.trim();
+      if (label.isEmpty) continue;
+      unawaited(
+        _decideOneIcon(
+          storyId: story.storyId,
+          nodeId: nodeId,
+          choiceId: choice.choiceId,
+          label: label,
+          siblings: [
+            for (final other in node.choices)
+              if (other.choiceId != choice.choiceId &&
+                  other.label.trim().isNotEmpty)
+                other.label.trim(),
+          ],
+          previousDecision: previous,
+          sceneTitle: proposal.title,
+          narratorLine: proposal.ttsText,
+          videoPrompt: proposal.videoPrompt,
+        ),
+      );
+    }
+  }
+
+  Future<void> _decideOneIcon({
+    required String storyId,
+    required String nodeId,
+    required String choiceId,
+    required String label,
+    required List<String> siblings,
+    required String? previousDecision,
+    required String? sceneTitle,
+    required String? narratorLine,
+    required String? videoPrompt,
+  }) async {
+    try {
+      final decided = await repository.decideChoiceIcon(
+        storyId: storyId,
+        nodeId: nodeId,
+        choiceLabel: label,
+        siblingLabels: siblings,
+        previousDecision: previousDecision,
+        sceneTitle: sceneTitle,
+        narratorLine: narratorLine,
+        videoPrompt: videoPrompt,
+      );
+      if (isClosed || _closing.isCompleted) return;
+      if (decided.icon == null && decided.iconColor == null) return;
+      add(
+        ChoiceIconDecided(
+          nodeId: nodeId,
+          choiceId: choiceId,
+          icon: decided.icon,
+          iconColor: decided.iconColor,
+        ),
+      );
+    } catch (_) {
+      // Background styling never surfaces: the index fallback stays.
+    }
+  }
+
+  /// True when a choice still needs a decision: no icon, or the link
+  /// placeholder pair (`createAndLink` defaults). Anything else is a
+  /// manual or earlier pick and must never be overwritten.
+  bool _needsIcon(DraftChoice choice) {
+    if (choice.icon == null) return true;
+    if (choice.slot == 'A') {
+      return choice.icon == 'compass' && choice.iconColor == 'cyan';
+    }
+    if (choice.slot == 'B') {
+      return choice.icon == 'moon' && choice.iconColor == 'blue';
+    }
+    return false;
+  }
+
+  /// Label of the choice taken to reach [node], so the decision model
+  /// knows where the scene comes from. Null for the root and orphans.
+  String? _incomingLabel(DraftNode node) {
+    final parent = state.parentOf(node);
+    if (parent == null) return null;
+    for (final choice in parent.choices) {
+      if (choice.targetNodeId == node.nodeId &&
+          choice.label.trim().isNotEmpty) {
+        return choice.label.trim();
+      }
+    }
+    return null;
+  }
+
+  void _onChoiceIconDecided(
+    ChoiceIconDecided event,
+    Emitter<CreateState> emit,
+  ) {
+    final node = _node(event.nodeId);
+    if (node == null) return;
+    final at = node.choices.indexWhere(
+      (choice) => choice.choiceId == event.choiceId,
+    );
+    if (at < 0 || !_needsIcon(node.choices[at])) return;
+    _markEdited(event.nodeId);
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId)
+              current.copy(
+                choices: [
+                  for (var i = 0; i < current.choices.length; i++)
+                    if (i == at)
+                      current.choices[i].copy(
+                        icon: event.icon,
+                        iconColor: event.iconColor,
+                      )
+                    else
+                      current.choices[i],
+                ],
+              )
+            else
+              current,
+        ],
+      ),
+    );
+    add(NodeSaved(nodeId: event.nodeId));
   }
 
   void _onFieldChanged(NodeFieldChanged event, Emitter<CreateState> emit) {
