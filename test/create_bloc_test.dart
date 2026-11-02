@@ -1822,7 +1822,8 @@ void main() {
       expect(choices, hasLength(1));
       expect(choices.single.targetNodeId, 'node_2');
       expect(choices.single.isDefault, isTrue);
-      expect(choices.single.x, 0.5);
+      expect(choices.single.slot, 'A');
+      expect(choices.single.x, 0.25);
       expect(choices.single.y, 0.5);
     });
 
@@ -2129,6 +2130,7 @@ void main() {
       expect(choices, hasLength(1));
       expect(choices.single['slot'], 'B');
       expect(choices.single['targetNodeId'], 'node_1');
+      expect(choices.single['x'], 0.75);
     });
   });
 
@@ -2167,6 +2169,7 @@ void main() {
       final choices = parentDoc['choices'] as List;
       expect(choices, hasLength(1));
       expect((choices.single as Map)['targetNodeId'], childId);
+      expect((choices.single as Map)['x'], 0.25);
       expect(
         stack
             .store
@@ -2206,6 +2209,36 @@ void main() {
         (state) => state.job == CreateJob.none,
       );
       expect(stack.bloc.state.openNode!.choices, hasLength(1));
+    });
+
+    test('fresh A/B choices land left/right of center', () async {
+      final stack = _memoryStack(
+        nodes: const [DraftNode(nodeId: 'node_1', title: 'Manual')],
+      );
+      await _openMemory(stack);
+
+      const proposal = SceneProposal(
+        title: 'AI title',
+        ttsText: 'A line',
+        choices: [
+          SceneProposalChoice(label: 'Left'),
+          SceneProposalChoice(label: 'Right'),
+        ],
+      );
+      stack.bloc.add(
+        const SceneProposalApplied(nodeId: 'node_1', proposal: proposal),
+      );
+      final applied = await stack.bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            (state.openNode?.choices.length ?? 0) == 2,
+      );
+
+      final bySlot = {
+        for (final choice in applied.openNode!.choices) choice.slot: choice,
+      };
+      expect(bySlot['A']!.x, 0.25);
+      expect(bySlot['B']!.x, 0.75);
     });
 
     test('apply fires one icon decision per unstyled choice', () async {

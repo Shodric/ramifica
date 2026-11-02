@@ -168,6 +168,7 @@ class _DraftHarness implements DraftPersistence {
           isDefault: parent.choices.isEmpty,
           icon: icon ?? (wanted == 'A' ? 'compass' : 'moon'),
           iconColor: iconColor ?? (wanted == 'A' ? 'cyan' : 'blue'),
+          x: DraftChoice.defaultXFor(wanted),
         ),
       ],
     );

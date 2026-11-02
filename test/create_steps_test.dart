@@ -485,6 +485,9 @@ void main() {
       isFalse,
     );
     expect(find.text('Continue generation'), findsOneWidget);
+    // No status row: the button label already names the running job.
+    expect(find.text('Generating video…'), findsNothing);
+    expect(find.text('Processing video…'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('gen-video-root')));
     expect(sent, 'Submitted motion');
   });

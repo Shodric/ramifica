@@ -447,6 +447,9 @@ void main() {
       final choices = bloc.state.openNode!.choices;
       expect(choices.map((c) => c.icon).toSet(), {'door'});
       expect(choices.map((c) => c.iconColor).toSet(), {'amber'});
+      // The applied B branch lands right of center, not stacked on A.
+      final bySlot = {for (final c in choices) c.slot: c};
+      expect(bySlot['B']!.x, 0.75);
       final saves = calls.where(
         (call) =>
             call.name == 'saveNode' &&
@@ -504,7 +507,7 @@ void main() {
 
     testWidgets('typing stays local until Save is pressed', (tester) async {
       final calls = <_Call>[];
-      await _pumpDraft(tester, calls);
+      final bloc = await _pumpDraft(tester, calls);
 
       expect(find.byKey(const ValueKey('ribbon-publish')), findsOneWidget);
       await _openNode(tester, 'node_1');
@@ -518,7 +521,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
-      expect(find.text('Unsaved changes'), findsOneWidget);
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
       await tester.tap(find.byKey(const ValueKey('wizard-save')));
       await tester.pumpAndSettle();
 
@@ -544,11 +547,21 @@ void main() {
 
       expect(find.byKey(const ValueKey('wizard-saving')), findsOneWidget);
       expect(find.byKey(const ValueKey('wizard-save')), findsNothing);
+      // The footer label swaps for a spinner while busy.
+      expect(find.text('Continue'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('wizard-continue')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
 
       gate.complete();
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('wizard-save')), findsOneWidget);
       expect(find.byKey(const ValueKey('wizard-saving')), findsNothing);
+      expect(find.text('Continue'), findsOneWidget);
     });
 
     testWidgets('the scene title counter only shows at the limit', (
@@ -649,7 +662,7 @@ void main() {
         'Keep this local',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('wizard-back')));
+      await tester.tap(find.byKey(const ValueKey('wizard-step-0')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('wizard-step-1')));
       await tester.pumpAndSettle();
@@ -821,7 +834,7 @@ void main() {
       expect(find.text('Scenes'), findsNothing);
     });
 
-    testWidgets('child Continue skips Scenes to Voice and Back returns', (
+    testWidgets('child Continue skips Scenes to Voice and chip returns', (
       tester,
     ) async {
       final docs = _defaultDocs();
@@ -853,13 +866,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // Voice body, not Scenes.
-      expect(
-        find.byKey(const ValueKey('gen-voice-node_2')).hitTestable(),
-        findsOneWidget,
-      );
+      final voice = find.byKey(const ValueKey('gen-voice-node_2'));
+      await tester.ensureVisible(voice);
+      await tester.pumpAndSettle();
+      expect(voice.hitTestable(), findsOneWidget);
       expect(find.byKey(const ValueKey('prompt-start-node_2')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('wizard-back')));
+      await tester.tap(find.byKey(const ValueKey('wizard-step-0')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('script-direction-node_2')).hitTestable(),
@@ -870,6 +883,66 @@ void main() {
         findsNothing,
       );
       expect(find.byKey(const ValueKey('gen-image-end-node_2')), findsNothing);
+    });
+
+    testWidgets('Finish on a complete scene pops back to the canvas', (
+      tester,
+    ) async {
+      await _pumpDraft(tester, null, [
+        MapEntry('node_1', {
+          'title': 'Root',
+          'choices': [
+            {
+              'choiceId': 'c1',
+              'label': 'Enter',
+              'targetNodeId': 'node_2',
+              'isDefault': true,
+              'x': 0.25,
+              'y': 0.65,
+              'radius': 0.15,
+            },
+          ],
+        }),
+        const MapEntry('node_2', {
+          'title': 'Leaf',
+          'visibility': 'secret',
+          'isEnding': true,
+          'endingName': 'Escape',
+          'endingType': 'abierto',
+        }),
+        MapEntry('node_3', {
+          'title': 'Spare',
+          'ttsText': 'Spare line',
+          'ttsStatus': 'ready',
+          'ttsAudioUrl': 'https://example.invalid/v.wav',
+          'videoStatus': 'ready',
+          'videoFrameLastUrl': 'https://example.invalid/f.png',
+          'videoFrameLastHash': 'hash-f',
+          'choices': [
+            {
+              'choiceId': 'c1',
+              'label': 'Enter',
+              'targetNodeId': 'node_2',
+              'isDefault': true,
+              'slot': 'A',
+              'x': 0.25,
+              'y': 0.65,
+              'radius': 0.15,
+            },
+          ],
+        }),
+      ]);
+
+      await _openNode(tester, 'node_3', step: 4);
+      expect(find.text('Finish'), findsOneWidget);
+      final finish = find.byKey(const ValueKey('wizard-continue'));
+      await tester.ensureVisible(finish);
+      await tester.pumpAndSettle();
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CreateNodeScreen), findsNothing);
+      expect(find.byKey(const ValueKey('canvas-node-node_3')), findsOneWidget);
     });
 
     testWidgets('video generate sends the revised prompt', (tester) async {
@@ -983,21 +1056,26 @@ void main() {
       expect(find.byKey(const ValueKey('prompt-end-node_1')), findsNothing);
     });
 
-    testWidgets('a node video offers another take', (tester) async {
+    testWidgets('a ready clip hides the prompt and actions', (tester) async {
       await _pumpUploadDraft(
         tester,
         docs: [
           MapEntry('node_1', {
             ..._mediaDocs().first.value,
             'videoUrl': 'https://cdn.example/v.mp4',
+            'videoStatus': 'ready',
+            'durationSeconds': 10,
           }),
         ],
       );
 
       await _openNode(tester, 'node_1', step: 3);
 
-      expect(find.text('Another take'), findsOneWidget);
-      expect(find.text('Generate video'), findsNothing);
+      expect(find.byKey(const ValueKey('clip-preview-node_1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gen-video-node_1')), findsNothing);
+      expect(find.byKey(const ValueKey('upload-video-node_1')), findsNothing);
+      expect(find.byKey(const ValueKey('video-prompt-node_1')), findsNothing);
+      expect(find.text('Another take'), findsNothing);
     });
 
     testWidgets('upload dispatches, shows progress, then clears', (
@@ -1389,9 +1467,7 @@ void main() {
       expect(find.text('The root node cannot be deleted.'), findsNothing);
     });
 
-    testWidgets('a targeted node delete button names the blocker', (
-      tester,
-    ) async {
+    testWidgets('a targeted node shows no delete affordance', (tester) async {
       // Options is last: the leaf ships voice+clip ready to reach it.
       final docs = _defaultDocs().map((doc) {
         if (doc.key != 'node_2') return doc;
@@ -1407,168 +1483,17 @@ void main() {
       }).toList();
       final bloc = await _pumpDraft(tester, null, docs);
 
-      // The root choice targets the leaf.
+      // The root choice targets the leaf, but delete has no UI for now:
+      // neither the button nor the blocker reason renders.
       await _openNode(tester, 'node_2', step: 4);
       expect(bloc.state.openNodeId, 'node_2');
 
-      final remove = find.byKey(const ValueKey('delete-node-node_2'));
-      await tester.ensureVisible(remove);
-      await tester.pumpAndSettle();
-
+      expect(find.byKey(const ValueKey('delete-node-node_2')), findsNothing);
+      expect(find.text('Delete scene'), findsNothing);
       expect(
         find.text('Node node_2 is a choice target — remove the choice first.'),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(tester.widget<FilledButton>(remove).onPressed, isNull);
-    });
-
-    testWidgets('deleting an untargeted node removes it from the canvas', (
-      tester,
-    ) async {
-      final docs = [
-        MapEntry('node_1', {
-          'title': 'Root',
-          'visibility': 'visible',
-          'isEnding': false,
-          'videoStatus': 'idle',
-          'ttsText': '',
-          'lineApproved': false,
-          'ttsStatus': 'idle',
-          'choices': [
-            {
-              'choiceId': 'c1',
-              'label': 'Enter',
-              'targetNodeId': 'node_2',
-              'isDefault': true,
-              'x': 0.25,
-              'y': 0.65,
-              'radius': 0.15,
-            },
-          ],
-        }),
-        const MapEntry('node_2', {
-          'title': 'Leaf',
-          'visibility': 'secret',
-          'isEnding': true,
-          'endingName': 'Escape',
-          'endingType': 'abierto',
-        }),
-        const MapEntry('node_3', {
-          'title': 'Spare',
-          'ttsText': 'Spare line',
-          'lineApproved': true,
-          'startImageApproved': true,
-          'ttsStatus': 'ready',
-          'ttsAudioUrl': 'https://example.invalid/v.wav',
-          'videoStatus': 'ready',
-          'videoFrameLastUrl': 'https://example.invalid/f.png',
-          'videoFrameLastHash': 'hash-f',
-        }),
-      ];
-      final calls = <_Call>[];
-      final bloc = CreateBloc(
-        repository: testCreateRepository(
-          createDraftDoc: ({required authorId, required title}) async =>
-              'story_1',
-          fetchStoryDoc: (_) async => {
-            'authorId': 'uid_1',
-            'title': 'Temple',
-            'synopsis': '',
-            'status': 'draft',
-            'rootNodeId': 'node_1',
-          },
-          fetchNodeDocs: (_) async => List.of(docs),
-          callFunction: (name, data) async {
-            calls.add(_Call(name, data));
-            if (name == 'deleteNode') {
-              docs.removeWhere((doc) => doc.key == data['nodeId']);
-              return {'nodeId': data['nodeId']};
-            }
-            return <String, dynamic>{};
-          },
-        ),
-      );
-      addTearDown(() => _disposeBloc(tester, bloc));
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
-      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
-      await tester.pumpAndSettle();
-      await _openNode(tester, 'node_3', step: 4);
-
-      final remove = find.byKey(const ValueKey('delete-node-node_3'));
-      await tester.ensureVisible(remove);
-      await tester.pumpAndSettle();
-      expect(tester.widget<FilledButton>(remove).onPressed, isNotNull);
-
-      await tester.tap(remove);
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const ValueKey('confirm-delete-node_3')));
-      await tester.pumpAndSettle();
-
-      final deleted = calls.singleWhere((call) => call.name == 'deleteNode');
-      expect(deleted.data, {'storyId': 'story_1', 'nodeId': 'node_3'});
-      expect(
-        bloc.state.nodes.map((node) => node.nodeId),
-        containsAll(['node_1', 'node_2']),
-      );
-      expect(
-        bloc.state.nodes.map((node) => node.nodeId),
-        isNot(contains('node_3')),
-      );
-      expect(bloc.state.openNodeId, 'node_1');
-    });
-
-    testWidgets('a delete rejection surfaces its phrase', (tester) async {
-      final bloc = CreateBloc(
-        repository: testCreateRepository(
-          createDraftDoc: ({required authorId, required title}) async =>
-              'story_1',
-          fetchStoryDoc: (_) async => {
-            'authorId': 'uid_1',
-            'title': 'Temple',
-            'synopsis': '',
-            'status': 'draft',
-            'rootNodeId': 'node_1',
-          },
-          fetchNodeDocs: (_) async => [
-            const MapEntry('node_1', {'title': 'Root'}),
-            const MapEntry('node_3', {
-              'title': 'Spare',
-              'ttsText': 'Spare line',
-              'lineApproved': true,
-              'startImageApproved': true,
-              'ttsStatus': 'ready',
-              'ttsAudioUrl': 'https://example.invalid/v.wav',
-              'videoStatus': 'ready',
-              'videoFrameLastUrl': 'https://example.invalid/f.png',
-              'videoFrameLastHash': 'hash-f',
-            }),
-          ],
-          callFunction: (name, data) async {
-            if (name == 'deleteNode') throw const AppFailure(.invalid);
-            return <String, dynamic>{};
-          },
-        ),
-      );
-      addTearDown(() => _disposeBloc(tester, bloc));
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
-      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
-      await tester.pumpAndSettle();
-      await _openNode(tester, 'node_3', step: 4);
-
-      final remove = find.byKey(const ValueKey('delete-node-node_3'));
-      await tester.ensureVisible(remove);
-      await tester.pumpAndSettle();
-      await tester.tap(remove);
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const ValueKey('confirm-delete-node_3')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('That action is not valid'), findsOneWidget);
-      expect(bloc.state.nodes.map((node) => node.nodeId), contains('node_3'));
     });
 
     testWidgets('publish success navigates through onPublished', (
