@@ -119,28 +119,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   // Generation handlers flush the latest edits inside the bloc write queue.
   void _runMedia(VoidCallback dispatch) => dispatch();
 
-  void _snack(String message, {required bool amber}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(milliseconds: 1200),
-        backgroundColor: amber
-            ? RamificaColors.rewardGold
-            : RamificaColors.nodeActive,
-      ),
-    );
-  }
-
-  String _statusText(CreateState state) {
-    if (_scriptProposing) return 'Proposing scene…';
-    if (state.job == CreateJob.saving) return 'Saving...';
-    if (widget.bloc.hasUnsavedStoryEdits ||
-        widget.bloc.hasUnsavedNodeEdits(widget.nodeId)) {
-      return 'Unsaved changes';
-    }
-    return 'No changes';
-  }
-
   /// Next visible logical step after [_stepIndex], or null on the last one.
   /// Children skip Scenes, so Script advances straight to Voice.
   int? _nextStep(bool isRoot) {
@@ -148,14 +126,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     final at = steps.indexOf(_stepIndex);
     if (at < 0 || at >= steps.length - 1) return null;
     return steps[at + 1];
-  }
-
-  /// Previous visible logical step before [_stepIndex], or null on Script.
-  int? _prevStep(bool isRoot) {
-    final steps = wizardSteps(isRoot: isRoot);
-    final at = steps.indexOf(_stepIndex);
-    if (at <= 0) return null;
-    return steps[at - 1];
   }
 
   void _goTo(int index, DraftNode node, bool isRoot) {
@@ -218,8 +188,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         _stepIndex = next;
         _banner = null;
       });
-    } else {
-      _snack('Scene ready ✓', amber: false);
+    } else if (mounted) {
+      // Last step complete: back to the canvas.
+      Navigator.of(context).maybePop();
     }
   }
 
@@ -326,28 +297,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     });
   }
 
-  void _onBack() {
-    final root = widget.bloc.state.isRoot(widget.nodeId);
-    // Mirrors showPremise: children never show the premise page, so the
-    // stale initial flag must not swallow Back on their steps.
-    if (_premise && root) return;
-    if (_stepIndex == 0) {
-      if (!root) return;
-      _stopScriptDictation();
-      setState(() {
-        _premise = true;
-        _banner = null;
-      });
-      return;
-    }
-    _stopScriptDictation();
-    final prev = _prevStep(root);
-    setState(() {
-      if (prev != null) _stepIndex = prev;
-      _banner = null;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return BlocProvider.value(
@@ -393,6 +342,17 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
           final showPremise = _premise && isRoot;
           final parent = state.parentOf(node);
           final incoming = _incomingChoice(parent, state.nodes, widget.nodeId);
+          // One continue action, mounted only by the active step.
+          bool stepActive(int logical) =>
+              !showPremise &&
+              stepIndex == logical &&
+              !_previewOpen &&
+              !_childOpen;
+          final continueAction = WizardContinueButton(
+            busy: busy || _scriptProposing,
+            onContinue: () => _onContinue(node, isRoot),
+            isLastStep: !showPremise && stepIndex == wizardStepCount - 1,
+          );
           return PopScope(
             canPop: true,
             child: Scaffold(
@@ -535,7 +495,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                   16,
                                   16,
                                 ),
-                                child: WizardPremise(key: _premiseKey),
+                                child: WizardPremise(
+                                  key: _premiseKey,
+                                  continueAction: continueAction,
+                                ),
                               )
                             : IndexedStack(
                                 index: wizardDisplayIndex(
@@ -556,6 +519,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                       isRoot: isRoot,
                                       busy: busy,
                                       showErrors: _showErrors[0],
+                                      active: stepActive(0),
+                                      continueAction: continueAction,
                                       socketFactory: AsrSocket.new,
                                       getIdToken: _idToken,
                                       getAppCheckToken: _appCheckToken,
@@ -623,6 +588,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                         node: node,
                                         busy: busy,
                                         showErrors: _showErrors[1],
+                                        active: stepActive(1),
+                                        continueAction: continueAction,
                                         onStartPromptChanged: (value) =>
                                             _edited(
                                               () => widget.bloc.add(
@@ -644,13 +611,16 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             ),
                                       ),
                                     ),
-                                  _StepScroll(
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      0,
+                                      16,
+                                      16,
+                                    ),
                                     child: StepVoice(
-                                      active:
-                                          !showPremise &&
-                                          stepIndex == 2 &&
-                                          !_previewOpen &&
-                                          !_childOpen,
+                                      active: stepActive(2),
+                                      continueAction: continueAction,
                                       generating: state.generating(
                                         widget.nodeId,
                                         'voice',
@@ -694,11 +664,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                       16,
                                     ),
                                     child: StepClip(
-                                      active:
-                                          !showPremise &&
-                                          stepIndex == 3 &&
-                                          !_previewOpen &&
-                                          !_childOpen,
+                                      active: stepActive(3),
+                                      continueAction: continueAction,
                                       generating: state.generating(
                                         widget.nodeId,
                                         'video',
@@ -787,6 +754,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                       node: node,
                                       busy: busy,
                                       showErrors: _showErrors[4],
+                                      active: stepActive(4),
+                                      continueAction: continueAction,
                                       isRoot: isRoot,
                                       focusChoiceId: state.focusChoiceId,
                                       targetTitles: {
@@ -901,23 +870,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                         )
                       else if (_banner != null)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                           child: WizardBanner(text: _banner!),
                         ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: WizardFooter(
-                          statusText: _statusText(state),
-                          canGoBack: showPremise
-                              ? false
-                              : stepIndex > 0 || isRoot,
-                          busy: busy || _scriptProposing,
-                          onBack: _onBack,
-                          onContinue: () => _onContinue(node, isRoot),
-                          isLastStep:
-                              !showPremise && stepIndex == wizardStepCount - 1,
-                        ),
-                      ),
                     ],
                   ),
                 ),

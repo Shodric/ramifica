@@ -4,9 +4,10 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 
 /// S4 Clip: video prompt editor, status, desync notice, gate hint under
-/// the disabled control, generate / another-take, and optional mp4/mov
-/// upload with progress. The video Generate button stays outlined so the
-/// gated state keeps its existing contract.
+/// the disabled control, generate, and optional mp4/mov upload with
+/// progress. The video Generate button stays outlined so the gated
+/// state keeps its existing contract. Once a clip is ready the prompt
+/// and actions hide and the player takes the whole area: no takes.
 ///
 /// The clip prompt edits stay local through [onVideoPromptChanged] and
 /// Generate sends the revised value through [onVideoGenerate]. Polling
@@ -27,6 +28,7 @@ class StepClip extends StatefulWidget {
     this.onVideoPromptChanged,
     this.onVideoGenerate,
     this.onUploadVideo,
+    this.continueAction,
   });
 
   final DraftNode node;
@@ -45,6 +47,10 @@ class StepClip extends StatefulWidget {
   /// Sends the revised clip prompt.
   final ValueChanged<String>? onVideoGenerate;
   final VoidCallback? onUploadVideo;
+
+  /// Continue action placed at the step's end; mounted only while
+  /// [active]. Null renders nothing.
+  final Widget? continueAction;
 
   @override
   State<StepClip> createState() => _StepClipState();
@@ -106,137 +112,213 @@ class _StepClipState extends State<StepClip> {
           durationSeconds: node.durationSeconds,
           expand: bounded,
         );
+        // A ready clip is final: the player takes the area and the
+        // prompt plus actions hide. Anything else keeps the editor.
+        final finished =
+            (node.videoUrl?.isNotEmpty ?? false) && node.videoStatus == 'ready';
         return Column(
           crossAxisAlignment: .stretch,
           mainAxisSize: bounded ? .max : .min,
           children: [
             if (node.videoUrl?.isNotEmpty == true) ...[
               bounded ? Expanded(child: player()) : player(),
-              const SizedBox(height: 8),
+              if (!finished) const SizedBox(height: 12),
             ] else if (generating)
               bounded
-                  ? const Expanded(
-                      child: Center(child: CircularProgressIndicator()),
-                    )
+                  ? const Expanded(child: _GeneratingPlaceholder())
                   : const SizedBox(
                       height: 180,
-                      child: Center(child: CircularProgressIndicator()),
+                      child: _GeneratingPlaceholder(),
                     ),
-            if (generating)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
+            if (!finished) ...[
+              if (node.videoUrl?.isNotEmpty == true || generating)
+                const SizedBox(height: 12),
+              _PromptCard(
+                child: Column(
+                  crossAxisAlignment: .stretch,
+                  mainAxisSize: .min,
                   children: [
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                    if (widget.videoGateMessage != null) ...[
+                      Text(widget.videoGateMessage!, style: RamificaText.meta),
+                      const SizedBox(height: 8),
+                    ],
+                    const Text('Video prompt', style: RamificaText.label),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: ValueKey('video-prompt-$nodeId'),
+                      controller: _prompt,
+                      focusNode: _focus,
+                      enabled: !widget.busy && !pendingJob,
+                      maxLength: 2000,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        hintText: 'How the clip should move…',
+                        filled: true,
+                        fillColor: RamificaColors.inputFill,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: RamificaColors.inputBorder,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: RamificaColors.inputFocusedBorder,
+                        ),
+                      ),
+                      onChanged: widget.onVideoPromptChanged,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      (widget.phase ?? node.generationPhase) == 'saving'
-                          ? 'Saving changes…'
-                          : (widget.phase ?? node.generationPhase) ==
-                                'processing'
-                          ? 'Processing video…'
-                          : 'Generating video…',
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      key: ValueKey('gen-video-$nodeId'),
+                      onPressed: widget.busy || widget.videoGateMessage != null
+                          ? null
+                          : () => widget.onVideoGenerate?.call(
+                              pendingJob
+                                  ? (node.videoPrompt ?? '')
+                                  : _prompt.text,
+                            ),
+                      icon: const Icon(Icons.movie_outlined, size: 18),
+                      label: Text(
+                        generating && widget.busy
+                            ? "Generating video…"
+                            : pendingJob
+                            ? 'Continue generation'
+                            : 'Generate video',
+                      ),
                     ),
+                    if (widget.onUploadVideo != null) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        key: ValueKey('upload-video-$nodeId'),
+                        onPressed: widget.busy || widget.uploadProgress != null
+                            ? null
+                            : widget.onUploadVideo,
+                        icon: const Icon(Icons.upload, size: 18),
+                        label: const Text('Upload clip'),
+                      ),
+                    ],
+                    if (widget.uploadProgress != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: LinearProgressIndicator(
+                              value: widget.uploadProgress!.clamp(0, 1),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
+                            style: RamificaText.meta,
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (node.videoStatus == 'failed') ...[
+                      const SizedBox(height: 8),
+                      const Text('Video generation failed. Retry Generate.'),
+                    ],
+                    if (widget.showErrors && node.videoStatus != 'ready') ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        '⚠ Generate the clip',
+                        style: TextStyle(
+                          color: RamificaColors.error,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            if (node.videoStatus == 'failed')
-              const Text(
-                'Video generation failed. Retry Generate or Another take.',
-              ),
-            if (node.videoStatus == 'ready' &&
-                (node.durationSeconds == null || node.durationSeconds! <= 0))
-              const Text(
-                'This clip has no measured duration; regenerate or re-upload it before publishing.',
-              ),
-            if (widget.videoGateMessage != null) ...[
-              const SizedBox(height: 8),
-              Text(widget.videoGateMessage!, style: RamificaText.meta),
             ],
-            const SizedBox(height: 8),
-            TextField(
-              key: ValueKey('video-prompt-$nodeId'),
-              controller: _prompt,
-              focusNode: _focus,
-              enabled: !widget.busy && !pendingJob,
-              maxLength: 2000,
-              minLines: 2,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Video prompt',
-                hintText: 'How the clip should move…',
-                filled: true,
-                fillColor: RamificaColors.inputFill,
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(12)),
-                  borderSide: RamificaColors.inputBorder,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(12)),
-                  borderSide: RamificaColors.inputFocusedBorder,
-                ),
-              ),
-              onChanged: widget.onVideoPromptChanged,
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              key: ValueKey('gen-video-$nodeId'),
-              onPressed: widget.busy || widget.videoGateMessage != null
-                  ? null
-                  : () => widget.onVideoGenerate?.call(
-                      pendingJob ? (node.videoPrompt ?? '') : _prompt.text,
-                    ),
-              child: Text(
-                generating && widget.busy
-                    ? "Generating video…"
-                    : pendingJob
-                    ? 'Continue generation'
-                    : (node.videoUrl == null
-                          ? 'Generate video'
-                          : 'Another take'),
-              ),
-            ),
-            if (widget.onUploadVideo != null) ...[
-              const SizedBox(height: 8),
-              OutlinedButton(
-                key: ValueKey('upload-video-$nodeId'),
-                onPressed: widget.busy || widget.uploadProgress != null
-                    ? null
-                    : widget.onUploadVideo,
-                child: const Text('Upload clip'),
-              ),
-            ],
-            if (widget.uploadProgress != null) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: LinearProgressIndicator(
-                      value: widget.uploadProgress!.clamp(0, 1),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
-                    style: RamificaText.meta,
-                  ),
-                ],
-              ),
-            ],
-            if (widget.showErrors && node.videoStatus != 'ready') ...[
+            if (finished &&
+                (node.durationSeconds == null ||
+                    node.durationSeconds! <= 0)) ...[
               const SizedBox(height: 8),
               const Text(
-                '⚠ Generate the clip',
-                style: TextStyle(color: RamificaColors.error, fontSize: 12),
+                'This clip has no measured duration.',
+                style: RamificaText.meta,
               ),
+            ],
+            if (widget.active && widget.continueAction != null) ...[
+              const SizedBox(height: 16),
+              widget.continueAction!,
             ],
           ],
         );
       },
+    );
+  }
+}
+
+/// Card grouping the prompt editor with its actions.
+class _PromptCard extends StatelessWidget {
+  const _PromptCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RamificaColors.containerBase,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RamificaColors.outlineVariant),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Full-area wash while the clip renders: the container fill with a slow
+/// accent pulse behind the centered spinner. No text: the button label
+/// already names the running job.
+class _GeneratingPlaceholder extends StatefulWidget {
+  const _GeneratingPlaceholder();
+
+  @override
+  State<_GeneratingPlaceholder> createState() => _GeneratingPlaceholderState();
+}
+
+class _GeneratingPlaceholderState extends State<_GeneratingPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, child) => Container(
+        decoration: BoxDecoration(
+          borderRadius: RamificaLayout.cardBorderRadius,
+          border: Border.fromBorderSide(RamificaColors.inputBorder),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              RamificaColors.hotspot.withValues(
+                alpha: 0.05 + 0.06 * _pulse.value,
+              ),
+              RamificaColors.primaryContainer.withValues(
+                alpha: 0.12 + 0.12 * _pulse.value,
+              ),
+            ],
+          ),
+        ),
+        child: child,
+      ),
+      child: const Center(child: CircularProgressIndicator()),
     );
   }
 }

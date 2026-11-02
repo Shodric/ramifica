@@ -36,12 +36,20 @@ class StepScript extends StatefulWidget {
     this.propose,
     this.onTitleChanged,
     this.onEndingNameChanged,
+    this.active = true,
+    this.continueAction,
   });
 
   final DraftNode node;
   final bool isRoot;
   final bool busy;
   final bool showErrors;
+
+  /// Offstage steps skip the continue action so a single one mounts.
+  final bool active;
+
+  /// Continue action placed at the step's end. Null renders nothing.
+  final Widget? continueAction;
 
   /// Test seam. Null builds the platform recorder (web only).
   final VoiceRecorder? recorder;
@@ -401,6 +409,10 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
                 onChanged: widget.onEndingNameChanged,
               ),
               const SizedBox(height: 8),
+            ],
+            if (widget.active && widget.continueAction != null) ...[
+              const SizedBox(height: 16),
+              widget.continueAction!,
             ],
           ],
         );

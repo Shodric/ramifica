@@ -923,6 +923,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       targetNodeId: target,
       isDefault: node.choices.isEmpty,
       slot: at,
+      x: DraftChoice.defaultXFor(at),
     );
     final next = [...node.choices];
     var index = next.length;

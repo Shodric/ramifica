@@ -186,58 +186,53 @@ class WizardBanner extends StatelessWidget {
   }
 }
 
-/// Sticky footer: save status left, Back/Continue right. Continue is
-/// the primary filled action; Back is secondary outlined.
-class WizardFooter extends StatelessWidget {
-  const WizardFooter({
+/// Full-width rectangular Continue, placed inside each step's own
+/// layout instead of a shell footer. Step changes go through the
+/// stepper chips; there is no Back. While busy the label swaps for
+/// a spinner.
+///
+/// The screen builds one instance and hands it to every step; each
+/// step mounts it only while active, so a single `wizard-continue`
+/// exists at a time.
+class WizardContinueButton extends StatelessWidget {
+  const WizardContinueButton({
     super.key,
-    required this.statusText,
-    required this.canGoBack,
     required this.busy,
-    required this.onBack,
     required this.onContinue,
     required this.isLastStep,
-    this.backLabel = 'Back',
     this.continueLabel,
   });
 
-  final String statusText;
-  final bool canGoBack;
   final bool busy;
-  final VoidCallback onBack;
   final VoidCallback onContinue;
   final bool isLastStep;
-  final String backLabel;
 
   /// Null uses Continue, or Finish on the last step.
   final String? continueLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              statusText,
-              style: RamificaText.meta,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
+      child: FilledButton(
+        key: const ValueKey('wizard-continue'),
+        onPressed: busy ? null : onContinue,
+        style: FilledButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-          OutlinedButton(
-            key: const ValueKey('wizard-back'),
-            onPressed: !canGoBack || busy ? null : onBack,
-            child: Text(backLabel),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            key: const ValueKey('wizard-continue'),
-            onPressed: busy ? null : onContinue,
-            child: Text(continueLabel ?? (isLastStep ? 'Finish' : 'Continue')),
-          ),
-        ],
+        ),
+        child: busy
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: RamificaColors.textPrimary,
+                ),
+              )
+            : Text(continueLabel ?? (isLastStep ? 'Finish' : 'Continue')),
       ),
     );
   }
@@ -247,7 +242,11 @@ class WizardFooter extends StatelessWidget {
 /// The body is one title plus the idea field, in the same inputs as the
 /// other steps. Typing and Continue keep the premise local. Save or Apply persists it.
 class WizardPremise extends StatefulWidget {
-  const WizardPremise({super.key});
+  const WizardPremise({super.key, this.continueAction});
+
+  /// Continue action placed under the premise fields. Null renders
+  /// the fields alone.
+  final Widget? continueAction;
 
   @override
   State<WizardPremise> createState() => WizardPremiseState();
@@ -335,48 +334,59 @@ class WizardPremiseState extends State<WizardPremise> {
     final story = bloc.state.story;
     if (story == null) return const SizedBox.shrink();
     final repository = bloc.repository;
-    return PremiseSheet(
-      key: const ValueKey('wizard-premise'),
-      embedded: true,
-      onApply: null,
-      initialTitle: _title,
-      initialIdea: _idea,
-      onDraft: _onDraft,
-      socketFactory: AsrSocket.new,
-      getIdToken: _idToken,
-      getAppCheckToken: _appCheckToken,
-      transcribe: (bytes) async {
-        final slice = await repository.transcribeVoice(
-          sessionId: _sessionId,
-          seq: 0,
-          audioBase64: base64Encode(bytes),
-          format: 'wav',
-          last: true,
-        );
-        return slice.text;
-      },
-      propose: (transcript) async {
-        if (!await bloc.flushNode(story.rootNodeId!)) {
-          throw const AppFailure(.failed);
-        }
-        final outline = await repository.proposeStoryOutline(
-          storyId: story.storyId,
-          transcript: transcript,
-        );
-        return (
-          title: outline.title,
-          synopsis: outline.synopsis,
-          narratorLine: outline.narratorLine,
-          options: [
-            for (final option in outline.options)
-              OutlineOption(
-                label: option.label,
-                icon: option.icon,
-                iconColor: option.iconColor,
-              ),
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: .stretch,
+      children: [
+        Expanded(
+          child: PremiseSheet(
+            key: const ValueKey('wizard-premise'),
+            embedded: true,
+            onApply: null,
+            initialTitle: _title,
+            initialIdea: _idea,
+            onDraft: _onDraft,
+            socketFactory: AsrSocket.new,
+            getIdToken: _idToken,
+            getAppCheckToken: _appCheckToken,
+            transcribe: (bytes) async {
+              final slice = await repository.transcribeVoice(
+                sessionId: _sessionId,
+                seq: 0,
+                audioBase64: base64Encode(bytes),
+                format: 'wav',
+                last: true,
+              );
+              return slice.text;
+            },
+            propose: (transcript) async {
+              if (!await bloc.flushNode(story.rootNodeId!)) {
+                throw const AppFailure(.failed);
+              }
+              final outline = await repository.proposeStoryOutline(
+                storyId: story.storyId,
+                transcript: transcript,
+              );
+              return (
+                title: outline.title,
+                synopsis: outline.synopsis,
+                narratorLine: outline.narratorLine,
+                options: [
+                  for (final option in outline.options)
+                    OutlineOption(
+                      label: option.label,
+                      icon: option.icon,
+                      iconColor: option.iconColor,
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+        if (widget.continueAction != null) ...[
+          const SizedBox(height: 16),
+          widget.continueAction!,
+        ],
+      ],
     );
   }
 }

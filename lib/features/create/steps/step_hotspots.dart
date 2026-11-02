@@ -4,10 +4,11 @@ import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/zone_marker.dart';
 
 /// S5 Options: hotspot header, the [ZoneMarker] preview, one card per
-/// option, the add-option action, and the red delete at the end (non-root
-/// only). Zones persist with the scene Save button or generation; there is no
-/// separate Save zones button. [showErrors] flags options whose label is
-/// not 1-24 characters.
+/// option, and the add-option action. Zones persist with the scene Save
+/// button or generation; there is no separate Save zones button.
+/// [showErrors] flags options whose label is not 1-24 characters.
+/// Delete has no affordance for now; [onDelete] and
+/// [deleteBlockedReason] stay wired for its return.
 class StepHotspots extends StatefulWidget {
   const StepHotspots({
     super.key,
@@ -29,9 +30,17 @@ class StepHotspots extends StatefulWidget {
     this.onOpenChild,
     this.onDelete,
     this.deleteBlockedReason,
+    this.active = true,
+    this.continueAction,
   });
 
   final DraftNode node;
+
+  /// Offstage steps skip the continue action so a single one mounts.
+  final bool active;
+
+  /// Continue action placed at the step's end. Null renders nothing.
+  final Widget? continueAction;
 
   /// Full `Scene M (Title)` target per choice id, shown on the fused
   /// option cards.
@@ -138,14 +147,12 @@ class _StepHotspotsState extends State<StepHotspots> {
           const SizedBox(height: 16),
           _AddOptionButton(busy: widget.busy, onAddBranch: widget.onAddBranch),
         ],
-        if (!widget.isRoot) ...[
+        // No delete affordance for now: [onDelete] and
+        // [deleteBlockedReason] stay wired so the flow can return
+        // without touching the bloc or the screen.
+        if (widget.active && widget.continueAction != null) ...[
           const SizedBox(height: 16),
-          _DeleteNode(
-            node: node,
-            busy: widget.busy,
-            onDelete: widget.onDelete,
-            deleteBlockedReason: widget.deleteBlockedReason,
-          ),
+          widget.continueAction!,
         ],
       ],
     );
@@ -253,85 +260,5 @@ class _AddOptionButton extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-/// Full-width red delete at the end of the options step. The caller skips
-/// it on the root (which can never be deleted). Tapping asks for
-/// confirmation first; the reason explains a disabled button on
-/// targeted nodes.
-class _DeleteNode extends StatelessWidget {
-  const _DeleteNode({
-    required this.node,
-    required this.busy,
-    required this.onDelete,
-    required this.deleteBlockedReason,
-  });
-
-  final DraftNode node;
-  final bool busy;
-  final VoidCallback? onDelete;
-  final String? deleteBlockedReason;
-
-  @override
-  Widget build(BuildContext context) {
-    final blocked = busy || deleteBlockedReason != null;
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        if (deleteBlockedReason != null)
-          Text(deleteBlockedReason!, style: RamificaText.meta),
-        if (deleteBlockedReason != null) const SizedBox(height: 8),
-        SizedBox(
-          height: 48,
-          width: double.infinity,
-          child: FilledButton(
-            key: ValueKey('delete-node-${node.nodeId}'),
-            onPressed: blocked ? null : () => _confirmDelete(context),
-            style: FilledButton.styleFrom(
-              backgroundColor: RamificaColors.danger,
-              foregroundColor: RamificaColors.textPrimary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text('Delete scene'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Delete confirmation for a non-root node. Confirming calls
-  /// [onDelete]; dismissing does nothing.
-  Future<void> _confirmDelete(BuildContext context) async {
-    final title = node.title.trim();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete this scene?'),
-        content: Text(
-          title.isEmpty
-              ? 'This cannot be undone.'
-              : 'Delete "$title"? This cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: ValueKey('confirm-delete-${node.nodeId}'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(
-              'Delete',
-              style: TextStyle(color: RamificaColors.danger),
-            ),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) onDelete?.call();
   }
 }

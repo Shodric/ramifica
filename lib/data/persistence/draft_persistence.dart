@@ -210,6 +210,7 @@ class ClientDraftPersistence implements DraftPersistence {
         isDefault: parent.choices.isEmpty,
         icon: _icon(icon) ?? (wanted == 'A' ? 'compass' : 'moon'),
         iconColor: _color(iconColor) ?? (wanted == 'A' ? 'cyan' : 'blue'),
+        x: DraftChoice.defaultXFor(wanted),
       );
       final linked = parent.copy(choices: [...parent.choices, choice]);
       if (existing == null) tx.set(childPath, child.toJson());
@@ -319,6 +320,7 @@ class ClientDraftPersistence implements DraftPersistence {
               iconColor:
                   _color(proposal['iconColor']) ??
                   (slot == 'A' ? 'cyan' : 'blue'),
+              x: DraftChoice.defaultXFor(slot),
             ),
           );
         }

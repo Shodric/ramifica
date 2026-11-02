@@ -25,10 +25,18 @@ class StepFrames extends StatefulWidget {
     this.onImageGenerate,
     this.onImageApprovalChanged,
     this.onStartPromptChanged,
+    this.active = true,
+    this.continueAction,
   });
 
   final DraftNode node;
   final bool busy;
+
+  /// Offstage steps skip the continue action so a single one mounts.
+  final bool active;
+
+  /// Continue action placed at the step's end. Null renders nothing.
+  final Widget? continueAction;
   final String? generatingWhich, phase;
   final bool showErrors;
 
@@ -100,6 +108,10 @@ class _StepFramesState extends State<StepFrames> {
           onApprovalChanged: widget.onImageApprovalChanged,
           onPromptChanged: widget.onStartPromptChanged,
         ),
+        if (widget.active && widget.continueAction != null) ...[
+          const SizedBox(height: 16),
+          widget.continueAction!,
+        ],
       ],
     );
   }

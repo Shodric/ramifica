@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:video_player/video_player.dart';
 
 import 'voice_preview.dart' show mediaTime;
@@ -208,20 +209,31 @@ class _ClipPreviewState extends State<ClipPreview> {
             ),
             Text(mediaTime(v?.position ?? Duration.zero)),
             Expanded(
-              child: Slider(
-                key: const ValueKey('video-seek'),
-                max: max > 0 ? max : 1,
-                value: (_drag ?? v?.position.inMilliseconds.toDouble() ?? 0)
-                    .clamp(0, max > 0 ? max : 1),
-                onChanged: enabled && max > 0
-                    ? (p) => setState(() => _drag = p)
-                    : null,
-                onChangeEnd: enabled
-                    ? (p) {
-                        unawaited(c!.seekTo(Duration(milliseconds: p.round())));
-                        setState(() => _drag = null);
-                      }
-                    : null,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  // Same as the audio bar: white at 25% keeps the
+                  // remaining path visible on the dark surface.
+                  inactiveTrackColor: RamificaColors.textPrimary.withValues(
+                    alpha: 0.25,
+                  ),
+                ),
+                child: Slider(
+                  key: const ValueKey('video-seek'),
+                  max: max > 0 ? max : 1,
+                  value: (_drag ?? v?.position.inMilliseconds.toDouble() ?? 0)
+                      .clamp(0, max > 0 ? max : 1),
+                  onChanged: enabled && max > 0
+                      ? (p) => setState(() => _drag = p)
+                      : null,
+                  onChangeEnd: enabled
+                      ? (p) {
+                          unawaited(
+                            c!.seekTo(Duration(milliseconds: p.round())),
+                          );
+                          setState(() => _drag = null);
+                        }
+                      : null,
+                ),
               ),
             ),
             Text(mediaTime(duration)),

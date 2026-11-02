@@ -27,7 +27,9 @@ class DraftChoice {
       slot: _optionalString(json['slot']),
       icon: _optionalString(json['icon']),
       iconColor: _optionalString(json['iconColor']),
-      x: _optionalDouble(json['x']) ?? 0.5,
+      x:
+          _optionalDouble(json['x']) ??
+          DraftChoice.defaultXFor(_optionalString(json['slot'])),
       y: _optionalDouble(json['y']) ?? 0.5,
       radius: _optionalDouble(json['radius']) ?? 0.15,
     );
@@ -54,6 +56,11 @@ class DraftChoice {
   final double x;
   final double y;
   final double radius;
+
+  /// Default zone x by slot, so fresh A/B options land left/right
+  /// instead of stacked at the center. Matches [slot] (A left, B right).
+  static double defaultXFor(String? slot) => slot == 'B' ? 0.75 : 0.25;
+
   Map<String, dynamic> toJson() {
     return {
       'choiceId': choiceId,
