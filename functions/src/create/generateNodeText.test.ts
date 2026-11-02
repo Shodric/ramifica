@@ -281,7 +281,7 @@ test("proposes decision text without writing", async () => {
   assert.equal(snapshot(db), before);
 });
 
-test("scene purpose excludes provider narration", async () => {
+test("scene purpose includes the narrator line", async () => {
   const db = new MemDb();
   await seedDraft(db);
   const result = await generateNodeTextWith(
@@ -292,9 +292,25 @@ test("scene purpose excludes provider narration", async () => {
       choices: ["Enter", "Wait"],
     }))}
   );
-  assert.equal(result.ttsText, null);
+  assert.equal(result.ttsText, "You must choose.");
   assert.equal(result.title, "The gate");
   assert.equal(result.choices.length, 2);
+});
+
+test("scene purpose strips volunteered choice icons", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeTextWith(
+    db, "u1",
+    {storyId: "story_draft", nodeId: "node_001", purpose: "scene"},
+    {apiKey: "test", fetchFn: stubFetch(JSON.stringify({
+      title: "The gate", ttsText: "You must choose.",
+      choices: [{label: "Enter", icon: "door", iconColor: "cyan"}],
+    }))}
+  );
+  assert.deepEqual(result.choices, [
+    {label: "Enter", icon: null, iconColor: null},
+  ]);
 });
 
 test("narration uses the options without changing the scene",

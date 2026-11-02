@@ -21,6 +21,7 @@ export const aiDefaults = {
   },
   openRouter: {
     baseUrl: "https://openrouter.ai/api/v1",
+    decisionModel: "baseten/joey-1",
     imageModel: "meta/muse-image",
     videoModel: "heygen/heygen-video-1",
     ttsModel: "google/gemini-3.8-flash-lite-tts",
@@ -115,6 +116,9 @@ export const openRouterConfig = (env: Env = process.env) => {
     .replace(/\/+$/, "");
   return {
     apiKey: env.OPENROUTER_API_KEY || "",
+    decisionModel: setting(
+      env, "OPENROUTER_DECISION_MODEL", aiDefaults.openRouter.decisionModel
+    ),
     imageModel: setting(
       env, "OPENROUTER_IMAGE_MODEL", aiDefaults.openRouter.imageModel
     ),

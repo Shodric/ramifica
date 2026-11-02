@@ -41,6 +41,7 @@ test("provider settings accept custom endpoints without stale defaults", () => {
   assert.equal(meta.transcribeModel, "custom-asr");
   const router = openRouterConfig({
     OPENROUTER_BASE_URL: "https://router.example/api/v2/",
+    OPENROUTER_DECISION_MODEL: "vendor/custom-decision",
     OPENROUTER_VIDEO_MODEL: "vendor/custom-video",
     OPENROUTER_TTS_MODEL: "vendor/custom-tts",
     OPENROUTER_TTS_VOICE: "custom-voice",
@@ -48,6 +49,8 @@ test("provider settings accept custom endpoints without stale defaults", () => {
   });
   assert.equal(router.videosUrl, "https://router.example/api/v2/videos");
   assert.equal(router.speechUrl, "https://router.example/api/v2/audio/speech");
+  assert.equal(router.decisionModel, "vendor/custom-decision");
+  assert.equal(openRouterConfig({}).decisionModel, "baseten/joey-1");
   assert.equal(router.videoModel, "vendor/custom-video");
   assert.equal(router.ttsModel, "vendor/custom-tts");
   assert.equal(router.ttsVoice, "custom-voice");

@@ -157,16 +157,13 @@ const systemPrompt = [
   "start to end). Keep each media prompt photorealistic and under 2000 ",
   "characters.",
   "For decision nodes propose one or two choices: each a label of 1-24 ",
-  "characters naming the moment of choosing, with an icon and iconColor ",
-  "picked from the lists below. For ending nodes propose an ending name ",
-  "of 1-40 characters and no choices.",
-  `Icons: ${knownChoiceIcons.join(", ")}.`,
-  `Colors: ${knownChoiceIconColors.join(", ")}.`,
+  "characters naming the moment of choosing. Do not propose icons: a ",
+  "later decision step styles each choice. For ending nodes propose an ",
+  "ending name of 1-40 characters and no choices.",
   "Write in the same language as the story context; default to Spanish.",
   "Answer with a single JSON object only, no fences or commentary:",
   "{\"title\": string|null, \"ttsText\": string|null,",
-  "\"choices\": [{\"label\": string, \"icon\": string|null,",
-  "\"iconColor\": string|null}], \"endingName\": string|null,",
+  "\"choices\": [{\"label\": string}], \"endingName\": string|null,",
   "\"startImagePrompt\": string|null, \"videoPrompt\": string|null}.",
 ].join(" ");
 
@@ -276,7 +273,15 @@ export const generateNodeTextWith = async (
 
   const content = await completeText(story, current, authorText, deps, purpose);
   const proposal = sanitizeProposal(content, isEnding, isChild);
-  if (purpose === "scene") return {...proposal, ttsText: null};
+  if (purpose === "scene") {
+    // Icons are decided separately per choice; the scene carries labels.
+    return {
+      ...proposal,
+      choices: proposal.choices.map((choice) => ({
+        ...choice, icon: null, iconColor: null,
+      })),
+    };
+  }
   if (purpose === "narration") {
     return {
       title: null, ttsText: proposal.ttsText, choices: [], endingName: null,
@@ -332,8 +337,7 @@ const completeText = async (
       model,
       system: purpose === "narration" ? narrationPrompt :
         purpose === "scene" ? systemPrompt +
-          " This request is for the scene only. Set ttsText to null; " +
-          "the decision narration is authored separately in the Voice step." :
+          " This request covers the whole scene, narrator line included." :
           systemPrompt,
       user: userPrompt(story, node, authorText, purpose),
       fetchFn: deps.fetchFn,
