@@ -418,11 +418,12 @@ Realtime flow:
 S1 uses the same `DictationController` and microphone bar as S0: live PCM,
 with one complete WAV transcription when realtime is unavailable. A denied
 microphone, empty take, or transcription error preserves the previous direction.
-Format calls the existing `generateNodeText` after flushing pending node edits.
-It returns an editable proposal; only Apply dispatches `SceneProposalApplied`.
-Apply fills empty author fields and missing A/B branches, preserving existing
-choice IDs, destinations, geometry, and defaults. S1 scene proposals exclude
-narration, and Script requires only a valid scene title to continue.
+Continue calls the existing `generateNodeText` after flushing pending node
+edits, then auto-applies the proposal without review UI. Apply fills empty
+author fields and missing A/B branches, preserving existing choice IDs,
+destinations, geometry, defaults, and the manual title/ending name. S1 scene
+proposals include the narrator line, and Script requires a valid scene title
+plus the line to continue.
 S3 owns the decision narration: write or generate the line, approve it, then
 generate and approve voice. This line is heard after the clip, just before the
 player chooses an option; endings use a closing line without inventing choices.
@@ -436,6 +437,11 @@ then merges the current parent and missing children atomically. Only empty field
 and slots are filled; IDs, geometry, defaults and existing destinations survive
 retries. Stable per-slot request IDs also recover legacy orphans. No full reload,
 extra callable, recovery journal or separate operation collection is needed.
+Scene proposals carry no icons. After a successful apply the client fires one
+`decideChoiceIcon` call per unstyled choice — previous decision plus proposal
+context plus the sibling label — and merges each answer only while the choice
+is still unstyled, so a late answer never overwrites a manual pick. A failed
+decision stays silent and the usual display fallback remains.
 
 The text contract caps title/ending name at 40 characters, narration at 280,
 choice labels at 24, and the three media prompts at 2000, with at most two choices.

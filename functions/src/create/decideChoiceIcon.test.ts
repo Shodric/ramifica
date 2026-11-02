@@ -30,6 +30,11 @@ class MemDb implements Db {
     }],
   ]);
 
+  /**
+   * In-memory doc reference backed by the shared store.
+   * @param {string} path Document path.
+   * @return {DbRef} Reference reading from the store.
+   */
   doc(path: string): DbRef {
     const fields = this.store.get(path);
     const snapshot: DbDoc = {
@@ -51,10 +56,12 @@ class MemDb implements Db {
     };
   }
 
+  /** Unused collection path for the decision flow. */
   collection(): never {
     throw new Error("unused");
   }
 
+  /** Unused transaction path for the decision flow. */
   runTransaction(): never {
     throw new Error("unused");
   }
