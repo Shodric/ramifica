@@ -711,7 +711,7 @@ void main() {
       expect(find.text('That action is not valid'), findsOneWidget);
     });
 
-    testWidgets('root shows S controls, child inherits S read-only', (
+    testWidgets('root shows S controls, child skips the Scenes step', (
       tester,
     ) async {
       final bloc = await _pumpMediaDraft(tester);
@@ -730,14 +730,13 @@ void main() {
       // Back to the canvas, then tapping the leaf opens its own screen.
       await tester.tap(find.byIcon(Icons.arrow_back));
       await tester.pumpAndSettle();
-      await _openNode(tester, 'node_2', step: 1);
+      await _openNode(tester, 'node_2');
       expect(bloc.state.openNodeId, 'node_2');
 
-      // The child inherits S read-only, with no prompt editors at all.
-      expect(find.text('Inherited'), findsOneWidget);
-      expect(find.byKey(const ValueKey('prompt-start-node_2')), findsNothing);
-      expect(find.byKey(const ValueKey('prompt-end-node_2')), findsNothing);
-      expect(find.byKey(const ValueKey('approve-end-node_2')), findsNothing);
+      // No Scenes chip: the child inherits S from the parent clip.
+      expect(find.byKey(const ValueKey('wizard-step-1')), findsNothing);
+      expect(find.text('Scenes'), findsNothing);
+      expect(find.text('Inherited'), findsNothing);
     });
 
     testWidgets('the app bar shows the level badge left of the scene name', (
@@ -808,15 +807,64 @@ void main() {
       expect(sent.data['prompt'], 'misty gate');
     });
 
-    testWidgets('child start frame is inherited read-only', (tester) async {
+    testWidgets('child skips the Scenes step', (tester) async {
       await _pumpMediaDraft(tester);
 
-      await _openNode(tester, 'node_2', step: 1);
+      await _openNode(tester, 'node_2');
 
-      // No prompt editors: the inherited frame shows read-only.
-      expect(find.text('Inherited'), findsOneWidget);
+      // Script, Voice, Clip, Options keep their logical chip keys.
+      expect(find.byKey(const ValueKey('wizard-step-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('wizard-step-1')), findsNothing);
+      expect(find.byKey(const ValueKey('wizard-step-2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('wizard-step-3')), findsOneWidget);
+      expect(find.byKey(const ValueKey('wizard-step-4')), findsOneWidget);
+      expect(find.text('Scenes'), findsNothing);
+    });
+
+    testWidgets('child Continue skips Scenes to Voice and Back returns', (
+      tester,
+    ) async {
+      final docs = _defaultDocs();
+      final root = Map<String, dynamic>.from(docs.first.value);
+      root['choices'] = [
+        {
+          'choiceId': 'c1',
+          'label': 'Open the door',
+          'targetNodeId': 'node_2',
+          'isDefault': true,
+          'slot': 'A',
+          'x': 0.25,
+          'y': 0.65,
+          'radius': 0.15,
+        },
+      ];
+      await _pumpDraft(tester, null, [
+        MapEntry('node_1', root),
+        MapEntry('node_2', <String, dynamic>{
+          'title': 'Mid',
+          'isEnding': false,
+          'ttsText': 'A line',
+          'startFromNodeId': 'node_1',
+        }),
+      ]);
+
+      await _openNode(tester, 'node_2');
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      // Voice body, not Scenes.
+      expect(
+        find.byKey(const ValueKey('gen-voice-node_2')).hitTestable(),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('prompt-start-node_2')), findsNothing);
-      expect(find.byKey(const ValueKey('prompt-end-node_2')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('wizard-back')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('script-direction-node_2')).hitTestable(),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('gen-image-start-node_2')),
         findsNothing,

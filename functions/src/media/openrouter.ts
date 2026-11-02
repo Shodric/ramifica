@@ -67,6 +67,30 @@ const defaultFetch: OpenRouterFetch = (url, init) =>
   }));
 
 /**
+ * Provider failure detail for logs. OpenRouter answers failures with
+ * `{error: {message}}`; without it only the status survives, which hid
+ * a wrong model id behind a bare 400. Never throws: unreadable bodies
+ * keep the status-only message.
+ * @param {Object} response Provider response.
+ * @return {Promise<string>} The failure message.
+ */
+const failureMessage = async (response: {
+  status: number;
+  json: () => Promise<unknown>;
+}): Promise<string> => {
+  let detail = "";
+  try {
+    const message = asRecord(asRecord(await response.json())?.error)?.message;
+    if (typeof message === "string" && message !== "") {
+      detail = `: ${message.slice(0, 300)}`;
+    }
+  } catch {
+    // Status-only message below.
+  }
+  return `OpenRouter request failed: ${response.status}.${detail}`;
+};
+
+/**
  * POSTs a JSON body and decodes the JSON answer. Transport failures
  * throw [OpenRouterHttpError] so callers map codes to their own errors.
  * @param {string} url Endpoint.
@@ -89,8 +113,7 @@ export const postJson = async (
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
-      response.status,
-      `OpenRouter request failed: ${response.status}.`
+      response.status, await failureMessage(response)
     );
   }
   return response.json();
@@ -112,8 +135,7 @@ export const getJson = async (
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
-      response.status,
-      `OpenRouter request failed: ${response.status}.`
+      response.status, await failureMessage(response)
     );
   }
   return response.json();
@@ -142,8 +164,7 @@ export const postBytes = async (
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
-      response.status,
-      `OpenRouter request failed: ${response.status}.`
+      response.status, await failureMessage(response)
     );
   }
   return Buffer.from(await response.arrayBuffer());
@@ -168,8 +189,7 @@ export const downloadBytes = async (
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
-      response.status,
-      `OpenRouter request failed: ${response.status}.`
+      response.status, await failureMessage(response)
     );
   }
   return Buffer.from(await response.arrayBuffer());
@@ -217,6 +237,37 @@ export const completeChat = async (args: {
   });
   return firstChoiceContent(payload);
 };
+
+/** One typed question for the alpha Decisions API. */
+export interface DecisionQuestion {
+  type: "choice" | "noul" | "score";
+  instructions: string;
+  criteria: Record<string, string> | string[];
+}
+
+/**
+ * Asks the alpha Decisions API (typed answers, no chat). Decision models
+ * like joey-1 only serve this endpoint; chat completions reject them.
+ * @param {Object} args Key, model, state, questions, and test seams.
+ * @return {Promise<unknown>} The decoded `{answers}` payload.
+ */
+export const postDecisions = async (args: {
+  apiKey: string;
+  model: string;
+  state: string[];
+  questions: Record<string, DecisionQuestion>;
+  fetchFn?: OpenRouterFetch;
+}): Promise<unknown> =>
+  postJson(openRouterConfig().decisionsUrl, {
+    apiKey: args.apiKey,
+    fetchFn: args.fetchFn,
+    title: "Ramifica decisions",
+    body: {
+      model: args.model,
+      state: args.state,
+      questions: args.questions,
+    },
+  });
 
 /**
  * Asks OpenRouter for a Gemini TTS take. Returns raw 16-bit 24 kHz mono

@@ -9,11 +9,13 @@ import {
   OpenRouterFetch,
   OpenRouterHttpError,
   postBytes,
+  postDecisions,
   postJson,
   submitVideo,
   speakText,
   videoContentUrl,
 } from "./openrouter";
+import {openRouterConfig} from "../config/ai";
 
 /** Captured request for body/header assertions. */
 interface SeenRequest {
@@ -158,6 +160,50 @@ test("completeChat returns the first choice content", async () => {
     {role: "system", content: "sys"},
     {role: "user", content: "usr"},
   ]);
+});
+
+test("postDecisions posts state and questions to alpha", async () => {
+  const seen: SeenRequest[] = [];
+  const payload = {answers: {icon: {choice: "door"}}};
+  const out = await postDecisions({
+    apiKey: "key-1",
+    model: "baseten/joey-1",
+    state: ["Choice to style: Enter."],
+    questions: {
+      icon: {
+        type: "choice",
+        instructions: "Which icon?",
+        criteria: {door: "door"},
+      },
+    },
+    fetchFn: stubJson(payload, 200, seen),
+  });
+  assert.deepEqual(out, payload);
+  assert.equal(seen[0].url, openRouterConfig().decisionsUrl);
+  const body = JSON.parse(seen[0].init.body ?? "");
+  assert.equal(body.model, "baseten/joey-1");
+  assert.deepEqual(body.state, ["Choice to style: Enter."]);
+  assert.equal(body.questions.icon.type, "choice");
+});
+
+test("provider failures keep the status and the provider message", async () => {
+  const failing = stubJson(
+    {error: {message: "No endpoints found for the model.", code: 400}},
+    400,
+    []
+  );
+  await assert.rejects(
+    postJson("https://example.test", {
+      apiKey: "k",
+      body: {},
+      fetchFn: failing,
+    }),
+    (error: unknown) => {
+      return error instanceof OpenRouterHttpError &&
+        error.status === 400 &&
+        /No endpoints found for the model/.test(error.message);
+    }
+  );
 });
 
 test("completeChat blanks off-shape answers", async () => {

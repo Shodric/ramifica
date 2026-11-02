@@ -451,8 +451,9 @@ the reference for mirror tests against Dart and TypeScript; TS consumers import
 the same lists, and unknown names become null with the usual display fallback.
 
 S2 edits the prompt before Generate or Another take and shows one image per
-frame. A child's start frame and prompt are inherited read-only. S4 edits the
-video prompt; a pending provider job keeps its submitted prompt until resumed.
+frame. S2 is root-only: children skip the step and inherit S from the parent
+clip. S4 edits the video prompt; a pending provider job keeps its submitted
+prompt until resumed.
 For prompts and `endingName`, a null `NodeFieldChanged` value preserves the field;
 a blank value clears it to null. A cleared image prompt uses `buildImagePrompt`.
 Manual node edits stay local, with an Unsaved changes status, until the scene

@@ -397,7 +397,6 @@ void main() {
       tester,
       StepFrames(
         node: const DraftNode(nodeId: 'root'),
-        isRoot: true,
         busy: false,
         showErrors: false,
         onImageGenerate: (which, prompt) => sent = '$which:$prompt',
@@ -411,29 +410,6 @@ void main() {
     await tester.ensureVisible(generate);
     await tester.tap(generate);
     expect(sent, 'start:Revised');
-  });
-
-  testWidgets('S2 shows the inherited frame read-only for children', (
-    tester,
-  ) async {
-    await mount(
-      tester,
-      StepFrames(
-        node: const DraftNode(nodeId: 'child'),
-        isRoot: false,
-        inheritedImageUrl: 'https://example.com/f.png',
-        inheritedCaption: 'Inherited from Scene 1',
-        busy: false,
-        showErrors: false,
-        onImageGenerate: (_, _) => fail('children cannot generate'),
-      ),
-    );
-    expect(find.text('Inherited'), findsOneWidget);
-    expect(find.text('Inherited from Scene 1'), findsOneWidget);
-    expect(find.byKey(const ValueKey('gen-image-start-child')), findsNothing);
-    expect(find.byKey(const ValueKey('gen-image-end-child')), findsNothing);
-    expect(find.byKey(const ValueKey('prompt-start-child')), findsNothing);
-    expect(find.byKey(const ValueKey('prompt-end-child')), findsNothing);
   });
 
   testWidgets(

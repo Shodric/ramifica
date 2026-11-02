@@ -33,6 +33,7 @@ class WizardHeader extends StatelessWidget {
     required this.stepIndex,
     required this.firstIncomplete,
     required this.onStepTap,
+    required this.isRoot,
     this.showIdea = false,
     this.ideaCurrent = false,
     this.ideaDone = false,
@@ -43,9 +44,12 @@ class WizardHeader extends StatelessWidget {
   final int sceneTotal;
   final String title;
   final StatusPillState status;
+
+  /// Logical step ids; [onStepTap] receives the logical id.
   final int stepIndex;
   final int firstIncomplete;
   final ValueChanged<int> onStepTap;
+  final bool isRoot;
 
   /// Root-only Idea chip, before Script.
   final bool showIdea;
@@ -55,6 +59,7 @@ class WizardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final steps = wizardSteps(isRoot: isRoot);
     return Row(
       children: [
         if (showIdea)
@@ -68,15 +73,15 @@ class WizardHeader extends StatelessWidget {
               onTap: onIdea ?? () {},
             ),
           ),
-        for (var i = 0; i < wizardStepCount; i++) ...[
-          if (showIdea || i > 0) const SizedBox(width: 6),
+        for (var position = 0; position < steps.length; position++) ...[
+          if (showIdea || position > 0) const SizedBox(width: 6),
           Expanded(
             child: _StepChip(
-              index: i,
-              current: i == stepIndex,
-              done: i < firstIncomplete,
-              enabled: i <= firstIncomplete,
-              onTap: () => onStepTap(i),
+              index: steps[position],
+              current: steps[position] == stepIndex,
+              done: steps[position] < firstIncomplete,
+              enabled: steps[position] <= firstIncomplete,
+              onTap: () => onStepTap(steps[position]),
             ),
           ),
         ],

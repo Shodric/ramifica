@@ -4,6 +4,10 @@ import 'package:ramifica/data/models/draft_node.dart';
 /// step footer (Continue) and the stepper chips. Steps after Idea:
 /// Script, Scenes, Voice, Clip, Options. Idea is a root-only chip.
 /// Options sits last so zones land on the finished clip's last frame.
+///
+/// Step ids are logical and stable: Scenes is always 1, even though
+/// children skip it (see [wizardSteps]). Chips keep logical keys so
+/// Voice is `wizard-step-2` on every node.
 const wizardStepTitles = <String>[
   'Script',
   'Scenes',
@@ -14,14 +18,24 @@ const wizardStepTitles = <String>[
 
 const wizardStepCount = 5;
 
+/// Logical steps visible in the wizard, in order. Children skip Scenes:
+/// they inherit the start frame from the parent clip, so the step has
+/// no action and never gates Continue.
+List<int> wizardSteps({required bool isRoot}) =>
+    isRoot ? const [0, 1, 2, 3, 4] : const [0, 2, 3, 4];
+
+/// Position of logical [step] among the visible steps, for IndexedStack.
+int wizardDisplayIndex({required int step, required bool isRoot}) =>
+    wizardSteps(isRoot: isRoot).indexOf(step);
+
 /// The first missing piece of [step] for [node], in UI-facing words, or
 /// null when the step is complete.
 ///
 /// * Script needs a title plus the narrator line; generated media is
 ///   accepted as-is (regen replaces it).
-/// * Scenes needs the root S ready. Any other node inherits S read-only
-///   from its parent clip's last frame, so Scenes is vacuous for it;
-///   the Clip gate enforces the parent clip instead.
+/// * Scenes needs the root S ready. Children skip the step entirely
+///   and inherit S from the parent clip's last frame; the Clip gate
+///   enforces the parent clip instead.
 /// * Voice needs a non-blank narrator line plus a generated voice
 ///   (`ttsStatus` ready).
 /// * Options is vacuous on endings (no choices by design).

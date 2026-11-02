@@ -51,6 +51,16 @@ test("provider settings accept custom endpoints without stale defaults", () => {
   assert.equal(router.speechUrl, "https://router.example/api/v2/audio/speech");
   assert.equal(router.decisionModel, "vendor/custom-decision");
   assert.equal(openRouterConfig({}).decisionModel, "baseten/joey-1");
+  assert.equal(
+    openRouterConfig({}).decisionsUrl,
+    "https://openrouter.ai/api/alpha/decisions"
+  );
+  assert.equal(
+    openRouterConfig({
+      OPENROUTER_DECISIONS_URL: "https://router.example/api/alpha/decisions",
+    }).decisionsUrl,
+    "https://router.example/api/alpha/decisions"
+  );
   assert.equal(router.videoModel, "vendor/custom-video");
   assert.equal(router.ttsModel, "vendor/custom-tts");
   assert.equal(router.ttsVoice, "custom-voice");

@@ -3,24 +3,21 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 
-/// S2 Scenes: the root S panel. It shows its prompt editor (2000 chars)
-/// before Generate / Another take, so the author revises the prompt that
-/// generation sends. The prompt edits stay local through
+/// S2 Scenes: the root-only S panel. It shows its prompt editor
+/// (2000 chars) before Generate / Another take, so the author revises
+/// the prompt that generation sends. The prompt edits stay local through
 /// [onStartPromptChanged]; the Generate buttons send the freshly edited
 /// text through [onImageGenerate].
 ///
-/// Non-root nodes inherit S from their parent clip's extracted last
-/// frame: the start panel renders read-only. Busy blocks every control.
-/// A failed generation keeps the last image: panels render whatever URL
-/// the node carries. Generated media is accepted as-is: regen replaces it.
-/// Approval fields are ignored (kept for compat until callers drop them).
+/// Children skip this step: they inherit S from their parent clip's
+/// extracted last frame. Busy blocks every control. A failed generation
+/// keeps the last image: panels render whatever URL the node carries.
+/// Generated media is accepted as-is: regen replaces it. Approval fields
+/// are ignored (kept for compat until callers drop them).
 class StepFrames extends StatefulWidget {
   const StepFrames({
     super.key,
     required this.node,
-    this.isRoot = false,
-    this.inheritedImageUrl,
-    this.inheritedCaption,
     required this.busy,
     this.generatingWhich,
     this.phase,
@@ -31,11 +28,6 @@ class StepFrames extends StatefulWidget {
   });
 
   final DraftNode node;
-
-  /// Root nodes own S; children inherit it read-only.
-  final bool isRoot;
-  final String? inheritedImageUrl;
-  final String? inheritedCaption;
   final bool busy;
   final String? generatingWhich, phase;
   final bool showErrors;
@@ -88,33 +80,26 @@ class _StepFramesState extends State<StepFrames> {
       crossAxisAlignment: .stretch,
       mainAxisSize: .min,
       children: [
-        if (widget.isRoot)
-          _FramePanel(
-            nodeId: nodeId,
-            which: 'start',
-            locallyGenerating: widget.generatingWhich == 'start',
-            error: node.mediaError,
-            phase: widget.phase ?? node.generationPhase,
-            title: 'Start frame',
-            focus: _startFocus,
-            prompt: _start,
-            imageUrl: node.startImageSourceUrl,
-            status: node.generationExpired && node.startImageStatus == 'pending'
-                ? 'failed'
-                : node.startImageStatus,
-            approved: node.startImageApproved,
-            busy: widget.busy,
-            showError: widget.showErrors && node.startImageStatus != 'ready',
-            onGenerate: widget.onImageGenerate,
-            onApprovalChanged: widget.onImageApprovalChanged,
-            onPromptChanged: widget.onStartPromptChanged,
-          )
-        else
-          _InheritedPanel(
-            title: 'Start frame',
-            caption: widget.inheritedCaption,
-            imageUrl: widget.inheritedImageUrl,
-          ),
+        _FramePanel(
+          nodeId: nodeId,
+          which: 'start',
+          locallyGenerating: widget.generatingWhich == 'start',
+          error: node.mediaError,
+          phase: widget.phase ?? node.generationPhase,
+          title: 'Start frame',
+          focus: _startFocus,
+          prompt: _start,
+          imageUrl: node.startImageSourceUrl,
+          status: node.generationExpired && node.startImageStatus == 'pending'
+              ? 'failed'
+              : node.startImageStatus,
+          approved: node.startImageApproved,
+          busy: widget.busy,
+          showError: widget.showErrors && node.startImageStatus != 'ready',
+          onGenerate: widget.onImageGenerate,
+          onApprovalChanged: widget.onImageApprovalChanged,
+          onPromptChanged: widget.onStartPromptChanged,
+        ),
       ],
     );
   }
@@ -347,73 +332,6 @@ class _FramePanel extends StatelessWidget {
               style: RamificaText.meta,
             ),
           ),
-      ],
-    );
-  }
-}
-
-/// Read-only inherited S for non-root nodes: the parent clip's
-/// extracted last frame once the parent clip is ready.
-class _InheritedPanel extends StatelessWidget {
-  const _InheritedPanel({required this.title, this.caption, this.imageUrl});
-
-  final String title;
-  final String? caption;
-  final String? imageUrl;
-
-  @override
-  Widget build(BuildContext context) {
-    final url = imageUrl;
-    return Column(
-      crossAxisAlignment: .stretch,
-      mainAxisSize: .min,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(title, style: RamificaText.label)),
-            const Padding(
-              padding: EdgeInsets.only(left: 4),
-              child: Text('Inherited', style: RamificaText.meta),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: RamificaLayout.cardBorderRadius,
-            border: Border.fromBorderSide(RamificaColors.inputBorder),
-          ),
-          child: ClipRRect(
-            borderRadius: RamificaLayout.cardBorderRadius,
-            child: AspectRatio(
-              aspectRatio: 9 / 16,
-              child: url == null
-                  ? Container(
-                      color: RamificaColors.inputFill,
-                      child: Center(
-                        child: Text(
-                          caption ?? 'No parent clip yet.',
-                          style: RamificaText.caption,
-                        ),
-                      ),
-                    )
-                  : Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        color: RamificaColors.inputFill,
-                        child: const Center(
-                          child: Text('Missing', style: RamificaText.caption),
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        ),
-        if (caption != null) ...[
-          const SizedBox(height: 8),
-          Text(caption!, style: RamificaText.meta),
-        ],
       ],
     );
   }

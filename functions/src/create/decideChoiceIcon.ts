@@ -3,6 +3,7 @@ import {HttpsError} from "firebase-functions/v2/https";
 import {onCallSafe} from "../callable";
 import {openRouterApiKey, openRouterConfig} from "../config/ai";
 import {
+  asRecord,
   cleanId,
   Db,
   docData,
@@ -16,7 +17,7 @@ import {
   knownChoiceIconColors,
   knownChoiceIcons,
 } from "./generateNodeText";
-import {completeChat, OpenRouterFetch} from "../media/openrouter";
+import {OpenRouterFetch, postDecisions} from "../media/openrouter";
 
 /** Decided hotspot styling. Nulls mean the model offered nothing usable. */
 export interface DecideChoiceIconResult {
@@ -37,20 +38,16 @@ export interface DecideDeps {
  */
 const maxContextChars = 2000;
 
-/** The answer is one tiny JSON object; cap the completion hard. */
-const maxAnswerTokens = 64;
-
-/** What the decision model may return: one catalogued icon plus color. */
-const systemPrompt = [
-  "You style hotspot choices for Ramifica, a vertical-video story app.",
-  "Pick exactly one icon and one iconColor from the lists below for the",
-  "given choice, matching its meaning in the story context. Prefer an",
-  "icon the sibling choices do not use.",
-  `Icons: ${knownChoiceIcons.join(", ")}.`,
-  `Colors: ${knownChoiceIconColors.join(", ")}.`,
-  "Answer with a single JSON object only, no fences or commentary:",
-  "{\"icon\": string|null, \"iconColor\": string|null}.",
-].join(" ");
+/**
+ * Choice criteria from a catalog. Keys are the valid answers; the names
+ * double as descriptions since they are plain English words.
+ * @param {string[]} names Catalogued names.
+ * @return {Record<string, string>} The criteria map.
+ */
+const criteriaFrom = (
+  names: readonly string[]
+): Record<string, string> =>
+  Object.fromEntries(names.map((name) => [name, name]));
 
 export const decideChoiceIcon = onCallSafe(
   // Lower ceiling than the player paths: decision calls bill per token.
@@ -104,7 +101,8 @@ export const decideChoiceIconWith = async (
   const title = optString(fields.sceneTitle);
   const line = optString(fields.narratorLine);
   const clip = optString(fields.videoPrompt);
-  const context = [
+  const state = [
+    "Ramifica hotspot styling: pick the icon and color for one choice.",
     previous === null ? null : `Previous decision: ${previous}.`,
     title === null ? null : `Scene title: ${title}.`,
     line === null ? null : `Narrator line: ${line}.`,
@@ -114,10 +112,8 @@ export const decideChoiceIconWith = async (
       "Sibling choices (pick an icon none of them uses): " +
       `${siblings.join(" / ")}.`,
     `Choice to style: ${label}.`,
-  ]
-    .filter((part): part is string => part !== null)
-    .join("\n");
-  if (context.length > maxContextChars) {
+  ].filter((part): part is string => part !== null);
+  if (state.join("\n").length > maxContextChars) {
     throw new HttpsError(
       "invalid-argument",
       `Context is limited to ${maxContextChars} characters.`
@@ -143,36 +139,44 @@ export const decideChoiceIconWith = async (
   }
 
   const config = openRouterConfig();
-  const content = await completeChat({
+  const payload = await postDecisions({
     apiKey: deps.apiKey ?? config.apiKey,
     model: deps.model ?? config.decisionModel,
-    system: systemPrompt,
-    user: context,
-    maxTokens: maxAnswerTokens,
+    state,
+    questions: {
+      icon: {
+        type: "choice",
+        instructions:
+          `Which icon best represents the choice "${label}" ` +
+          "in this story? Prefer one the siblings do not use.",
+        criteria: criteriaFrom(knownChoiceIcons),
+      },
+      iconColor: {
+        type: "choice",
+        instructions:
+          `Which color fits the mood of the choice "${label}"?`,
+        criteria: criteriaFrom(knownChoiceIconColors),
+      },
+    },
     fetchFn: deps.fetchFn,
   });
-  let parsed: unknown = null;
-  try {
-    const start = content.indexOf("{");
-    const end = content.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("no JSON object");
-    parsed = JSON.parse(content.slice(start, end + 1));
-  } catch {
-    return {icon: null, iconColor: null};
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return {icon: null, iconColor: null};
-  }
-  const record = parsed as Record<string, unknown>;
-  const icon =
-    typeof record.icon === "string" &&
-    (knownChoiceIcons as readonly string[]).includes(record.icon) ?
-      record.icon :
-      null;
-  const iconColor =
-    typeof record.iconColor === "string" &&
-    (knownChoiceIconColors as readonly string[]).includes(record.iconColor) ?
-      record.iconColor :
-      null;
-  return {icon, iconColor};
+  const answers = asRecord(asRecord(payload)?.answers);
+  const pick = (name: string): string | null => {
+    const choice = asRecord(answers?.[name])?.choice;
+    return typeof choice === "string" ? choice : null;
+  };
+  const icon = pick("icon");
+  const iconColor = pick("iconColor");
+  return {
+    icon:
+      icon !== null &&
+      (knownChoiceIcons as readonly string[]).includes(icon) ?
+        icon :
+        null,
+    iconColor:
+      iconColor !== null &&
+      (knownChoiceIconColors as readonly string[]).includes(iconColor) ?
+        iconColor :
+        null,
+  };
 };

@@ -22,6 +22,7 @@ export const aiDefaults = {
   openRouter: {
     baseUrl: "https://openrouter.ai/api/v1",
     decisionModel: "baseten/joey-1",
+    decisionsUrl: "https://openrouter.ai/api/alpha/decisions",
     imageModel: "meta/muse-image",
     videoModel: "heygen/heygen-video-1",
     ttsModel: "google/gemini-3.8-flash-lite-tts",
@@ -133,6 +134,9 @@ export const openRouterConfig = (env: Env = process.env) => {
     ),
     ttsInstructions: env.OPENROUTER_TTS_INSTRUCTIONS ??
       aiDefaults.openRouter.ttsInstructions,
+    decisionsUrl: setting(
+      env, "OPENROUTER_DECISIONS_URL", aiDefaults.openRouter.decisionsUrl
+    ),
     chatUrl: endpoint(env, "OPENROUTER_CHAT_URL", base, "chat/completions"),
     speechUrl: endpoint(env, "OPENROUTER_SPEECH_URL", base, "audio/speech"),
     imagesUrl: endpoint(

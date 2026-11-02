@@ -141,6 +141,23 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     return 'No changes';
   }
 
+  /// Next visible logical step after [_stepIndex], or null on the last one.
+  /// Children skip Scenes, so Script advances straight to Voice.
+  int? _nextStep(bool isRoot) {
+    final steps = wizardSteps(isRoot: isRoot);
+    final at = steps.indexOf(_stepIndex);
+    if (at < 0 || at >= steps.length - 1) return null;
+    return steps[at + 1];
+  }
+
+  /// Previous visible logical step before [_stepIndex], or null on Script.
+  int? _prevStep(bool isRoot) {
+    final steps = wizardSteps(isRoot: isRoot);
+    final at = steps.indexOf(_stepIndex);
+    if (at <= 0) return null;
+    return steps[at - 1];
+  }
+
   void _goTo(int index, DraftNode node, bool isRoot) {
     final firstIncomplete = firstIncompleteStep(node: node, isRoot: isRoot);
     if (index > firstIncomplete) {
@@ -195,9 +212,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       return;
     }
     _stopScriptDictation();
-    if (_stepIndex < wizardStepCount - 1) {
+    final next = _nextStep(isRoot);
+    if (next != null) {
       setState(() {
-        _stepIndex++;
+        _stepIndex = next;
         _banner = null;
       });
     } else {
@@ -215,8 +233,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     if (missing == null) {
       _stopScriptDictation();
       if (!mounted || _stepIndex != 0) return;
+      final next = _nextStep(isRoot);
       setState(() {
-        _stepIndex++;
+        if (next != null) _stepIndex = next;
         _banner = null;
       });
       return;
@@ -270,8 +289,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         return;
       }
       _stopScriptDictation();
+      final next = _nextStep(isRoot);
       setState(() {
-        _stepIndex++;
+        if (next != null) _stepIndex = next;
         _banner = null;
       });
     } finally {
@@ -308,7 +328,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
 
   void _onBack() {
     final root = widget.bloc.state.isRoot(widget.nodeId);
-    if (_premise) return;
+    // Mirrors showPremise: children never show the premise page, so the
+    // stale initial flag must not swallow Back on their steps.
+    if (_premise && root) return;
     if (_stepIndex == 0) {
       if (!root) return;
       _stopScriptDictation();
@@ -319,8 +341,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       return;
     }
     _stopScriptDictation();
+    final prev = _prevStep(root);
     setState(() {
-      _stepIndex--;
+      if (prev != null) _stepIndex = prev;
       _banner = null;
     });
   }
@@ -494,6 +517,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                           status: state.statusOf(widget.nodeId),
                           stepIndex: showPremise ? -1 : stepIndex,
                           firstIncomplete: firstIncomplete,
+                          isRoot: isRoot,
                           showIdea: isRoot,
                           ideaCurrent: showPremise,
                           ideaDone: !showPremise && _ideaFilled(state, node),
@@ -514,7 +538,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                 child: WizardPremise(key: _premiseKey),
                               )
                             : IndexedStack(
-                                index: stepIndex,
+                                index: wizardDisplayIndex(
+                                  step: stepIndex,
+                                  isRoot: isRoot,
+                                ),
                                 children: [
                                   Padding(
                                     padding: const EdgeInsets.fromLTRB(
@@ -579,48 +606,44 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                       ),
                                     ),
                                   ),
-                                  _StepScroll(
-                                    child: StepFrames(
-                                      generatingWhich:
-                                          state.generating(
-                                            widget.nodeId,
-                                            'startImage',
-                                          )
-                                          ? 'start'
-                                          : null,
-                                      phase: state.operationPhase == 'saving'
-                                          ? 'saving'
-                                          : node.generationPhase ??
-                                                state.operationPhase,
-                                      node: node,
-                                      isRoot: isRoot,
-                                      inheritedImageUrl:
-                                          parent?.videoFrameLastUrl,
-                                      inheritedCaption: parent == null
-                                          ? null
-                                          : 'Inherited from Scene ${scene[parent.nodeId] ?? '—'}',
-                                      busy: busy,
-                                      showErrors: _showErrors[1],
-                                      onStartPromptChanged: (value) => _edited(
-                                        () => widget.bloc.add(
-                                          NodeFieldChanged(
-                                            nodeId: widget.nodeId,
-                                            startImagePrompt: value,
-                                          ),
-                                        ),
-                                      ),
-                                      onImageGenerate: (which, prompt) =>
-                                          _runMedia(
-                                            () => widget.bloc.add(
-                                              ImageGenerateRequested(
-                                                nodeId: widget.nodeId,
-                                                which: which,
-                                                prompt: prompt,
+                                  if (isRoot)
+                                    _StepScroll(
+                                      child: StepFrames(
+                                        generatingWhich:
+                                            state.generating(
+                                              widget.nodeId,
+                                              'startImage',
+                                            )
+                                            ? 'start'
+                                            : null,
+                                        phase: state.operationPhase == 'saving'
+                                            ? 'saving'
+                                            : node.generationPhase ??
+                                                  state.operationPhase,
+                                        node: node,
+                                        busy: busy,
+                                        showErrors: _showErrors[1],
+                                        onStartPromptChanged: (value) =>
+                                            _edited(
+                                              () => widget.bloc.add(
+                                                NodeFieldChanged(
+                                                  nodeId: widget.nodeId,
+                                                  startImagePrompt: value,
+                                                ),
                                               ),
                                             ),
-                                          ),
+                                        onImageGenerate: (which, prompt) =>
+                                            _runMedia(
+                                              () => widget.bloc.add(
+                                                ImageGenerateRequested(
+                                                  nodeId: widget.nodeId,
+                                                  which: which,
+                                                  prompt: prompt,
+                                                ),
+                                              ),
+                                            ),
+                                      ),
                                     ),
-                                  ),
                                   _StepScroll(
                                     child: StepVoice(
                                       active:

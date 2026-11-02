@@ -68,24 +68,37 @@ class MemDb implements Db {
 }
 
 /**
- * Stub OpenRouter transport answering one chat completion.
- * @param {unknown} content The message content to return.
+ * Stub OpenRouter transport answering one Decisions call.
+ * @param {unknown} payload The decoded `{answers}` payload to return.
  * @param {string[]} seen Captures request bodies.
  * @return {OpenRouterFetch} The stub transport.
  */
 const stubFetch = (
-  content: unknown, seen: string[] = []
+  payload: unknown, seen: string[] = []
 ): OpenRouterFetch => {
   return async (_url, init) => {
     if (init.body !== undefined) seen.push(init.body);
     return {
       ok: true,
       status: 200,
-      json: async () => ({choices: [{message: {content}}]}),
+      json: async () => payload,
       arrayBuffer: async () => new ArrayBuffer(0),
     };
   };
 };
+
+/**
+ * Decisions answer payload for one icon plus color.
+ * @param {unknown} icon The icon answer choice.
+ * @param {unknown} iconColor The color answer choice.
+ * @return {unknown} The `{answers}` payload.
+ */
+const answersWith = (icon: unknown, iconColor: unknown): unknown => ({
+  answers: {
+    icon: {type: "choice", choice: icon, probabilities: {}},
+    iconColor: {type: "choice", choice: iconColor, probabilities: {}},
+  },
+});
 
 test("decides a catalogued icon and color", async () => {
   const db = new MemDb();
@@ -103,16 +116,20 @@ test("decides a catalogued icon and color", async () => {
     },
     {
       apiKey: "test",
-      fetchFn: stubFetch(JSON.stringify({icon: "door", iconColor: "cyan"}),
-        seen),
+      fetchFn: stubFetch(answersWith("door", "cyan"), seen),
     }
   );
   assert.deepEqual(result, {icon: "door", iconColor: "cyan"});
   const body = JSON.parse(seen[0]);
   assert.equal(body.model, "baseten/joey-1");
-  assert.match(JSON.stringify(body.messages), /Choice to style: Enter/);
-  assert.match(JSON.stringify(body.messages), /Climb/);
-  assert.match(JSON.stringify(body.messages), /Open the door/);
+  assert.ok(Array.isArray(body.state));
+  assert.match(JSON.stringify(body.state), /Choice to style: Enter/);
+  assert.match(JSON.stringify(body.state), /Climb/);
+  assert.match(JSON.stringify(body.state), /Open the door/);
+  assert.equal(body.questions.icon.type, "choice");
+  assert.equal(body.questions.iconColor.type, "choice");
+  assert.ok(Object.keys(body.questions.icon.criteria).length > 100);
+  assert.ok(Object.keys(body.questions.iconColor.criteria).length > 1);
 });
 
 test("unknown names fail closed to null", async () => {
@@ -121,10 +138,7 @@ test("unknown names fail closed to null", async () => {
     db,
     "u1",
     {storyId: "story_draft", choiceLabel: "Enter"},
-    {
-      apiKey: "test",
-      fetchFn: stubFetch(JSON.stringify({icon: "nope", iconColor: "nope"})),
-    }
+    {apiKey: "test", fetchFn: stubFetch(answersWith("nope", "nope"))}
   );
   assert.deepEqual(result, {icon: null, iconColor: null});
 });
@@ -144,7 +158,7 @@ test("rejects foreign, missing, and live stories", async () => {
   const db = new MemDb();
   const deps = {
     apiKey: "test",
-    fetchFn: stubFetch(JSON.stringify({icon: "door", iconColor: "cyan"})),
+    fetchFn: stubFetch(answersWith("door", "cyan")),
   };
   await assert.rejects(
     decideChoiceIconWith(
