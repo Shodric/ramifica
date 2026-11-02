@@ -3,7 +3,6 @@ import {createHash} from "crypto";
 import {test} from "node:test";
 import {Db, DbCol, DbDoc, DbRef, DbTx} from "../feed/shared";
 import {
-  approveNodeImageWith,
   buildImagePrompt,
   generateNodeImageWith,
   generateNodeVideoWith,
@@ -206,8 +205,14 @@ const mockDeps = (overrides: NodeMediaDeps = {}): NodeMediaDeps => ({
   normalizeImage: async (bytes) => ({bytes, width: 480, height: 854}),
   requestVideo: async () => ({jobId: "or_test-job"}),
   downloadVideo: async () => Buffer.from("normalized-clip"),
-  normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854,
-    durationSeconds: 10, lastFrame: Buffer.from("last-frame"), lastBlurData: "blur"}),
+  normalizeVideo: async (bytes) => ({
+    bytes,
+    width: 480,
+    height: 854,
+    durationSeconds: 10,
+    lastFrame: Buffer.from("last-frame"),
+    lastBlurData: "blur",
+  }),
   uploadVideo: async () => "https://cdn.example/v-new.mp4",
   now: () => 1234,
   ...overrides,
@@ -239,8 +244,9 @@ const rejectsWith = async (
 };
 
 /**
- * One author-owned draft: root with approved S+E and ready video, one
- * child linked to the root E with its own approved E and ready video.
+ * One author-owned draft: root with ready S, ready video, and an
+ * extracted last frame; one child linked to that last frame with its
+ * own ready video and last frame.
  * @param {MemDb} db Backing store to seed.
  * @return {Promise<void>} When the seed is written.
  */
@@ -256,36 +262,27 @@ const seedDraft = async (db: MemDb): Promise<void> => {
     startImageSourceUrl: "https://cdn.example/s1.png",
     startImageStatus: "ready",
     startHash: "hash-s1",
-    startImageApproved: true,
-    endImageSourceUrl: "https://cdn.example/e1.png",
-    endImageStatus: "ready",
-    endHash: "hash-e1",
-    endImageSource: "muse",
-    endImageApproved: true,
     videoStatus: "ready",
     videoSource: "generated",
     videoUrl: "https://cdn.example/v1.mp4",
     videoFromHash: "hash-s1",
-    videoToHash: "hash-e1",
     videoJobId: "job-1",
+    videoFrameLastUrl: "https://cdn.example/f1.png",
+    videoFrameLastHash: "hash-f1",
   });
   await db.doc("stories/story_draft/nodes/node_002").set({
     title: "Ridge",
     startFromNodeId: "node_001",
-    startParentEndHash: "hash-e1",
-    startImageSourceUrl: "https://cdn.example/e1.png",
+    startParentFrameHash: "hash-f1",
+    startImageSourceUrl: "https://cdn.example/f1.png",
     startImageStatus: "ready",
-    endImageSourceUrl: "https://cdn.example/e2.png",
-    endImageStatus: "ready",
-    endHash: "hash-e2",
-    endImageSource: "muse",
-    endImageApproved: true,
     videoStatus: "ready",
     videoSource: "generated",
     videoUrl: "https://cdn.example/v2.mp4",
-    videoFromHash: "hash-e1",
-    videoToHash: "hash-e2",
+    videoFromHash: "hash-f1",
     videoJobId: "job-2",
+    videoFrameLastUrl: "https://cdn.example/f2.png",
+    videoFrameLastHash: "hash-f2",
   });
   await db.doc("stories/story_pub").set({
     authorId: "u1",
@@ -332,6 +329,15 @@ test("unknown which is rejected without writing", async () => {
     ),
     "invalid-argument"
   );
+  await rejectsWith(
+    generateNodeImageWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_001", which: "end"},
+      mockDeps()
+    ),
+    "invalid-argument"
+  );
   assert.equal(snapshot(db), before);
 });
 
@@ -343,7 +349,7 @@ test("image gates: auth, owner, draft", async () => {
     generateNodeImageWith(
       db,
       "",
-      {storyId: "story_draft", nodeId: "node_001", which: "end"},
+      {storyId: "story_draft", nodeId: "node_001", which: "start"},
       mockDeps()
     ),
     "unauthenticated"
@@ -352,7 +358,7 @@ test("image gates: auth, owner, draft", async () => {
     generateNodeImageWith(
       db,
       "u1",
-      {storyId: "story_foreign", nodeId: "node_001", which: "end"},
+      {storyId: "story_foreign", nodeId: "node_001", which: "start"},
       mockDeps()
     ),
     "permission-denied"
@@ -361,7 +367,7 @@ test("image gates: auth, owner, draft", async () => {
     generateNodeImageWith(
       db,
       "u1",
-      {storyId: "story_pub", nodeId: "node_001", which: "end"},
+      {storyId: "story_pub", nodeId: "node_001", which: "start"},
       mockDeps()
     ),
     "failed-precondition"
@@ -369,82 +375,95 @@ test("image gates: auth, owner, draft", async () => {
   assert.equal(snapshot(db), before);
 });
 
-test("missing image credentials fail immediately and preserve the last take", async () => {
-  const db = new MemDb();
-  await seedDraft(db);
-  await rejectsWith(generateNodeImageWith(db, "u1", {
-    storyId: "story_draft", nodeId: "node_002", which: "end",
-  }), "failed-precondition");
-  const node = await db.doc("stories/story_draft/nodes/node_002").get();
-  assert.equal(node.data()?.endHash, "hash-e2");
+test("missing image credentials fail immediately and preserve " +
+    "the last take", async () => {
+  const metaKey = process.env.META_API_KEY;
+  const comfyUrl = process.env.COMFYUI_URL;
+  delete process.env.META_API_KEY;
+  delete process.env.COMFYUI_URL;
+  try {
+    const db = new MemDb();
+    await seedDraft(db);
+    await rejectsWith(generateNodeImageWith(db, "u1", {
+      storyId: "story_draft", nodeId: "node_001", which: "start",
+    }), "failed-precondition");
+    const node = await db.doc("stories/story_draft/nodes/node_001").get();
+    assert.equal(node.data()?.startImageStatus, "failed");
+    assert.equal(
+      node.data()?.mediaError,
+      "Image provider credentials are missing."
+    );
+    assert.equal(node.data()?.generationKind, null);
+    assert.equal(node.data()?.generationPhase, null);
+    assert.equal(node.data()?.startHash, "hash-s1");
+  } finally {
+    if (metaKey === undefined) delete process.env.META_API_KEY;
+    else process.env.META_API_KEY = metaKey;
+    if (comfyUrl === undefined) delete process.env.COMFYUI_URL;
+    else process.env.COMFYUI_URL = comfyUrl;
+  }
 });
 
-test("ready E resets approval and desyncs children", async () => {
+test("image provider failure fails with a reason and keeps " +
+    "last good bytes", async () => {
   const db = new MemDb();
   await seedDraft(db);
-  const result = await generateNodeImageWith(
+  await rejectsWith(
+    generateNodeImageWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_001", which: "start"},
+      mockDeps({imageGen: async () => {
+        throw new Error("GPU is down.");
+      }})
+    ),
+    "internal"
+  );
+  const node = await db.doc("stories/story_draft/nodes/node_001").get();
+  assert.equal(node.data()?.startImageStatus, "failed");
+  assert.equal(node.data()?.mediaError, "GPU is down.");
+  assert.equal(node.data()?.generationKind, null);
+  assert.equal(node.data()?.generationPhase, null);
+  assert.equal(node.data()?.startHash, "hash-s1");
+});
+
+test("a finished parent clip desyncs children linked to the old last " +
+    "frame", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  const result = await generateNodeVideoWith(
     db,
     "u1",
-    {storyId: "story_draft", nodeId: "node_001", which: "end"},
-    mockDeps()
+    {storyId: "story_draft", nodeId: "node_001"},
+    mockDeps({
+      requestVideo: async () => ({
+        jobId: "seedance-7",
+        videoUrl: "https://cdn.example/v-new.mp4",
+      }),
+    })
   );
-  const expectedHash = sha8(
-    `still:${buildImagePrompt({title: "The temple"}, {title: "Gate"}, "end")}`
-  );
-  assert.equal(result.imageStatus, "ready");
-  assert.equal(result.endHash, expectedHash);
-  assert.equal(result.imageUrl, `https://cdn.example/${expectedHash}.png`);
-  assert.deepEqual(result.desyncedNodeIds, ["node_002"]);
+  const expectedHash = sha8("last-frame");
+  assert.equal(result.videoStatus, "ready");
 
   const parent = await db.doc("stories/story_draft/nodes/node_001").get();
-  assert.equal(parent.data()?.endImageApproved, false);
-  assert.equal(parent.data()?.videoStatus, "idle");
-  assert.equal(parent.data()?.videoUrl, null);
+  assert.equal(parent.data()?.videoFrameLastHash, expectedHash);
+  assert.equal(
+    parent.data()?.videoFrameLastUrl, `https://cdn.example/${expectedHash}.png`
+  );
 
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
   assert.equal(child.data()?.videoStatus, "idle");
   assert.equal(child.data()?.videoUrl, null);
-  assert.equal(child.data()?.startParentEndHash, "hash-e1");
-  assert.notEqual(child.data()?.startParentEndHash, expectedHash);
+  assert.equal(child.data()?.startParentFrameHash, "hash-f1");
+  assert.notEqual(child.data()?.startParentFrameHash, expectedHash);
 });
 
-test("approve needs a generated frame; reject un-approves", async () => {
-  const db = new MemDb();
-  await seedDraft(db);
-  await rejectsWith(
-    approveNodeImageWith(db, "u1", {
-      storyId: "story_draft",
-      nodeId: "node_002",
-      which: "start",
-    }),
-    "failed-precondition"
-  );
-  const approved = await approveNodeImageWith(db, "u1", {
-    storyId: "story_draft",
-    nodeId: "node_001",
-    which: "end",
-  });
-  assert.deepEqual(approved, {
-    nodeId: "node_001",
-    which: "end",
-    approved: true,
-  });
-  const rejected = await approveNodeImageWith(db, "u1", {
-    storyId: "story_draft",
-    nodeId: "node_001",
-    which: "end",
-    approved: false,
-  });
-  assert.equal(rejected.approved, false);
-  const node = await db.doc("stories/story_draft/nodes/node_001").get();
-  assert.equal(node.data()?.endImageApproved, false);
-});
 
-test("video is gated on the unapproved parent E without writing", async () => {
+test("video needs the parent clip ready, unapproved or not", async () => {
   const db = new MemDb();
   await seedDraft(db);
   await db.doc("stories/story_draft/nodes/node_001").set(
-    {endImageApproved: false},
+    {videoFrameLastHash: null, videoFrameLastUrl: null},
     {merge: true}
   );
   const before = snapshot(db);
@@ -460,11 +479,11 @@ test("video is gated on the unapproved parent E without writing", async () => {
   assert.equal(snapshot(db), before);
 });
 
-test("root video is gated on its own unapproved S", async () => {
+test("root video needs its own S ready, unapproved or not", async () => {
   const db = new MemDb();
   await seedDraft(db);
   await db.doc("stories/story_draft/nodes/node_001").set(
-    {startImageApproved: false},
+    {startImageStatus: "idle", startHash: null, startImageSourceUrl: null},
     {merge: true}
   );
   await rejectsWith(
@@ -478,7 +497,8 @@ test("root video is gated on its own unapproved S", async () => {
   );
 });
 
-test("video inherits the parent E as S and records a pending job", async () => {
+test("video inherits the parent clip's last frame as S and records " +
+    "a pending job", async () => {
   const db = new MemDb();
   await seedDraft(db);
   const result = await generateNodeVideoWith(
@@ -488,16 +508,15 @@ test("video inherits the parent E as S and records a pending job", async () => {
     mockDeps()
   );
   assert.equal(result.videoStatus, "pending");
-  assert.equal(result.videoFromHash, "hash-e1");
-  assert.equal(result.videoToHash, "hash-e2");
+  assert.equal(result.videoFromHash, "hash-f1");
   assert.equal(result.videoJobId, "or_test-job");
   assert.equal(result.poll, true);
   assert.equal(result.videoUrl, "https://cdn.example/v2.mp4");
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
-  assert.equal(child.data()?.startParentEndHash, "hash-e1");
+  assert.equal(child.data()?.startParentFrameHash, "hash-f1");
   assert.equal(
     child.data()?.startImageSourceUrl,
-    "https://cdn.example/e1.png"
+    "https://cdn.example/f1.png"
   );
   assert.equal(child.data()?.videoStatus, "pending");
 });
@@ -518,44 +537,29 @@ test("video marks ready when the provider returns a URL", async () => {
   );
   assert.equal(result.videoStatus, "ready");
   assert.equal(result.videoFromHash, "hash-s1");
-  assert.equal(result.videoToHash, "hash-e1");
   assert.equal(result.videoUrl, "https://cdn.example/v-new.mp4");
   assert.equal(result.poll, false);
+  const parent = await db.doc("stories/story_draft/nodes/node_001").get();
+  assert.equal(parent.data()?.videoFrameLastHash, sha8("last-frame"));
 });
 
-test("video needs the node E generated first", async () => {
+test("re-inheriting after a parent clip re-links the child", async () => {
   const db = new MemDb();
   await seedDraft(db);
-  await db.doc("stories/story_draft/nodes/node_002").set(
-    {endHash: null, endImageSourceUrl: null},
-    {merge: true}
-  );
-  await rejectsWith(
-    generateNodeVideoWith(
-      db,
-      "u1",
-      {storyId: "story_draft", nodeId: "node_002"},
-      mockDeps()
-    ),
-    "failed-precondition"
-  );
-});
-
-test("re-inheriting after a regen re-links the child", async () => {
-  const db = new MemDb();
-  await seedDraft(db);
-  const regen = await generateNodeImageWith(
+  await generateNodeVideoWith(
     db,
     "u1",
-    {storyId: "story_draft", nodeId: "node_001", which: "end"},
-    mockDeps()
+    {storyId: "story_draft", nodeId: "node_001"},
+    mockDeps({
+      requestVideo: async () => ({
+        jobId: "seedance-8",
+        videoUrl: "https://cdn.example/v-new.mp4",
+      }),
+    })
   );
-  assert.deepEqual(regen.desyncedNodeIds, ["node_002"]);
-  await approveNodeImageWith(db, "u1", {
-    storyId: "story_draft",
-    nodeId: "node_001",
-    which: "end",
-  });
+  const parent = await db.doc("stories/story_draft/nodes/node_001").get();
+  const frameHash = parent.data()?.videoFrameLastHash as string;
+  assert.ok(frameHash && frameHash !== "hash-f1");
   const video = await generateNodeVideoWith(
     db,
     "u1",
@@ -564,9 +568,9 @@ test("re-inheriting after a regen re-links the child", async () => {
       requestVideo: async () => ({jobId: "seedance-9"}),
     })
   );
-  assert.equal(video.videoFromHash, regen.endHash);
+  assert.equal(video.videoFromHash, frameHash);
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
-  assert.equal(child.data()?.startParentEndHash, regen.endHash);
+  assert.equal(child.data()?.startParentFrameHash, frameHash);
   assert.equal(child.data()?.videoStatus, "pending");
 });
 
@@ -608,58 +612,57 @@ test("video provider submit asks the client to poll", async () => {
   assert.equal(child.data()?.videoJobId, "or_job-9");
 });
 
-test("configured video model uses both frames and resumes at the same endpoint",
-  async (t) => {
-    const env = {
-      OPENROUTER_API_KEY: "test-key",
-      OPENROUTER_VIDEOS_URL: "https://router.example/video-jobs",
-      OPENROUTER_VIDEO_MODEL: "vendor/two-frame-video",
-      OPENROUTER_VIDEO_USE_END_FRAME: "true",
-      OPENROUTER_VIDEO_RESOLUTION: "480p",
-      OPENROUTER_VIDEO_ASPECT_RATIO: "9:16",
-      OPENROUTER_VIDEO_DURATION_SECONDS: "10",
-    };
-    const before = Object.fromEntries(
-      Object.keys(env).map((key) => [key, process.env[key]])
-    );
-    try {
-      Object.assign(process.env, env);
-      const seen: Array<{url: string; init?: RequestInit}> = [];
-      t.mock.method(globalThis, "fetch", async (
-        url: string | URL | Request, init?: RequestInit
-      ) => {
-        seen.push({url: String(url), init});
-        return new Response(JSON.stringify(init?.method === "POST" ?
-          {id: "job-config"} : {status: "pending"}), {status: 200});
-      });
-      const db = new MemDb();
-      await seedDraft(db);
-      const args = {storyId: "story_draft", nodeId: "node_002"};
-      const first = await generateNodeVideoWith(db, "u1", args);
-      const second = await generateNodeVideoWith(db, "u1", args);
-      assert.equal(first.videoJobId, "or_job-config");
-      assert.equal(second.videoJobId, first.videoJobId);
-      assert.deepEqual(seen.map((request) => request.url), [
-        "https://router.example/video-jobs",
-        "https://router.example/video-jobs/job-config",
-      ]);
-      const body = JSON.parse(String(seen[0].init?.body));
-      assert.equal(body.model, "vendor/two-frame-video");
-      assert.equal(body.duration, 10);
-      assert.equal(body.resolution, "480p");
-      assert.deepEqual(body.frame_images.map((frame: {
+test("configured video model sends the start frame only and resumes " +
+    "at the same endpoint",
+async (t) => {
+  const env = {
+    OPENROUTER_API_KEY: "test-key",
+    OPENROUTER_VIDEOS_URL: "https://router.example/video-jobs",
+    OPENROUTER_VIDEO_MODEL: "vendor/start-frame-video",
+    OPENROUTER_VIDEO_RESOLUTION: "480p",
+    OPENROUTER_VIDEO_ASPECT_RATIO: "9:16",
+    OPENROUTER_VIDEO_DURATION_SECONDS: "10",
+  };
+  const before = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]])
+  );
+  try {
+    Object.assign(process.env, env);
+    const seen: Array<{url: string; init?: RequestInit}> = [];
+    t.mock.method(globalThis, "fetch", async (
+      url: string | URL | Request, init?: RequestInit
+    ) => {
+      seen.push({url: String(url), init});
+      return new Response(JSON.stringify(init?.method === "POST" ?
+        {id: "job-config"} : {status: "pending"}), {status: 200});
+    });
+    const db = new MemDb();
+    await seedDraft(db);
+    const args = {storyId: "story_draft", nodeId: "node_002"};
+    const first = await generateNodeVideoWith(db, "u1", args);
+    const second = await generateNodeVideoWith(db, "u1", args);
+    assert.equal(first.videoJobId, "or_job-config");
+    assert.equal(second.videoJobId, first.videoJobId);
+    assert.deepEqual(seen.map((request) => request.url), [
+      "https://router.example/video-jobs",
+      "https://router.example/video-jobs/job-config",
+    ]);
+    const body = JSON.parse(String(seen[0].init?.body));
+    assert.equal(body.model, "vendor/start-frame-video");
+    assert.equal(body.duration, 10);
+    assert.equal(body.resolution, "480p");
+    assert.deepEqual(body.frame_images.map((frame: {
         frame_type: string; image_url: {url: string};
       }) => [frame.frame_type, frame.image_url.url]), [
-        ["first_frame", "https://cdn.example/e1.png"],
-        ["last_frame", "https://cdn.example/e2.png"],
-      ]);
-    } finally {
-      for (const [key, value] of Object.entries(before)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+      ["first_frame", "https://cdn.example/f1.png"],
+    ]);
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
-  });
+  }
+});
 
 test("video resumes a stored job without resubmitting", async () => {
   const db = new MemDb();
@@ -711,7 +714,14 @@ test("video completion stores the finished clip", async () => {
         seen.push(url);
         return Buffer.from("fake-clip");
       },
-      normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854, durationSeconds: 10, lastFrame: Buffer.from("frame"), lastBlurData: "blur"}),
+      normalizeVideo: async (bytes) => ({
+        bytes,
+        width: 480,
+        height: 854,
+        durationSeconds: 10,
+        lastFrame: Buffer.from("frame"),
+        lastBlurData: "blur",
+      }),
       uploadVideo: async (args) => {
         assert.equal(args.storyId, "story_draft");
         assert.equal(args.nodeId, "node_002");
@@ -750,6 +760,10 @@ test("video failure clears the job and fails", async () => {
     "internal"
   );
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoStatus, "failed");
+  assert.equal(child.data()?.mediaError, "Video generation failed.");
+  assert.equal(child.data()?.generationKind, null);
+  assert.equal(child.data()?.generationPhase, null);
   assert.equal(child.data()?.videoJobId, null);
 });
 
@@ -774,7 +788,96 @@ test("an expired video job clears and fails", async () => {
     "internal"
   );
   const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoStatus, "failed");
+  assert.equal(child.data()?.mediaError, "gone");
+  assert.equal(child.data()?.generationKind, null);
+  assert.equal(child.data()?.generationPhase, null);
   assert.equal(child.data()?.videoJobId, null);
+});
+
+test("missing video credentials fail immediately with a reason", async () => {
+  const key = process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  try {
+    const db = new MemDb();
+    await seedDraft(db);
+    const deps = mockDeps();
+    delete deps.requestVideo;
+    await rejectsWith(
+      generateNodeVideoWith(
+        db,
+        "u1",
+        {storyId: "story_draft", nodeId: "node_002"},
+        deps
+      ),
+      "failed-precondition"
+    );
+    const node = await db.doc("stories/story_draft/nodes/node_002").get();
+    assert.equal(node.data()?.videoStatus, "failed");
+    assert.equal(
+      node.data()?.mediaError,
+      "Video provider credentials are missing."
+    );
+    assert.equal(node.data()?.generationKind, null);
+    assert.equal(node.data()?.generationPhase, null);
+    assert.equal(node.data()?.videoUrl, "https://cdn.example/v2.mp4");
+  } finally {
+    if (key !== undefined) process.env.OPENROUTER_API_KEY = key;
+  }
+});
+
+test("a video poll past its lease fails with a timeout reason", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await db.doc("stories/story_draft/nodes/node_002").set(
+    {videoJobId: "or_job-9", videoStatus: "pending",
+      generationExpiresAt: new Date(Date.now() - 1000).toISOString()},
+    {merge: true}
+  );
+  await rejectsWith(
+    generateNodeVideoWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_002"},
+      mockDeps({checkVideo: async () => {
+        throw new Error("must not poll after expiry");
+      }})
+    ),
+    "deadline-exceeded"
+  );
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoStatus, "failed");
+  assert.equal(
+    child.data()?.mediaError,
+    "Video generation timed out before finishing."
+  );
+  assert.equal(child.data()?.generationKind, null);
+  assert.equal(child.data()?.generationPhase, null);
+  assert.equal(child.data()?.videoJobId, null);
+});
+
+test("video finish failure fails the node with a reason", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  await rejectsWith(
+    generateNodeVideoWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_002"},
+      mockDeps({
+        requestVideo: async () => ({jobId: "or_test-job", videoUrl: "https://cdn.example/clip.mp4"}),
+        downloadVideo: async () => {
+          throw new Error("blob gone");
+        },
+      })
+    ),
+    "internal"
+  );
+  const child = await db.doc("stories/story_draft/nodes/node_002").get();
+  assert.equal(child.data()?.videoStatus, "failed");
+  assert.equal(child.data()?.generationKind, null);
+  assert.equal(child.data()?.generationPhase, null);
+  assert.ok(String(child.data()?.mediaError ?? "").includes("blob gone"));
 });
 
 test("image prompts ground the still in story, line, and frame", () => {
@@ -785,21 +888,17 @@ test("image prompts ground the still in story, line, and frame", () => {
     endingName: null,
     videoPrompt: null,
   };
-  const start = buildImagePrompt(story, node, "start");
+  const start = buildImagePrompt(story, node);
   assert.match(start, /Opening frame/);
   assert.match(start, /The temple/);
   assert.match(start, /A cursed gate/);
   assert.match(start, /The stones remember your name/);
-  const end = buildImagePrompt(story, node, "end");
-  assert.match(end, /Closing frame/);
-  assert.doesNotMatch(end, /Opening frame/);
 });
 
 test("image prompts omit blanks and stay within budget", () => {
   const prompt = buildImagePrompt(
     {title: "T", synopsis: "x".repeat(500)},
-    {title: "", ttsText: null, endingName: "Fin", videoPrompt: "morph"},
-    "end"
+    {title: "", ttsText: null, endingName: "Fin", videoPrompt: "morph"}
   );
   assert.doesNotMatch(prompt, /MOMENT/);
   assert.match(prompt, /Fin/);
@@ -831,18 +930,37 @@ test("image generation falls back to the story-grounded prompt", async () => {
   assert.match(seen, /Opening frame/);
 });
 
-test("image metadata and hash refer to normalized bytes and advance draft revision", async () => {
+test("image metadata and hash refer to normalized bytes and " +
+    "advance draft revision", async () => {
   const db = new MemDb(); await seedDraft(db);
   const normalized = Buffer.from("normalized-480x854");
+  const sha8String = sha8(normalized.toString());
   let stored: Buffer | undefined;
-  const result = await generateNodeImageWith(db, "u1", {
-    storyId: "story_draft", nodeId: "node_001", which: "end",
-  }, mockDeps({normalizeImage: async () => ({bytes: normalized, width: 480, height: 854}),
-    uploadStill: async (args) => { stored = args.bytes; return `https://cdn.example/${args.hash}.png`; }}));
+  const result = await generateNodeImageWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001", which: "start"},
+    mockDeps({
+      normalizeImage: async () => ({
+        bytes: normalized,
+        width: 480,
+        height: 854,
+      }),
+      uploadStill: async (args) => {
+        stored = args.bytes;
+        return `https://cdn.example/${args.hash}.png`;
+      },
+    })
+  );
   assert.deepEqual(stored, normalized);
-  assert.equal(result.endHash, sha8(normalized.toString()));
-  const node = (await db.doc("stories/story_draft/nodes/node_001").get()).data();
-  assert.equal(node?.endImageWidth, 480); assert.equal(node?.endImageHeight, 854);
+  assert.equal(result.imageUrl, `https://cdn.example/${sha8String}.png`);
+  const node = (
+    await db.doc("stories/story_draft/nodes/node_001").get()
+  ).data();
+  assert.equal(node?.startHash, sha8String);
+  assert.equal(node?.startImageWidth, 480);
+  assert.equal(node?.startImageHeight, 854);
   assert.equal(node?.generationKind, null);
-  assert.ok(Number((await db.doc("stories/story_draft").get()).data()?.revision) >= 1);
+  const story = (await db.doc("stories/story_draft").get()).data();
+  assert.ok(Number(story?.revision) >= 1);
 });

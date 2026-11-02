@@ -2,6 +2,11 @@ import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from "fs";
 import {tmpdir} from "os";
 import {dirname, extname, join} from "path";
 import * as admin from "firebase-admin";
+// Runtime-only bridge avoids loading two Admin SDK declaration versions.
+const {migrateStory} = require("../../../functions/lib/admin/migratePublications") as {
+  migrateStory(db: admin.firestore.Firestore, id: string,
+    options: {apply: boolean; probe: boolean}): Promise<unknown>;
+};
 import {ComfyClient} from "../../../functions/lib/media/comfy";
 import {
   convertCover,
@@ -87,6 +92,7 @@ async function main(): Promise<void> {
     title: manifest.title,
     synopsis: manifest.synopsis,
     status: "draft",
+    revision: 0,
     rootNodeId: manifest.rootNodeId,
     coverUrl: cover.webpUrl,
     ogImageUrl: cover.ogUrl,
@@ -123,7 +129,9 @@ async function main(): Promise<void> {
     status: "published",
     publishedAt: new Date().toISOString(),
   });
-  console.log(`Published ${manifest.storyId}.`);
+  await migrateStory(db, manifest.storyId,
+    {apply: true, probe: false});
+  console.log(`Published ${manifest.storyId} with playback projections.`);
 
   if (args.prune) {
     await pruneNodes(manifest, [...built.keys()]);
@@ -432,6 +440,7 @@ async function uploadNode(
     endImageApproved: true,
     videoSource: media.videoSource,
     durationSeconds: video.durationSeconds,
+    videoWidth: video.width, videoHeight: video.height,
     ttsText: node.ttsText ?? "",
     lineApproved: true,
     ttsAudioUrl: voiceUrl,

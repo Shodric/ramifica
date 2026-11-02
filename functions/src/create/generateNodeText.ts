@@ -34,7 +34,6 @@ export interface GenerateNodeTextResult {
   choices: GeneratedChoice[];
   endingName: string | null;
   startImagePrompt: string | null;
-  endImagePrompt: string | null;
   videoPrompt: string | null;
 }
 
@@ -82,6 +81,59 @@ export const knownChoiceIcons: readonly string[] = [
   "trophy", "rocket", "bulb", "pets", "leaf", "music", "dice",
   "puzzle", "camera", "food", "coffee", "masks", "sparkles",
   "question", "lock", "clock", "tree", "gift", "book",
+  "church", "mosque", "temple", "thunder", "tornado", "waves",
+  "grass", "flower", "bug", "backpack", "cake", "wine",
+  "icecream", "hourglass", "history", "satellite", "globe",
+  "umbrella", "magic", "moonshield", "desert", "river", "cloud",
+  "fog", "wind", "night", "dawn", "eclipse", "pest", "wildlife",
+  "pizza", "burger", "noodles", "breakfast", "bakery", "tea",
+  "tavern", "bar", "bike", "boat", "train", "tram", "bus",
+  "subway", "moto", "scooter", "city", "factory", "shop",
+  "garden", "arena", "gym", "school", "library", "museum",
+  "bank", "hospital", "pharmacy", "inn", "fuel", "hammer",
+  "wrench", "tools", "gear", "search", "torch", "bed",
+  "tv", "radio", "phone", "watch", "audio", "speaker", "mic",
+  "game", "cards", "coin", "cash", "card", "wallet", "world",
+  "radar", "song", "album", "playlist", "festival", "ball",
+  "hoop", "tennis", "swim", "surf", "ski", "skate", "yoga",
+  "medal", "robot", "check", "cross", "warning", "info", "ban",
+  "power", "infinity", "chip", "code", "terminal", "signal",
+  "bluetooth", "gps", "battery", "scan", "hike", "kayak",
+  "dive", "glide", "pencil", "math", "lab", "art", "brush",
+  "image", "print", "mail", "dates", "face", "hand", "smile",
+  "sorrow", "sleep", "party", "crew", "chat", "call", "share",
+  "box", "bag", "cart", "tag", "ticket", "receipt", "news",
+  "tap", "gesture", "swipe", "drag", "launch", "portal", "input",
+  "output", "login", "logout", "undo", "redo", "shuffle", "repeat",
+  "renew", "sync", "swap", "more", "zoom", "tune", "pact",
+  "like", "dislike", "wave", "halt", "reach", "pin", "target",
+  "locate", "tribe", "voice", "access", "mood", "calm", "joy",
+  "grief", "sick", "clean", "play", "blaze", "burst", "bright",
+  "volcano", "flood", "tsunami", "cyclone", "snowfall", "rescue",
+  "crush", "heartbreak", "blood", "aid", "pulse", "medic", "heal",
+  "pills", "safe", "halfstar", "wish", "elite", "crescent", "dish",
+  "premium", "member", "verified", "approval", "debut", "redeem",
+  "ranks", "verdict", "scales", "unseen", "guard", "ward",
+  "fighter", "wrestle", "build", "plan", "keys", "beat", "levels",
+  "headset", "surround", "video", "tunes", "hive", "dash", "park",
+  "spa", "tub", "fast", "dinner", "brunch", "meal", "soup",
+  "kebab", "donut", "egg", "omelette", "rice", "bbq", "tapas",
+  "apartment", "villa", "cabin", "cottage", "chalet", "bungalow",
+  "houseboat", "fort", "police", "post", "synagogue", "cinema",
+  "film", "boutique", "mall", "laundry", "press", "carwash",
+  "repair", "shuttle", "camper", "truck", "forklift", "tractor",
+  "ebike", "moped", "roller", "iceskate", "snowmobile", "sled",
+  "chair", "table", "sofa", "lounge", "bath", "wc", "counter",
+  "kitchen", "microwave", "mop", "paint", "wallpaper", "curtains",
+  "window", "balcony", "fence", "garage", "warehouse", "elevator",
+  "stairs", "escalator", "roofing", "fireplace", "deck", "laptop",
+  "desktop", "monitor", "tablet", "keyboard", "mouse", "webcam",
+  "router", "server", "storage", "feed", "podcast", "tower",
+  "megaphone", "timer", "timelapse", "schedule", "event", "bell",
+  "badge", "unread", "drafts", "send", "inbox", "outbox",
+  "archive", "folder", "doc", "file", "save", "download", "upload",
+  "backup", "restore", "update", "upgrade", "charge", "plug",
+  "cable", "usb", "sdcard", "sim", "ar", "spin", "droid", "toys",
 ];
 
 /**
@@ -91,7 +143,7 @@ export const knownChoiceIcons: readonly string[] = [
  */
 export const knownChoiceIconColors: readonly string[] = [
   "cyan", "blue", "violet", "pink", "red", "orange", "gold", "green",
-  "mint", "white",
+  "mint", "white", "teal", "indigo", "lime", "amber", "brown", "grey",
 ];
 
 /** What Spark is allowed to propose: node text and media prompts, as JSON. */
@@ -115,8 +167,7 @@ const systemPrompt = [
   "{\"title\": string|null, \"ttsText\": string|null,",
   "\"choices\": [{\"label\": string, \"icon\": string|null,",
   "\"iconColor\": string|null}], \"endingName\": string|null,",
-  "\"startImagePrompt\": string|null, \"endImagePrompt\": string|null,",
-  "\"videoPrompt\": string|null}.",
+  "\"startImagePrompt\": string|null, \"videoPrompt\": string|null}.",
 ].join(" ");
 
 /** Narration is heard after the clip, at the decision point. */
@@ -229,7 +280,7 @@ export const generateNodeTextWith = async (
   if (purpose === "narration") {
     return {
       title: null, ttsText: proposal.ttsText, choices: [], endingName: null,
-      startImagePrompt: null, endImagePrompt: null, videoPrompt: null,
+      startImagePrompt: null, videoPrompt: null,
     };
   }
   return proposal;
@@ -338,10 +389,6 @@ const userPrompt = (
   if (node !== null) {
     const title = optString(node.title);
     if (title !== null) lines.push(`Current node title: ${title}.`);
-    if (purpose === "narration") {
-      const closing = optString(node.endImagePrompt);
-      if (closing !== null) lines.push(`Closing frame: ${closing}.`);
-    }
     const line = optString(node.ttsText);
     if (line !== null) lines.push(`Current narrator line: ${line}.`);
     if (Array.isArray(node.choices)) {
@@ -407,7 +454,6 @@ const sanitizeProposal = (
     isEnding === false ? null : clampText(fields.endingName, 40);
   const startImagePrompt =
     isChild ? null : clampText(fields.startImagePrompt, maxMediaPromptChars);
-  const endImagePrompt = clampText(fields.endImagePrompt, maxMediaPromptChars);
   const videoPrompt = clampText(fields.videoPrompt, maxMediaPromptChars);
   return {
     title,
@@ -415,7 +461,6 @@ const sanitizeProposal = (
     choices,
     endingName,
     startImagePrompt,
-    endImagePrompt,
     videoPrompt,
   };
 };

@@ -162,7 +162,9 @@ export const downloadBytes = async (
 ): Promise<Buffer> => {
   const response = await (args.fetchFn ?? defaultFetch)(url, {
     method: "GET",
-    headers: args.apiKey ? headers(args.apiKey, args.title ?? "Ramifica create") : {},
+    headers: args.apiKey ?
+      headers(args.apiKey, args.title ?? "Ramifica create") :
+      {},
   });
   if (!response.ok) {
     throw new OpenRouterHttpError(
@@ -284,10 +286,9 @@ export const generateImageBytes = async (args: {
 };
 
 /**
- * Submits a clip job. With only a start frame the provider animates
- * from it (HeyGen supports `first_frame` only); with both ends it
- * interpolates the morph. Optional fields are omitted when unset —
- * providers reject unlisted values.
+ * Submits a clip job. The provider animates from the start frame
+ * (HeyGen supports `first_frame` only). Optional fields are omitted
+ * when unset — providers reject unlisted values.
  * @param {Object} args Key, model, prompt, frames, shape, and seams.
  * @return {Promise<Object>} The provider job id.
  */
@@ -296,7 +297,6 @@ export const submitVideo = async (args: {
   model: string;
   prompt: string;
   startUrl: string;
-  endUrl?: string;
   resolution?: string;
   aspectRatio?: string;
   duration?: number;
@@ -315,15 +315,6 @@ export const submitVideo = async (args: {
           image_url: {url: args.startUrl},
           frame_type: "first_frame",
         },
-        ...(args.endUrl === undefined ?
-          [] :
-          [
-            {
-              type: "image_url",
-              image_url: {url: args.endUrl},
-              frame_type: "last_frame",
-            },
-          ]),
       ],
       ...(args.resolution === undefined ?
         {} :

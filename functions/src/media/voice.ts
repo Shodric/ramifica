@@ -1,4 +1,4 @@
-import {execFile} from "child_process";
+import {execFile, type ExecFileOptions} from "child_process";
 import {join} from "path";
 import {promisify} from "util";
 import {probeDuration} from "./processVideo";
@@ -6,7 +6,17 @@ import {OpenRouterFetch, OpenRouterHttpError, speakText} from "./openrouter";
 import {ffmpegBin} from "./bin";
 import {aiDefaults, openRouterConfig} from "../config/ai";
 
-const run = promisify(execFile);
+const exec = promisify(execFile);
+/**
+ * ffmpeg never reads interactive stdin: the static build polls for input
+ * and an execFile pipe never EOFs, hanging the call at 0% CPU.
+ * @param {string} bin Binary path.
+ * @param {string[]} args CLI args.
+ * @param {ExecFileOptions} options Exec options.
+ * @return {Promise<object>} Exec output.
+ */
+const run = (bin: string, args: string[], options?: ExecFileOptions) =>
+  exec(bin, bin === ffmpegBin() ? ["-nostdin", ...args] : args, options);
 
 export interface ConvertedVoice {
   path: string;

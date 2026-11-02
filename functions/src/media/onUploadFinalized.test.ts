@@ -197,7 +197,7 @@ const sha8 = (text: string): string => {
   return createHash("sha256").update(text).digest("hex").slice(0, 8);
 };
 
-/** One author-owned draft node with an approved E and a ready video. */
+/** One author-owned draft node with a ready E and a ready video. */
 interface Script {
   db: MemDb;
   obj: UploadObject;
@@ -228,12 +228,9 @@ const script = (overrides: Partial<UploadObject> = {}): Script => {
     videoSource: "generated",
     videoUrl: "https://cdn.example/old.mp4",
     videoFromHash: "hash-s1",
-    videoToHash: "hash-e1",
     videoJobId: "job-old",
-    endHash: "hash-e1",
-    endImageSourceUrl: "https://cdn.example/old-e.png",
-    endImageStatus: "ready",
-    endImageApproved: true,
+    videoFrameLastUrl: "https://cdn.example/old-f.png",
+    videoFrameLastHash: "hash-f1",
   });
   return {
     db,
@@ -334,7 +331,7 @@ test("parseUploadName routes filename to story and node", () => {
   assert.equal(parseUploadName("stories/storyA/nodeA-end-x.png"), null);
 });
 
-test("happy path stores video, E last frame, deletes upload", async () => {
+test("happy path stores video, last frame, deletes upload", async () => {
   const s = script();
   const result = await finalizeUploadWith(s.db, s.obj, depsOf(s));
   assert.equal(result.status, "ready");
@@ -342,12 +339,9 @@ test("happy path stores video, E last frame, deletes upload", async () => {
   assert.equal(node.videoSource, "upload");
   assert.equal(node.videoStatus, "ready");
   assert.equal(typeof node.videoUrl, "string");
-  assert.equal(node.endHash, sha8("last-frame-bytes"));
+  assert.equal(node.videoFrameLastHash, sha8("last-frame-bytes"));
   assert.equal(node.uploadTakeId, null);
-  assert.equal(node.endImageSource, "upload");
-  assert.equal(node.endImageStatus, "ready");
-  assert.equal(node.endImageApproved, false);
-  assert.equal(node.videoFrameLastUrl, node.endImageSourceUrl);
+  assert.equal(typeof node.videoFrameLastUrl, "string");
   assert.equal(node.durationSeconds, 12.5);
   assert.equal(node.uploadError, null);
   assert.equal(node.uploadObjectName, s.obj.name);
@@ -384,7 +378,7 @@ test("wrong type is rejected with the node video untouched", async () => {
   const node = await nodeOf(s.db);
   assert.equal(node.videoStatus, "ready");
   assert.equal(node.videoUrl, "https://cdn.example/old.mp4");
-  assert.equal(node.endHash, "hash-e1");
+  assert.equal(node.videoFrameLastHash, "hash-f1");
   assert.equal(node.uploadError, "invalid-type");
   assert.equal(s.processCalls, 0);
   assert.deepEqual(s.deleted, [s.obj.name]);
@@ -423,21 +417,17 @@ test("objects outside uploads/ are ignored, never deleted", async () => {
   assert.equal(s.processCalls, 0);
 });
 
-test("second take replaces the first and resets approval", async () => {
+test("second take replaces the first and stores new bytes", async () => {
   const s = script();
   const first = await finalizeUploadWith(s.db, s.obj, depsOf(s));
   assert.equal(first.status, "ready");
-  await s.db
-    .doc("stories/storyA/nodes/nodeA")
-    .set({endImageApproved: true}, {merge: true});
   s.frameBytes = Buffer.from("last-frame-take-two");
   s.videoBytes = Buffer.from("video-take-two");
   s.obj = {...s.obj, generation: "8"};
   const result = await finalizeUploadWith(s.db, s.obj, depsOf(s));
   assert.equal(result.status, "ready");
   const node = await nodeOf(s.db);
-  assert.equal(node.endHash, sha8("last-frame-take-two"));
-  assert.equal(node.endImageApproved, false);
+  assert.equal(node.videoFrameLastHash, sha8("last-frame-take-two"));
   assert.notEqual(node.videoUrl, first.videoUrl);
   assert.equal(node.uploadError, null);
 });
@@ -466,12 +456,17 @@ test("missing ffmpeg fails explicitly without indefinite pending", async () => {
   assert.equal(result.uploadError, "encode-unavailable");
   const node = await nodeOf(s.db);
   assert.equal(node.videoStatus, "failed");
+  assert.equal(node.mediaError, "Video encoding is unavailable. " +
+    "Try uploading again after the server is configured.");
+  assert.equal(node.generationKind, null);
+  assert.equal(node.generationPhase, null);
   assert.equal(node.uploadError, "encode-unavailable");
   assert.equal(node.uploadTakeId, "take9");
   assert.deepEqual(s.deleted, [s.obj.name]);
 });
 
-test("missing ffmpeg preserves the previous video URL and reports failure", async () => {
+test("missing ffmpeg preserves the previous video URL and " +
+  "reports failure", async () => {
   const s = script();
   const result = await finalizeUploadWith(
     s.db,
@@ -483,4 +478,26 @@ test("missing ffmpeg preserves the previous video URL and reports failure", asyn
   assert.equal(node.videoStatus, "failed");
   assert.equal(node.videoUrl, "https://cdn.example/old.mp4");
   assert.equal(node.uploadError, "encode-unavailable");
+  assert.ok(typeof node.mediaError === "string" && node.mediaError.length > 0);
+  assert.equal(node.generationKind, null);
+  assert.equal(node.generationPhase, null);
+});
+
+test("encode failure fails the node with a reason", async () => {
+  const s = script();
+  await assert.rejects(finalizeUploadWith(
+    s.db,
+    s.obj,
+    depsOf(s, {process: async () => {
+      throw new Error("codec blew up.");
+    }})
+  ));
+  const node = await nodeOf(s.db);
+  assert.equal(node.videoStatus, "failed");
+  assert.equal(node.uploadError, "encode-failed");
+  assert.equal(node.mediaError, "Video processing failed. Try another clip.");
+  assert.equal(node.generationKind, null);
+  assert.equal(node.generationPhase, null);
+  assert.equal(node.videoUrl, "https://cdn.example/old.mp4");
+  assert.deepEqual(s.deleted, [s.obj.name]);
 });

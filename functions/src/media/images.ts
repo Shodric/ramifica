@@ -1,17 +1,21 @@
 import {createHash} from "crypto";
-import {execFile} from "child_process";
+import {execFile, type ExecFileOptions} from "child_process";
 import {readFile} from "fs/promises";
 import {join} from "path";
 import {promisify} from "util";
 import {ffmpegBin} from "./bin";
 
-const run = promisify(execFile);
-
-export interface EndImage {
-  webpPath: string;
-  thumbPath: string;
-  blurData: string;
-}
+const exec = promisify(execFile);
+/**
+ * ffmpeg never reads interactive stdin: the static build polls for input
+ * and an execFile pipe never EOFs, hanging the call at 0% CPU.
+ * @param {string} bin Binary path.
+ * @param {string[]} args CLI args.
+ * @param {ExecFileOptions} options Exec options.
+ * @return {Promise<object>} Exec output.
+ */
+const run = (bin: string, args: string[], options?: ExecFileOptions) =>
+  exec(bin, bin === ffmpegBin() ? ["-nostdin", ...args] : args, options);
 
 export interface CoverImage {
   webpPath: string;
@@ -35,45 +39,6 @@ export const blurDataUri = async (imagePath: string): Promise<string> => {
     throw new Error(`Unexpected blur size for ${imagePath}.`);
   }
   return `data:image/webp;base64,${bytes.toString("base64")}`;
-};
-
-/**
- * Node cover set from E: 480x854 WebP, 160 px wide thumbnail, inline blur.
- * @param {string} srcPath Source image path.
- * @param {string} outDir Directory for the derived files.
- * @return {Promise<EndImage>} Paths and blur data.
- */
-export const convertEndImage = async (
-  srcPath: string,
-  outDir: string
-): Promise<EndImage> => {
-  const webpPath = join(outDir, "end-480.webp");
-  const thumbPath = join(outDir, "thumb-160.webp");
-  await run(ffmpegBin(), [
-    "-y",
-    "-v",
-    "error",
-    "-i",
-    srcPath,
-    "-vf",
-    "scale=480:854:force_original_aspect_ratio=increase,crop=480:854",
-    "-q:v",
-    "75",
-    webpPath,
-  ]);
-  await run(ffmpegBin(), [
-    "-y",
-    "-v",
-    "error",
-    "-i",
-    srcPath,
-    "-vf",
-    "scale=160:-1",
-    "-q:v",
-    "70",
-    thumbPath,
-  ]);
-  return {webpPath, thumbPath, blurData: await blurDataUri(srcPath)};
 };
 
 /**

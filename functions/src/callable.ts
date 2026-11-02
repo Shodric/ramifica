@@ -1,3 +1,4 @@
+import * as admin from "firebase-admin";
 import {
   CallableOptions,
   CallableRequest,
@@ -38,6 +39,9 @@ export const onCallSafe = (
 ) => {
   return onCall(opts, async (request) => {
     try {
+      if (admin.apps.length === 0) {
+        admin.initializeApp();
+      }
       return await handler(request);
     } catch (error) {
       throw exposeCallableError(error);

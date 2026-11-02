@@ -33,15 +33,11 @@ const node = (overrides = {}): ValidatableNode => ({
   videoUrl: "https://example.com/video.mp4",
   videoStatus: "ready",
   videoSource: "generated",
-  startImageApproved: true,
-  endImageApproved: true,
-  endHash: "hash-e1",
+  videoFrameLastHash: "hash-e1",
   ttsText: "Enter or climb?",
-  lineApproved: true,
   ttsAudioUrl: "https://example.com/voz.m4a",
   ttsStatus: "ready",
   ttsDurationSeconds: 4.1,
-  ttsApproved: true,
   choices: [goodChoice()],
   ...overrides,
 });
@@ -56,9 +52,8 @@ const ending = (overrides = {}): ValidatableNode => ({
   videoUrl: "https://example.com/end.mp4",
   videoStatus: "ready",
   videoSource: "generated",
-  endImageApproved: true,
   startFromNodeId: "node_001",
-  startParentEndHash: "hash-e1",
+  startParentFrameHash: "hash-e1",
   ttsText: "",
   choices: [],
   ...overrides,
@@ -70,8 +65,8 @@ const validNodes = (): ValidatableNode[] => [
     nodeId: "node_002",
     title: "The ridge",
     startFromNodeId: "node_001",
-    startParentEndHash: "hash-e1",
-    endHash: "hash-e2",
+    startParentFrameHash: "hash-e1",
+    videoFrameLastHash: "hash-e2",
     choices: [
       goodChoice({
         choiceId: "choice_end",
@@ -86,7 +81,7 @@ const validNodes = (): ValidatableNode[] => [
   ending({
     nodeId: "node_003",
     startFromNodeId: "node_002",
-    startParentEndHash: "hash-e2",
+    startParentFrameHash: "hash-e2",
   }),
 ];
 
@@ -108,7 +103,7 @@ test("unreachable nodes are reported", () => {
       nodeId: "node_009",
       title: "Lost",
       startFromNodeId: "node_001",
-      startParentEndHash: "hash-e1",
+      startParentFrameHash: "hash-e1",
     })
   );
   assert.deepEqual(validateStory(story(), nodes), [
@@ -149,39 +144,37 @@ test("choices need labels, targets, zones, and one default", () => {
   ]);
 });
 
-test("decisions need a line and a voice", () => {
+test("decisions need a ready voice", () => {
   const bad = node({
-    lineApproved: false,
     ttsStatus: "idle",
-    ttsApproved: false,
+    ttsAudioUrl: null,
+    ttsDurationSeconds: null,
   });
   assert.deepEqual(validateStory(story(), [bad, ending()]), [
-    "Node node_001 needs an approved narrator line.",
     "Node node_001 needs a ready narrator voice.",
-    "Node node_001 needs an approved narrator voice.",
   ]);
 });
 
-test("uploaded video needs its extracted end frame", () => {
-  const bad = node({videoSource: "upload", endImageApproved: false});
+test("uploaded video needs its extracted last frame", () => {
+  const bad = node({videoSource: "upload"});
   assert.deepEqual(validateStory(story(), [bad, ending()]), [
-    "Node node_001 needs its extracted end frame.",
+    "Node node_001 needs its extracted last frame.",
   ]);
 });
 
 test("desync with the parent is reported", () => {
-  const parent = node({endHash: "hash-new"});
+  const parent = node({videoFrameLastHash: "hash-new"});
   const child = node({
     nodeId: "node_002",
     startFromNodeId: "node_001",
-    startParentEndHash: "hash-old",
-    endHash: "hash-e2",
+    startParentFrameHash: "hash-old",
+    videoFrameLastHash: "hash-e2",
     choices: [goodChoice({targetNodeId: "node_003"})],
   });
   assert.deepEqual(validateStory(story(), [parent, child, ending({
     nodeId: "node_003",
     startFromNodeId: "node_002",
-    startParentEndHash: "hash-e2",
+    startParentFrameHash: "hash-e2",
   })]), ["Node node_002 is out of sync with its parent."]);
 });
 
@@ -209,19 +202,20 @@ test("endings need a name, a type, and no choices", () => {
 test("an ending with a closing line needs its voice", () => {
   const bad = ending({
     ttsText: "The end.",
-    lineApproved: false,
     ttsStatus: "idle",
+    ttsAudioUrl: null,
+    ttsDurationSeconds: null,
   });
   assert.deepEqual(validateStory(story(), [node(), bad]), [
-    "Node node_002 needs an approved narrator line.",
     "Node node_002 needs a ready narrator voice.",
-    "Node node_002 needs an approved narrator voice.",
   ]);
 });
 
-test("a ready voice still needs approval", () => {
-  const bad = node({ttsApproved: false});
-  assert.deepEqual(validateStory(story(), [bad, ending()]), [
-    "Node node_001 needs an approved narrator voice.",
-  ]);
+test("legacy approvals are ignored", () => {
+  const legacy = node({
+    startImageApproved: false,
+    lineApproved: false,
+    ttsApproved: false,
+  });
+  assert.deepEqual(validateStory(story(), [legacy, ending()]), []);
 });

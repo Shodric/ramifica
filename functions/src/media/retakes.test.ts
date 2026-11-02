@@ -12,12 +12,11 @@ type Fields = {[field: string]: unknown};
 
 /**
  * Voice retakes go through `generateNodeVoice` (media/generateNodeVoice):
- * the call is gated on the approved line, stores fresh bytes, and resets
- * the voice approval, so a same-params second call is a new take by
- * construction. Proven in generateNodeVoice.test.ts.
- * Image and video need no new code: both generators overwrite bytes,
- * reset approvals, and desync per #47, so a same-params second call
- * is a new take by construction.
+ * the call needs only a narrator line, stores fresh bytes, and a
+ * same-params second call is a new take by construction. Proven in
+ * generateNodeVoice.test.ts. Image and video need no new code: both
+ * generators overwrite bytes and desync per #47, so a same-params second
+ * call is a new take by construction.
  */
 
 /** In-memory doc snapshot. Reads deep-copy so tests cannot leak writes. */
@@ -205,7 +204,8 @@ const sha8 = (text: string): string => {
 };
 
 /**
- * One author-owned root draft with approved S+E and a ready video.
+ * One author-owned root draft with ready S, a ready video, and an
+ * extracted last frame.
  * @param {MemDb} db Backing store.
  */
 const seedRoot = (db: MemDb): void => {
@@ -219,19 +219,14 @@ const seedRoot = (db: MemDb): void => {
     startHash: sha8("s1"),
     startImageSourceUrl: "https://cdn.example/s1.png",
     startImageStatus: "ready",
-    startImageApproved: true,
-    endHash: sha8("e1"),
-    endImageSourceUrl: "https://cdn.example/e1.png",
-    endImageStatus: "ready",
-    endImageApproved: true,
     videoStatus: "ready",
     videoSource: "generated",
     videoUrl: "https://cdn.example/v1.mp4",
     videoFromHash: sha8("s1"),
-    videoToHash: sha8("e1"),
     videoJobId: "job-1",
+    videoFrameLastUrl: "https://cdn.example/f1.png",
+    videoFrameLastHash: sha8("f1"),
     ttsText: "Wind.",
-    lineApproved: true,
     ttsAudioUrl: "https://cdn.example/v1.m4a",
     ttsStatus: "ready",
     ttsDurationSeconds: 2.1,
@@ -259,34 +254,34 @@ const imageDeps = (take: string): NodeMediaDeps => ({
 const videoDeps = (jobId: string, url: string): NodeMediaDeps => ({
   downloadVideo: async () => Buffer.from(url),
   normalizeVideo: async (bytes) => ({bytes, width: 480, height: 854,
-    durationSeconds: 10, lastFrame: Buffer.from("frame"), lastBlurData: "blur"}),
+    durationSeconds: 10, lastFrame: Buffer.from("frame"),
+    lastBlurData: "blur"}),
   uploadVideo: async () => url,
   uploadStill: async () => "https://cdn.example/frame.png",
   requestVideo: async () => ({jobId, videoUrl: url}),
 });
 
-test("image retake replaces bytes and resets approval", async () => {
+test("image retake replaces bytes and idles stale video", async () => {
   const db = new MemDb();
   seedRoot(db);
   const first = await generateNodeImageWith(
     db,
     "uid_a",
-    {storyId: "story_draft", nodeId: "node_001", which: "end"},
+    {storyId: "story_draft", nodeId: "node_001", which: "start"},
     imageDeps("take-one")
   );
   const second = await generateNodeImageWith(
     db,
     "uid_a",
-    {storyId: "story_draft", nodeId: "node_001", which: "end"},
+    {storyId: "story_draft", nodeId: "node_001", which: "start"},
     imageDeps("take-two")
   );
   assert.notEqual(second.imageUrl, first.imageUrl);
-  assert.equal(second.endHash, sha8("take-two"));
   const snap = await db.doc("stories/story_draft/nodes/node_001").get();
   const fields = snap.data();
   assert.ok(fields !== undefined);
-  assert.equal(fields["endImageApproved"], false);
-  assert.equal(fields["endHash"], sha8("take-two"));
+  assert.equal(fields["startImageApproved"], false);
+  assert.equal(fields["startHash"], sha8("take-two"));
   assert.equal(fields["videoStatus"], "idle");
   assert.equal(fields["videoUrl"], null);
 });

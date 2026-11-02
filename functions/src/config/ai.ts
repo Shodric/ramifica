@@ -4,9 +4,10 @@ import {defineSecret} from "firebase-functions/params";
 export const metaApiKey = defineSecret("META_API_KEY");
 export const openRouterApiKey = defineSecret("OPENROUTER_API_KEY");
 
-/** The only output profile accepted by new editor media. */
+/** Request hints for new editor media (provider may return other sizes).
+ * Stored dimensions always come from probing the returned bytes. */
 export const mediaProfile = {
-  width: 480, height: 854, fps: 30, durationSeconds: 10,
+  width: 480, height: 854, fps: 24, durationSeconds: 10,
   resolution: "480p", aspectRatio: "9:16", stillSize: "480x854",
 } as const;
 
@@ -158,13 +159,9 @@ export const imageProvider = (
 /**
  * Settings specific to the existing OpenRouter video adapter.
  * @param {Env} env Runtime environment.
- * @return {Object} Output shape and optional final-frame conditioning.
+ * @return {Object} Output shape.
  */
 export const videoConfig = (env: Env = process.env) => {
-  const endFrame = setting(env, "OPENROUTER_VIDEO_USE_END_FRAME", "false");
-  if (endFrame !== "true" && endFrame !== "false") {
-    throw new Error("OPENROUTER_VIDEO_USE_END_FRAME must be true or false.");
-  }
   const output = {
     resolution: setting(
       env, "OPENROUTER_VIDEO_RESOLUTION", aiDefaults.video.resolution
@@ -175,14 +172,7 @@ export const videoConfig = (env: Env = process.env) => {
     duration: positiveNumber(
       env, "OPENROUTER_VIDEO_DURATION_SECONDS", aiDefaults.video.durationSeconds
     ),
-    useEndFrame: endFrame === "true",
   };
-  if (output.resolution !== mediaProfile.resolution ||
-      output.aspectRatio !== mediaProfile.aspectRatio ||
-      output.duration !== mediaProfile.durationSeconds) {
-    throw new Error("Video output requires 480p, 9:16 and 10 seconds. " +
-      "Update OPENROUTER_VIDEO_RESOLUTION/ASPECT_RATIO/DURATION_SECONDS.");
-  }
   return output;
 };
 

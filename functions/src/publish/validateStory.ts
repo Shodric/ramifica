@@ -22,9 +22,8 @@ export interface ValidatableNode {
   durationSeconds?: number | null;
   startImageApproved?: boolean | null;
   startFromNodeId?: string | null;
-  startParentEndHash?: string | null;
-  endImageApproved?: boolean | null;
-  endHash?: string | null;
+  startParentFrameHash?: string | null;
+  videoFrameLastHash?: string | null;
   ttsText?: string | null;
   lineApproved?: boolean | null;
   ttsAudioUrl?: string | null;
@@ -43,8 +42,9 @@ export interface ValidatableStory {
 /**
  * Publishing checklist from the game rules. Pure: takes the story doc and
  * its nodes, returns one message per missing piece, empty when it can go
- * `published`. `endHash` is caller-computed (sha of the current E bytes),
- * not a Firestore field; it anchors the desync check.
+ * `published`. `videoFrameLastHash` is caller-computed (sha of the
+ * current last-frame bytes), not a Firestore field; it anchors the
+ * desync check.
  * @param {ValidatableStory} story Story doc.
  * @param {ValidatableNode[]} nodes All nodes of the story.
  * @return {string[]} One message per missing piece.
@@ -124,18 +124,12 @@ const validateFrames = (
   if (node.videoSource === "upload") {
     return node.videoFrameLastUrl ?
       [] :
-      [`Node ${node.nodeId} needs its extracted end frame.`];
-  }
-  const problems: string[] = [];
-  if (node.endImageApproved !== true) {
-    problems.push(`Node ${node.nodeId} needs an approved end image.`);
+      [`Node ${node.nodeId} needs its extracted last frame.`];
   }
   if (isRoot) {
-    if (node.startImageApproved !== true) {
-      problems.push(`Node ${node.nodeId} needs an approved start image.`);
-    }
-    return problems;
+    return [];
   }
+  const problems: string[] = [];
   if (!node.startFromNodeId) {
     problems.push(`Node ${node.nodeId} is missing its parent link.`);
     return problems;
@@ -145,13 +139,13 @@ const validateFrames = (
     problems.push(`Node ${node.nodeId} points to a missing parent.`);
     return problems;
   }
-  if (!node.startParentEndHash) {
-    problems.push(`Node ${node.nodeId} is missing its parent end hash.`);
-  } else if (!parent.endHash) {
+  if (!node.startParentFrameHash) {
+    problems.push(`Node ${node.nodeId} is missing its parent frame hash.`);
+  } else if (!parent.videoFrameLastHash) {
     problems.push(
-      `Node ${node.nodeId} cannot verify sync: parent end hash missing.`
+      `Node ${node.nodeId} cannot verify sync: parent frame hash missing.`
     );
-  } else if (node.startParentEndHash !== parent.endHash) {
+  } else if (node.startParentFrameHash !== parent.videoFrameLastHash) {
     problems.push(`Node ${node.nodeId} is out of sync with its parent.`);
   }
   return problems;
@@ -205,21 +199,14 @@ const validateEnding = (node: ValidatableNode): string[] => {
 };
 
 const validateVoice = (node: ValidatableNode): string[] => {
-  const problems: string[] = [];
-  if (node.lineApproved !== true) {
-    problems.push(`Node ${node.nodeId} needs an approved narrator line.`);
-  }
   if (
     node.ttsStatus !== "ready" ||
     !node.ttsAudioUrl ||
     !isPositive(node.ttsDurationSeconds)
   ) {
-    problems.push(`Node ${node.nodeId} needs a ready narrator voice.`);
+    return [`Node ${node.nodeId} needs a ready narrator voice.`];
   }
-  if (node.ttsApproved !== true) {
-    problems.push(`Node ${node.nodeId} needs an approved narrator voice.`);
-  }
-  return problems;
+  return [];
 };
 
 const isPositive = (value: number | null | undefined): value is number => {

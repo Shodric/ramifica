@@ -266,30 +266,24 @@ test("submitVideo posts the start frame and omits unset fields", async () => {
   );
 });
 
-test("submitVideo adds the last frame when the provider takes it", async () => {
+test("submitVideo sends the start frame only", async () => {
   const seen: SeenRequest[] = [];
   await submitVideo({
     apiKey: "key-1",
     model: "vid-m",
-    prompt: "morph",
+    prompt: "drift",
     startUrl: "https://cdn.example/s.png",
-    endUrl: "https://cdn.example/e.png",
     generateAudio: true,
     fetchFn: stubJson({id: "job-1"}, 202, seen),
   });
   assert.deepEqual(JSON.parse(seen[0].init.body ?? ""), {
     model: "vid-m",
-    prompt: "morph",
+    prompt: "drift",
     frame_images: [
       {
         type: "image_url",
         image_url: {url: "https://cdn.example/s.png"},
         frame_type: "first_frame",
-      },
-      {
-        type: "image_url",
-        image_url: {url: "https://cdn.example/e.png"},
-        frame_type: "last_frame",
       },
     ],
     generate_audio: true,

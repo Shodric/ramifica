@@ -14,7 +14,7 @@ import {
   requireUid,
   toRecord,
 } from "../feed/shared";
-import {writeMedia} from "./draftWrites";
+import {beginMedia, writeMedia} from "./draftWrites";
 import {readableStorageUrl} from "./storageUrl";
 import {convertVoiceToM4a, synthesizePcm} from "./voice";
 import {
@@ -54,14 +54,14 @@ export interface GenerateNodeVoiceResult {
 }
 
 /**
- * Synthesizes the approved narrator line into a voice take. Gated on the
- * approved line: the line must be approved first, and every take (including
- * another take of the same line) stores fresh bytes and clears the voice
- * approval, so the author previews before the take counts.
+ * Synthesizes the narrator line into a voice take. Gated only on a
+ * non-blank line: every take (including another take of the same line)
+ * stores fresh bytes, so the author previews the take as-is.
  */
 export const generateNodeVoice = onCallSafe(
   {
     enforceAppCheck: !isEmulator(), maxInstances: 10,
+    timeoutSeconds: 180, concurrency: 2,
     secrets: [openRouterApiKey],
   },
   async (req) => {
@@ -112,14 +112,8 @@ export const generateNodeVoiceWith = async (
     throw new HttpsError("not-found", "Node not found.");
   }
   const node = docData(nodeSnap, "Node");
-  if (node.lineApproved !== true) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Approve the narrator line before generating voice."
-    );
-  }
   const text = optString(node.ttsText);
-  if (text === null || text === "") {
+  if (text === null) {
     throw new HttpsError(
       "failed-precondition",
       "Add a narrator line before generating voice."
@@ -127,15 +121,51 @@ export const generateNodeVoiceWith = async (
   }
 
   const synthesize = deps.synthesize ?? defaultSynthesize();
-  if (!synthesize) throw new HttpsError("failed-precondition", "TTS provider credentials are missing.");
-  await writeMedia(db, storyId, nodeId, {ttsStatus: "pending", generationKind: "voice",
-    generationPhase: "generating", mediaError: null});
+  if (!synthesize) {
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        ttsStatus: "failed",
+        generationKind: null,
+        generationPhase: null,
+        mediaError: "TTS provider credentials are missing.",
+      }
+    );
+    throw new HttpsError(
+      "failed-precondition",
+      "TTS provider credentials are missing."
+    );
+  }
+  await beginMedia(
+    db,
+    storyId,
+    nodeId,
+    "voice",
+    {
+      ttsStatus: "pending",
+      generationKind: "voice",
+      generationPhase: "generating",
+      mediaError: null,
+    }
+  );
 
   let pcm: Buffer;
   try {
     pcm = (await synthesize(text)).pcm;
   } catch (error) {
-    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        ttsStatus: "failed",
+        generationKind: null,
+        generationPhase: null,
+        mediaError: (error as Error).message,
+      }
+    );
     throw new HttpsError(
       "internal",
       `Voice generation failed: ${(error as Error).message}`
@@ -147,24 +177,54 @@ export const generateNodeVoiceWith = async (
     await writeMedia(db, storyId, nodeId, {generationPhase: "processing"});
     take = await convert(pcm);
   } catch (error) {
-    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        ttsStatus: "failed",
+        generationKind: null,
+        generationPhase: null,
+        mediaError: (error as Error).message,
+      }
+    );
     throw new HttpsError(
       "internal",
       `Voice conversion failed: ${(error as Error).message}`
     );
   }
   if (!optDuration(take.durationSeconds)) {
-    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null, generationPhase: null});
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        ttsStatus: "failed",
+        generationKind: null,
+        generationPhase: null,
+        mediaError: "Voice take has no duration.",
+      }
+    );
     throw new HttpsError("internal", "Voice take has no duration.");
   }
   const hash = createHash("sha256")
     .update(take.bytes).digest("hex").slice(0, 8);
   const upload = deps.uploadVoice ?? defaultUploadVoice();
   let url: string;
-  try { url = await upload({storyId, nodeId, hash, bytes: take.bytes}); }
-  catch (error) {
-    await writeMedia(db, storyId, nodeId, {ttsStatus: "failed", generationKind: null,
-      generationPhase: null, mediaError: (error as Error).message});
+  try {
+    url = await upload({storyId, nodeId, hash, bytes: take.bytes});
+  } catch (error) {
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        ttsStatus: "failed",
+        generationKind: null,
+        generationPhase: null,
+        mediaError: (error as Error).message,
+      }
+    );
     throw error;
   }
 
@@ -173,10 +233,16 @@ export const generateNodeVoiceWith = async (
       ttsAudioUrl: url,
       ttsStatus: "ready",
       ttsDurationSeconds: take.durationSeconds,
-      ttsApproved: false, generationKind: null, generationPhase: null, mediaError: null,
+      ttsApproved: false,
+      generationKind: null,
+      generationPhase: null,
+      mediaError: null,
     }, (fresh) => {
-      if (fresh.ttsText !== text || fresh.lineApproved !== true) {
-        throw new HttpsError("aborted", "The narrator line changed while generating voice.");
+      if (fresh.ttsText !== text) {
+        throw new HttpsError(
+          "aborted",
+          "The narrator line changed while generating voice."
+        );
       }
     }
   );
@@ -191,7 +257,7 @@ export const generateNodeVoiceWith = async (
 
 /**
  * Default TTS seam: OpenRouter Gemini TTS. Null without credentials, so
- * the caller records `pending` instead of billing a key it cannot reach.
+ * the caller fails with a reason instead of billing a key it cannot reach.
  * @return {Function | null} The synthesizer, or null.
  */
 const defaultSynthesize = ():

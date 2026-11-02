@@ -7,10 +7,8 @@ import {test} from "node:test";
 import {promisify} from "util";
 import {ffmpegBin, ffprobeBin} from "./bin";
 import {
-  blurDataUri,
   contentHash8,
   convertCover,
-  convertEndImage,
 } from "./images";
 import {probeSize, processVideo} from "./processVideo";
 
@@ -69,8 +67,8 @@ test("processVideo re-encodes with audio and extracts frames", async () => {
     const out = await processVideo(await makeClip(dir, true), dir);
     assert.equal(Math.abs(out.durationSeconds - 2) < 0.3, true);
     assert.deepEqual(await probeSize(out.videoPath), {
-      width: 480,
-      height: 854,
+      width: 320,
+      height: 480,
     });
     assert.equal(await audioStreams(out.videoPath), 1);
     for (const blur of [out.firstBlurData, out.lastBlurData]) {
@@ -89,44 +87,14 @@ test("processVideo drops the audio track when the input is silent",
       const out = await processVideo(await makeClip(dir, false), dir);
       assert.equal(await audioStreams(out.videoPath), 0);
       assert.deepEqual(await probeSize(out.videoPath), {
-        width: 480,
-        height: 854,
+        width: 320,
+        height: 480,
       });
     } finally {
       await rm(dir, {recursive: true, force: true});
     }
   }
 );
-
-test("convertEndImage makes cover, thumbnail, and blur", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ramifica-end-"));
-  try {
-    const src = join(dir, "e.png");
-    await run(ffmpegBin(), [
-      "-y",
-      "-v",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      "testsrc=size=640x480:rate=1:duration=1",
-      "-frames:v",
-      "1",
-      src,
-    ]);
-    const end = await convertEndImage(src, dir);
-    assert.deepEqual(await probeSize(end.webpPath), {
-      width: 480,
-      height: 854,
-    });
-    const thumb = await probeSize(end.thumbPath);
-    assert.equal(thumb.width, 160);
-    assert.equal(end.blurData.startsWith("data:image/webp;base64,"), true);
-    assert.equal(await blurDataUri(src), end.blurData);
-  } finally {
-    await rm(dir, {recursive: true, force: true});
-  }
-});
 
 test("convertCover makes the story art and the link preview", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ramifica-cover-"));
@@ -183,7 +151,7 @@ test("contentHash8 is stable and content-addressed", async () => {
   }
 });
 
-test("large stills are cropped to exactly 480x854 before hashing", async () => {
+test("large stills keep provider pixels without cropping", async () => {
   const {normalizeStill} = await import("./processVideo");
   const {readFile, writeFile} = await import("fs/promises");
   const dir = await mkdtemp(join(tmpdir(), "ramifica-still-profile-"));
@@ -193,27 +161,33 @@ test("large stills are cropped to exactly 480x854 before hashing", async () => {
       "testsrc=size=1536x2688:duration=0.1", "-frames:v", "1", src]);
     const before = await readFile(src);
     const out = await normalizeStill(before);
-    assert.equal(out.width, 480); assert.equal(out.height, 854);
-    assert.notDeepEqual(out.bytes, before);
+    assert.equal(out.width, 1536); assert.equal(out.height, 2688);
     const saved = join(dir, "normalized.png");
     await writeFile(saved, out.bytes);
-    assert.deepEqual(await probeSize(saved), {width: 480, height: 854});
-  } finally { await rm(dir, {recursive: true, force: true}); }
+    assert.deepEqual(await probeSize(saved), {width: 1536, height: 2688});
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
 });
 
-test("AI clips trim excess to 10 seconds; a six-second result fails without stretching", async () => {
+test("clips keep provider length and size without trimming " +
+  "or failing", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ramifica-ai-profile-"));
   try {
-    const input = join(dir, "long.mp4");
+    const input = join(dir, "odd.mp4");
     await run(ffmpegBin(), ["-y", "-v", "error", "-f", "lavfi", "-i",
-      "color=red:size=768x1344:rate=30:duration=10.5", "-f", "lavfi", "-i",
-      "sine=frequency=440:duration=10.5", "-c:v", "mpeg4", "-c:a", "aac", input]);
-    const out = await processVideo(input, dir, {generated: true});
-    assert.deepEqual(await probeSize(out.videoPath), {width: 480, height: 854});
-    assert.ok(Math.abs(out.durationSeconds - 10) <= 1 / 30);
+      "color=red:size=480x832:rate=24:duration=3", "-f", "lavfi", "-i",
+      "sine=frequency=440:duration=3", "-c:v", "mpeg4", "-c:a", "aac", input]);
+    const out = await processVideo(input, dir);
+    assert.deepEqual(await probeSize(out.videoPath), {width: 480, height: 832});
+    assert.ok(Math.abs(out.durationSeconds - 3) < 0.3);
     assert.equal(await audioStreams(out.videoPath), 1);
-    const short = join(dir, "six.mp4");
-    await run(ffmpegBin(), ["-y", "-v", "error", "-i", input, "-t", "6", "-c", "copy", short]);
-    await assert.rejects(processVideo(short, dir, {generated: true}), /shorter than 10 seconds/);
-  } finally { await rm(dir, {recursive: true, force: true}); }
+    const short = join(dir, "two.mp4");
+    await run(ffmpegBin(), ["-y", "-v", "error", "-i", input, "-t",
+      "2", "-c", "copy", short]);
+    const shortOut = await processVideo(short, dir);
+    assert.ok(Math.abs(shortOut.durationSeconds - 2) < 0.5);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
 });

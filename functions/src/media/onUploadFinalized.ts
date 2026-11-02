@@ -1,19 +1,28 @@
 import * as admin from "firebase-admin";
-import {execFile} from "child_process";
+import {execFile, type ExecFileOptions} from "child_process";
 import {createHash} from "crypto";
 import {mkdtemp, readFile, rm} from "fs/promises";
 import {tmpdir} from "os";
 import {join} from "path";
 import {promisify} from "util";
 import {onObjectFinalized} from "firebase-functions/v2/storage";
-import {mediaProfile} from "../config/ai";
 import {draftTransaction, writeMedia} from "./draftWrites";
 import {Db, docData} from "../feed/shared";
 import {ffmpegBin} from "./bin";
 import {ProcessedVideo, processVideo} from "./processVideo";
 import {readableStorageUrl} from "./storageUrl";
 
-const run = promisify(execFile);
+const exec = promisify(execFile);
+/**
+ * ffmpeg never reads interactive stdin: the static build polls for input
+ * and an execFile pipe never EOFs, hanging the call at 0% CPU.
+ * @param {string} bin Binary path.
+ * @param {string[]} args CLI args.
+ * @param {ExecFileOptions} options Exec options.
+ * @return {Promise<object>} Exec output.
+ */
+const run = (bin: string, args: string[], options?: ExecFileOptions) =>
+  exec(bin, bin === ffmpegBin() ? ["-nostdin", ...args] : args, options);
 
 /** Max upload the trigger accepts: 100 MB, mirroring storage.rules. */
 export const maxUploadBytes = 100 * 1024 * 1024;
@@ -67,19 +76,24 @@ export interface FinalizeResult {
   storyId?: string;
   nodeId?: string;
   videoUrl?: string;
-  endHash?: string;
+  frameHash?: string;
   uploadError?: string | null;
 }
 
 /**
- * Storage trigger: re-encodes one author upload into node video + E.
+ * Storage trigger: re-encodes one author upload into node video.
  * Nobody calls it; `onObjectFinalized` fires on every finalized object,
  * so objects outside `uploads/` are ignored, never deleted. The bucket
  * is explicit because registration throws without one when unit tests
  * import this module with no `FIREBASE_CONFIG`.
  */
 export const onUploadFinalized = onObjectFinalized(
-  {bucket: triggerBucket()},
+  {
+    bucket: triggerBucket(),
+    timeoutSeconds: 300,
+    memory: "1GiB",
+    concurrency: 2,
+  },
   async (event) => {
     if (admin.apps.length === 0) {
       admin.initializeApp();
@@ -117,8 +131,8 @@ function triggerBucket(): string {
 /**
  * Testable core of `onUploadFinalized`. Rejects leave the node video
  * status untouched and record `uploadError` for the client; success
- * stores the re-encoded video, extracts E as the last frame (hash +
- * approval reset, children desynced like #47), then deletes the upload.
+ * stores the re-encoded video, extracts the last frame (hash
+ * stored, children desynced like #47), then deletes the upload.
  * @param {Db} db Firestore.
  * @param {UploadObject} object Finalized object metadata.
  * @param {UploadFinalizeDeps} deps Injectable Storage/ffmpeg seams.
@@ -184,16 +198,22 @@ export const finalizeUploadWith = async (
 
   const tools = deps.hasTools ?? defaultHasTools;
   if (!(await tools())) {
-    await writeMedia(db, storyId, nodeId,
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
       {
         videoSource: "upload",
         videoStatus: "failed",
-        generationKind: null, generationPhase: null,
+        generationKind: null,
+        generationPhase: null,
         uploadObjectName: name,
         uploadGeneration: object.generation ?? null,
         uploadTakeId: takeId,
         uploadError: "encode-unavailable",
-      },
+        mediaError: "Video encoding is unavailable. " +
+          "Try uploading again after the server is configured.",
+      }
     );
     await safeDelete(deps, name);
     return {
@@ -212,11 +232,20 @@ export const finalizeUploadWith = async (
   try {
     const suffix = name.toLowerCase().endsWith(".mov") ? ".mov" : ".mp4";
     const inputPath = join(dir, `input${suffix}`);
-    await writeMedia(db, storyId, nodeId, {generationKind: "video", generationPhase: "processing", uploadError: null});
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
+      {
+        generationKind: "video",
+        generationPhase: "processing",
+        uploadError: null,
+      }
+    );
     await download(name, inputPath);
     const out = await process(inputPath, dir);
     const frameBytes = await readLocal(out.lastFramePath);
-    const endHash = createHash("sha256")
+    const frameHash = createHash("sha256")
       .update(frameBytes)
       .digest("hex")
       .slice(0, 8);
@@ -231,15 +260,23 @@ export const finalizeUploadWith = async (
       "video/mp4"
     );
     const frameUrl = await uploadBytes(
-      `stories/${storyId}/${nodeId}-end-${endHash}.png`,
+      `stories/${storyId}/${nodeId}-end-${frameHash}.png`,
       frameBytes,
       "image/png"
     );
-    const desynced = await childIdsDesyncedBy(db, storyId, nodeId, endHash);
+    const desynced = await childIdsDesyncedBy(db, storyId, nodeId, frameHash);
     await draftTransaction(db, storyId, async (tx) => {
       const current = await tx.get(nodeRef);
-      if (!current.exists) throw new Error("Node was deleted while processing the upload.");
-      const children = await Promise.all(desynced.map((id) => tx.get(db.doc(`stories/${storyId}/nodes/${id}`))));
+      if (!current.exists) {
+        throw new Error(
+          "Node was deleted while processing the upload."
+        );
+      }
+      const children = await Promise.all(
+        desynced.map((id) =>
+          tx.get(db.doc(`stories/${storyId}/nodes/${id}`))
+        )
+      );
       tx.set(
         nodeRef,
         {
@@ -247,22 +284,16 @@ export const finalizeUploadWith = async (
           videoStatus: "ready",
           videoUrl,
           videoJobId: `upload_${object.generation ?? "local"}`,
-          videoToHash: endHash,
           durationSeconds: out.durationSeconds,
           videoWidth: out.width, videoHeight: out.height,
-          endImageWidth: mediaProfile.width, endImageHeight: mediaProfile.height,
           generationKind: null, generationPhase: null,
           videoFrameLastBlurData: out.lastBlurData,
           videoFrameLastUrl: frameUrl,
-          endImageSourceUrl: frameUrl,
-          endImageStatus: "ready",
-          endHash,
-          endImageSource: "upload",
-          endImageApproved: false,
+          videoFrameLastHash: frameHash,
           uploadObjectName: name,
           uploadGeneration: object.generation ?? null,
           uploadTakeId: takeId,
-          uploadError: null,
+          uploadError: null, mediaError: null,
         },
         {merge: true}
       );
@@ -275,16 +306,23 @@ export const finalizeUploadWith = async (
       }
     });
     await safeDelete(deps, name);
-    return {status: "ready", storyId, nodeId, videoUrl, endHash};
+    return {status: "ready", storyId, nodeId, videoUrl, frameHash};
   } catch (error) {
-    await writeMedia(db, storyId, nodeId,
+    await writeMedia(
+      db,
+      storyId,
+      nodeId,
       {
         uploadObjectName: name,
         uploadGeneration: object.generation ?? null,
         uploadTakeId: takeId,
-        uploadError: "encode-failed", videoStatus: "failed",
-        generationKind: null, generationPhase: null,
-      },
+        uploadError: "encode-failed",
+        videoStatus: "failed",
+        mediaError: "Video processing failed. " +
+          "Try another clip.",
+        generationKind: null,
+        generationPhase: null,
+      }
     );
     await safeDelete(deps, name);
     throw error;
@@ -358,23 +396,26 @@ const rejectOnNode = async (
         uploadError: code, uploadTakeId: takeId, generationKind: null,
         generationPhase: null}).catch(() => undefined);
     }
-  } finally { await safeDelete(deps, name); }
+  } finally {
+    await safeDelete(deps, name);
+  }
 };
 
 /**
- * Children still linked to the old E: their `startParentEndHash` stays
- * as the mismatch evidence while their video idles, per #47 semantics.
+ * Children still linked to the old last frame: their
+ * `startParentFrameHash` stays as the mismatch evidence while their
+ * video idles, per #47 semantics.
  * @param {Db} db Firestore.
  * @param {string} storyId Story id.
  * @param {string} nodeId Changed node id.
- * @param {string} endHash Fresh E hash.
+ * @param {string} frameHash Fresh last-frame hash.
  * @return {Promise<string[]>} Desynced child ids.
  */
 const childIdsDesyncedBy = async (
   db: Db,
   storyId: string,
   nodeId: string,
-  endHash: string
+  frameHash: string
 ): Promise<string[]> => {
   const query = await db
     .collection(`stories/${storyId}/nodes`)
@@ -383,8 +424,8 @@ const childIdsDesyncedBy = async (
   return query.docs
     .filter((child) => {
       const fields = child.data() ?? {};
-      const linked = fields["startParentEndHash"];
-      return typeof linked !== "string" || linked !== endHash;
+      const linked = fields["startParentFrameHash"];
+      return typeof linked !== "string" || linked !== frameHash;
     })
     .map((child) => child.id);
 };
@@ -408,8 +449,8 @@ const safeDelete = async (
 };
 
 /**
- * ffmpeg presence probe: the emulator degrades to `pending` instead
- * of crashing when no binary is installed.
+ * ffmpeg presence probe: without a binary the trigger fails the node with
+ * a reason instead of crashing or leaving `pending` behind.
  * @return {Promise<boolean>} Whether encode.sh can run.
  */
 const defaultHasTools = async (): Promise<boolean> => {

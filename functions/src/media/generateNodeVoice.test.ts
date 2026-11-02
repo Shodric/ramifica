@@ -115,7 +115,7 @@ const sha8 = (text: string): string => {
 };
 
 /**
- * One author-owned draft node with an approved narrator line.
+ * One author-owned draft node with a narrator line.
  * @param {MemDb} db Backing store.
  * @param {Fields} overrides Node field replacements.
  */
@@ -128,7 +128,6 @@ const seedDraft = (db: MemDb, overrides: Fields = {}): void => {
   db.store.set("stories/story_draft/nodes/node_001", {
     title: "Ridge",
     ttsText: "Wind over the ridge.",
-    lineApproved: true,
     ttsAudioUrl: null,
     ttsStatus: "idle",
     ttsDurationSeconds: null,
@@ -181,9 +180,9 @@ const rejectsWith = async (
   );
 };
 
-test("voice is gated on the approved line without writing", async () => {
+test("voice requires a narrator line without writing", async () => {
   const db = new MemDb();
-  seedDraft(db, {lineApproved: false});
+  seedDraft(db, {ttsText: "   "});
   const before = snapshot(db);
   await rejectsWith(
     generateNodeVoiceWith(
@@ -221,7 +220,6 @@ test("voice gates: auth, owner, draft, target, and words", async () => {
   });
   db.store.set("stories/story_pub/nodes/node_p1", {
     ttsText: "Wind.",
-    lineApproved: true,
   });
   await rejectsWith(
     generateNodeVoiceWith(
@@ -231,7 +229,6 @@ test("voice gates: auth, owner, draft, target, and words", async () => {
   );
   db.store.set("stories/story_draft/nodes/node_blank", {
     ttsText: "   ",
-    lineApproved: true,
   });
   await rejectsWith(
     generateNodeVoiceWith(
@@ -241,7 +238,7 @@ test("voice gates: auth, owner, draft, target, and words", async () => {
   );
 });
 
-test("happy path speaks the approved line and clears approval", async () => {
+test("happy path speaks the line and stores a fresh take", async () => {
   const db = new MemDb();
   seedDraft(db, {
     ttsAudioUrl: "https://cdn.example/old.m4a",
@@ -277,11 +274,10 @@ test("happy path speaks the approved line and clears approval", async () => {
   assert.equal(saved.ttsStatus, "ready");
   assert.equal(saved.ttsDurationSeconds, 2.5);
   assert.equal(saved.ttsApproved, false);
-  assert.equal(saved.lineApproved, true);
   assert.equal(saved.ttsText, "Wind over the ridge.");
 });
 
-test("another take replaces bytes and resets approval", async () => {
+test("another take replaces bytes and stores fresh audio", async () => {
   const db = new MemDb();
   seedDraft(db);
   const first = await generateNodeVoiceWith(
@@ -332,7 +328,8 @@ test("duplicate dispatches converge on the same take", async () => {
   assert.equal(saved.ttsAudioUrl, first.ttsAudioUrl);
 });
 
-test("missing TTS credentials fail immediately and preserve the last take", async () => {
+test("missing TTS credentials fail immediately and " +
+  "preserve the last take", async () => {
   const key = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
   try {
@@ -340,11 +337,18 @@ test("missing TTS credentials fail immediately and preserve the last take", asyn
     seedDraft(db, {ttsAudioUrl: "https://cdn.example/old.m4a", ttsStatus: "ready"});
     await assert.rejects(generateNodeVoiceWith(db, "uid_a", {
       storyId: "story_draft", nodeId: "node_001",
-    }), (error: unknown) => (error as {code: string}).code === "failed-precondition");
-    const saved = (await db.doc("stories/story_draft/nodes/node_001").get()).data();
-    assert.equal(saved?.ttsStatus, "ready");
+    }), (error: unknown) =>
+      (error as {code: string}).code === "failed-precondition");
+    const saved =
+      (await db.doc("stories/story_draft/nodes/node_001").get()).data();
+    assert.equal(saved?.ttsStatus, "failed");
+    assert.equal(saved?.mediaError, "TTS provider credentials are missing.");
+    assert.equal(saved?.generationKind, null);
+    assert.equal(saved?.generationPhase, null);
     assert.equal(saved?.ttsAudioUrl, "https://cdn.example/old.m4a");
-  } finally { if (key !== undefined) process.env.OPENROUTER_API_KEY = key; }
+  } finally {
+    if (key !== undefined) process.env.OPENROUTER_API_KEY = key;
+  }
 });
 
 test("provider failure marks failed and keeps last good bytes", async () => {
@@ -371,7 +375,64 @@ test("provider failure marks failed and keeps last good bytes", async () => {
   const saved =
     (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
   assert.equal(saved.ttsStatus, "failed");
+  assert.equal(saved.mediaError, "TTS is down.");
+  assert.equal(saved.generationKind, null);
+  assert.equal(saved.generationPhase, null);
   assert.equal(saved.ttsAudioUrl, "https://cdn.example/old.m4a");
   assert.equal(saved.ttsDurationSeconds, 1.1);
   assert.ok(snapshot(db) !== before);
+});
+
+test("conversion failure marks failed with the reason", async () => {
+  const db = new MemDb();
+  seedDraft(db, {
+    ttsAudioUrl: "https://cdn.example/old.m4a",
+    ttsStatus: "ready",
+    ttsDurationSeconds: 1.1,
+  });
+  await rejectsWith(
+    generateNodeVoiceWith(
+      db,
+      "uid_a",
+      {storyId: "story_draft", nodeId: "node_001"},
+      mockVoice("take-one", {
+        convertTake: async () => {
+          throw new Error("ffmpeg is down.");
+        },
+      })
+    ),
+    "internal"
+  );
+  const saved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(saved.ttsStatus, "failed");
+  assert.equal(saved.mediaError, "ffmpeg is down.");
+  assert.equal(saved.generationKind, null);
+  assert.equal(saved.generationPhase, null);
+  assert.equal(saved.ttsAudioUrl, "https://cdn.example/old.m4a");
+});
+
+test("a take without duration marks failed with a reason", async () => {
+  const db = new MemDb();
+  seedDraft(db);
+  await rejectsWith(
+    generateNodeVoiceWith(
+      db,
+      "uid_a",
+      {storyId: "story_draft", nodeId: "node_001"},
+      mockVoice("take-one", {
+        convertTake: async (pcm: Buffer) => ({
+          bytes: Buffer.from(`take:${pcm.toString()}`),
+          durationSeconds: 0,
+        }),
+      })
+    ),
+    "internal"
+  );
+  const saved =
+    (await db.doc("stories/story_draft/nodes/node_001").get()).data() ?? {};
+  assert.equal(saved.ttsStatus, "failed");
+  assert.equal(saved.mediaError, "Voice take has no duration.");
+  assert.equal(saved.generationKind, null);
+  assert.equal(saved.generationPhase, null);
 });

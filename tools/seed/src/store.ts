@@ -40,7 +40,7 @@ export function initTarget(opts: {
     throw new Error("Pass --project <id> for a real project.");
   }
   if (admin.apps.length === 0) {
-    admin.initializeApp();
+    admin.initializeApp({projectId: opts.project});
   }
   const bucketName = `${opts.project}.appspot.com`;
   return {

@@ -6,7 +6,7 @@ import {
 import {generateNodeText} from "../create/generateNodeText";
 import {proposeStoryOutline} from "../create/proposeOutline";
 import {
-  approveNodeImage, generateNodeImage, generateNodeVideo,
+  generateNodeImage, generateNodeVideo,
 } from "../create/generateNodeMedia";
 import {generateNodeVoice} from "../media/generateNodeVoice";
 import {transcribeVoice} from "../media/transcribeVoice";
@@ -22,8 +22,6 @@ test("secret bindings reach only their generation callables", () => {
     assert.deepEqual(callable.__endpoint.secretEnvironmentVariables,
       [{key: "OPENROUTER_API_KEY"}]);
   }
-  assert.equal(approveNodeImage.__endpoint.secretEnvironmentVariables,
-    undefined);
 });
 
 test("provider settings accept custom endpoints without stale defaults", () => {
@@ -70,8 +68,6 @@ test("explicit Comfy selection wins even with a Meta key", () => {
 test("video and PCM settings reject invalid numbers and flags", () => {
   assert.throws(() => videoConfig({OPENROUTER_VIDEO_DURATION_SECONDS: "NaN"}),
     /DURATION_SECONDS/);
-  assert.throws(() => videoConfig({OPENROUTER_VIDEO_USE_END_FRAME: "yes"}),
-    /USE_END_FRAME/);
   assert.throws(() => ttsPcmSampleRate({TTS_PCM_SAMPLE_RATE: "0"}),
     /SAMPLE_RATE/);
   assert.throws(() => ttsPcmSampleRate({TTS_PCM_SAMPLE_RATE: "24000.5"}),
