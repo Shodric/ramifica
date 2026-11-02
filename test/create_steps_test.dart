@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
-import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/steps/step_script.dart';
 import 'package:ramifica/features/create/steps/step_frames.dart';
 import 'package:ramifica/features/create/steps/step_clip.dart';
@@ -140,11 +140,10 @@ void main() {
 
   for (final width in [390.0, 1200.0]) {
     testWidgets(
-      'S1 review edits the proposal and Apply writes it at width $width',
+      'S1 auto-proposal applies unreviewed fields and preserves the manual title at width $width',
       (tester) async {
         await tester.binding.setSurfaceSize(Size(width, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
-        SceneProposal? applied;
         var calls = 0;
         const node = DraftNode(nodeId: 'root', title: 'Manual title');
         await mount(
@@ -170,7 +169,6 @@ void main() {
                 ],
               );
             },
-            onApplyProposal: (p) => applied = p,
           ),
         );
         await tester.enterText(
@@ -178,42 +176,64 @@ void main() {
           'A rainy door',
         );
         await tester.pump();
-        final format = find.byKey(const ValueKey('script-format-root'));
-        await tester.ensureVisible(format);
-        await tester.tap(format);
-        await tester.pumpAndSettle();
-        expect(calls, 1);
-        expect(applied, isNull);
-        expect(node.title, 'Manual title');
-        // Proposal fields stay editable: review the line and the option.
+        // No review UI: no format bar, no accordion, no apply button.
         expect(
-          find.byKey(const ValueKey('script-prop-line-root')),
-          findsOneWidget,
+          find.byKey(const ValueKey('script-proposal-bar-root')),
+          findsNothing,
         );
-        await tester.enterText(
-          find.byKey(const ValueKey('script-prop-video-root')),
-          'Reviewed clip',
-        );
-        await tester.enterText(
-          find.byKey(const ValueKey('script-prop-opt-label-root-0')),
-          'Run',
-        );
-        final apply = find.byKey(const ValueKey('script-apply-root'));
-        await tester.ensureVisible(apply);
-        await tester.tap(apply);
+        expect(find.byKey(const ValueKey('script-format-root')), findsNothing);
+        expect(find.byKey(const ValueKey('script-apply-root')), findsNothing);
+        final state = tester.state<StepScriptState>(find.byType(StepScript));
+        expect(state.directionReady, isTrue);
+        final proposal = await state.proposeDirection();
         await tester.pump();
-        expect(applied?.ttsText, 'Choose');
-        expect(find.byKey(const ValueKey('line-root')), findsNothing);
-        expect(applied?.videoPrompt, 'Reviewed clip');
-        expect(applied?.choices.single.label, 'Run');
-        expect(applied?.choices.single.icon, 'rocket');
+        expect(calls, 1);
+        expect(proposal?.ttsText, 'Choose');
+        expect(proposal?.videoPrompt, 'Move');
+        expect(proposal?.startImagePrompt, 'Start');
+        expect(proposal?.choices.single.label, 'Go');
+        expect(proposal?.choices.single.icon, 'rocket');
+        // The manual title is preserved, not overwritten.
+        expect(proposal?.title, isNull);
         expect(tester.takeException(), isNull);
       },
     );
   }
 
+  testWidgets('S1 shows a proposing indicator mid-flight', (tester) async {
+    final gate = Completer<void>();
+    await mount(
+      tester,
+      StepScript(
+        node: const DraftNode(nodeId: 'root'),
+        isRoot: true,
+        busy: false,
+        showErrors: false,
+        propose: (_) async {
+          await gate.future;
+          return const GeneratedNodeText(title: 'AI title');
+        },
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('script-direction-root')),
+      'A rainy door',
+    );
+    await tester.pump();
+    final state = tester.state<StepScriptState>(find.byType(StepScript));
+    final pending = state.proposeDirection();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('script-proposing-root')), findsOneWidget);
+    gate.complete();
+    final proposal = await pending;
+    await tester.pump();
+    expect(proposal?.title, 'AI title');
+    expect(find.byKey(const ValueKey('script-proposing-root')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'Apply overwrites reviewed fields and options on a filled scene',
+    'auto-proposal overwrites options and prompts but preserves the title',
     (tester) async {
       const node = DraftNode(
         nodeId: 'root',
@@ -242,7 +262,6 @@ void main() {
           ),
         ],
       );
-      SceneProposal? applied;
       await mount(
         tester,
         StepScript(
@@ -257,7 +276,6 @@ void main() {
               GeneratedChoice(label: 'Other B'),
             ],
           ),
-          onApplyProposal: (p) => applied = p,
         ),
       );
       await tester.enterText(
@@ -265,32 +283,21 @@ void main() {
         'Direction',
       );
       await tester.pump();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('script-format-root')),
-      );
-      await tester.tap(find.byKey(const ValueKey('script-format-root')));
-      await tester.pumpAndSettle();
-      final button = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('script-apply-root')),
-      );
-      expect(button.onPressed, isNotNull);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('script-apply-root')),
-      );
-      await tester.tap(find.byKey(const ValueKey('script-apply-root')));
+      final state = tester.state<StepScriptState>(find.byType(StepScript));
+      final proposal = await state.proposeDirection();
       await tester.pump();
-      expect(applied?.title, 'Other');
-      expect(applied?.choices.map((c) => c.label).toList(), [
+      expect(proposal?.title, isNull);
+      expect(proposal?.choices.map((c) => c.label).toList(), [
         'Other A',
         'Other B',
       ]);
-      expect(applied?.choices.first.icon, 'rocket');
+      expect(proposal?.choices.first.icon, 'rocket');
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'ending has a manual name editor and no proposed options or child start',
+    'ending auto-proposal drops options and child start, preserves the name',
     (tester) async {
       String? changed;
       await mount(
@@ -306,6 +313,7 @@ void main() {
           showErrors: false,
           onEndingNameChanged: (s) => changed = s,
           propose: (_) async => const GeneratedNodeText(
+            ttsText: 'The end.',
             endingName: 'AI',
             choices: [GeneratedChoice(label: 'Bad')],
             startImagePrompt: 'Bad',
@@ -321,13 +329,16 @@ void main() {
         find.byKey(const ValueKey('script-direction-leaf')),
         'The ending',
       );
-      await tester.tap(find.byKey(const ValueKey('script-format-leaf')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('script-prop-start-leaf')),
-        findsNothing,
-      );
+      await tester.pump();
+      final state = tester.state<StepScriptState>(find.byType(StepScript));
+      final proposal = await state.proposeDirection();
+      await tester.pump();
+      expect(proposal?.ttsText, 'The end.');
+      expect(proposal?.endingName, isNull);
+      expect(proposal?.choices, isEmpty);
+      expect(proposal?.startImagePrompt, isNull);
       expect(find.text('Options'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 

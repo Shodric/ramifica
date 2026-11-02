@@ -337,7 +337,7 @@ void main() {
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
     });
 
-    testWidgets('Format proposes without mutating the node', (tester) async {
+    testWidgets('Continue auto-applies the scene proposal', (tester) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
 
@@ -348,88 +348,158 @@ void main() {
         'A haunted terminal',
       );
       await tester.pump();
-      final format = find.byKey(const ValueKey('script-format-node_1'));
-      await tester.ensureVisible(format);
-      await tester.pumpAndSettle();
-      await tester.tap(format);
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pumpAndSettle();
 
-      expect(
-        calls.where((call) => call.name == 'generateNodeText').single.name,
-        'generateNodeText',
-      );
-      expect(
-        calls
-            .singleWhere((call) => call.name == 'generateNodeText')
-            .data['prompt'],
-        'A haunted terminal',
-      );
-      expect(
-        calls
-            .singleWhere((call) => call.name == 'generateNodeText')
-            .data['purpose'],
-        'scene',
-      );
-      // Proposal-only: the node is untouched until Apply.
+      // The direction is proposed once with the scene purpose...
+      final gen = calls.singleWhere((call) => call.name == 'generateNodeText');
+      expect(gen.data['prompt'], 'A haunted terminal');
+      expect(gen.data['purpose'], 'scene');
+      // ...and auto-applied: the narrator line, prompts and branches land,
+      // while the manual title is preserved.
       expect(bloc.state.openNode?.title, 'Root');
-      expect(bloc.state.openNode?.ttsText, isEmpty);
-      // The accordion shows the editable proposal.
+      expect(bloc.state.openNode?.ttsText, 'What should they do next?');
+      expect(bloc.state.openNode?.startImagePrompt, 'misty gate');
+      expect(bloc.state.openNode?.videoPrompt, 'slow push in');
+      expect(bloc.state.openNode?.choices.map((c) => c.label).toList(), [
+        'Enter',
+        'Climb',
+      ]);
+      // Gate complete: the wizard advanced to Scenes.
       expect(
-        find.byKey(const ValueKey('script-prop-line-node_1')),
+        find.byKey(const ValueKey('prompt-start-node_1')).hitTestable(),
         findsOneWidget,
       );
+      // No review UI anywhere.
       expect(
-        find.byKey(const ValueKey('script-prop-start-node_1')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('script-prop-end-node_1')),
+        find.byKey(const ValueKey('script-proposal-bar-node_1')),
         findsNothing,
       );
+      expect(find.byKey(const ValueKey('script-apply-node_1')), findsNothing);
+    });
+
+    testWidgets('Continue on a complete script advances without proposing', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
+      bloc.add(
+        NodeFieldChanged(
+          nodeId: 'node_1',
+          title: 'Manual',
+          ttsText: 'Manual line',
+        ),
+      );
+      await tester.pumpAndSettle();
+      calls.clear();
+
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'generateNodeText'), isEmpty);
       expect(
-        find.byKey(const ValueKey('script-prop-video-node_1')),
+        find.byKey(const ValueKey('prompt-start-node_1')).hitTestable(),
         findsOneWidget,
       );
     });
 
-    testWidgets('Apply overwrites with every reviewed field', (tester) async {
+    testWidgets('Continue without a direction asks for one', (tester) async {
+      final calls = <_Call>[];
+      await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'generateNodeText'), isEmpty);
+      expect(
+        find.text('Still missing: a scene direction to propose from'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('script-direction-node_1')).hitTestable(),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('decided icons land on the applied choices', (tester) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
 
       await _openNode(tester, 'node_1');
-
       await tester.enterText(
         find.byKey(const ValueKey('script-direction-node_1')),
         'A haunted terminal',
       );
       await tester.pump();
-      final format = find.byKey(const ValueKey('script-format-node_1'));
-      await tester.ensureVisible(format);
-      await tester.pumpAndSettle();
-      await tester.tap(format);
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pumpAndSettle();
 
-      // Every non-empty reviewed field plus the two branches count.
-      expect(find.text('Apply (4 fields, 2 branches)'), findsOneWidget);
-
-      final apply = find.byKey(const ValueKey('script-apply-node_1'));
-      await tester.ensureVisible(apply);
-      await tester.pumpAndSettle();
-      await tester.tap(apply);
-      await tester.pumpAndSettle();
-
-      // Scene Apply overwrites every reviewed field, including the
-      // title and the narrator line.
-      expect(bloc.state.openNode?.title, 'Spark title');
-      final saves = calls.where((call) => call.name == 'saveNode');
-      expect(saves, isNotEmpty);
-      final sent = (saves.last.data['node'] as Map).map(
-        (key, value) => MapEntry(key.toString(), value),
+      final decides = calls
+          .where((call) => call.name == 'decideChoiceIcon')
+          .toList();
+      expect(decides.map((call) => call.data['choiceLabel']).toSet(), {
+        'Enter',
+        'Climb',
+      });
+      final choices = bloc.state.openNode!.choices;
+      expect(choices.map((c) => c.icon).toSet(), {'door'});
+      expect(choices.map((c) => c.iconColor).toSet(), {'amber'});
+      final saves = calls.where(
+        (call) =>
+            call.name == 'saveNode' &&
+            ((call.data['node'] as Map)['choices'] as List).every(
+              (c) => (c as Map)['icon'] == 'door',
+            ),
       );
-      expect(sent['title'], 'Spark title');
-      expect(sent['ttsText'], 'What should they do next?');
-      expect(sent['startImagePrompt'], 'misty gate');
-      expect(sent['videoPrompt'], 'slow push in');
+      expect(saves, hasLength(2));
+    });
+
+    testWidgets('a child decision carries the previous choice', (tester) async {
+      final calls = <_Call>[];
+      final docs = _defaultDocs();
+      final root = Map<String, dynamic>.from(docs.first.value);
+      root['choices'] = [
+        {
+          'choiceId': 'c1',
+          'label': 'Open the door',
+          'targetNodeId': 'node_2',
+          'isDefault': true,
+          'slot': 'A',
+          'x': 0.25,
+          'y': 0.65,
+          'radius': 0.15,
+        },
+      ];
+      final mid = <String, dynamic>{
+        'title': 'Mid',
+        'isEnding': false,
+        'ttsText': '',
+        'startFromNodeId': 'node_1',
+      };
+      await _pumpDraft(tester, calls, [
+        MapEntry('node_1', root),
+        MapEntry('node_2', mid),
+      ]);
+
+      await _openNode(tester, 'node_2');
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_2')),
+        'A corridor',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      final decides = calls
+          .where((call) => call.name == 'decideChoiceIcon')
+          .toList();
+      expect(decides, hasLength(2));
+      expect(decides.map((call) => call.data['previousDecision']).toSet(), {
+        'Open the door',
+      });
     });
 
     testWidgets('typing stays local until Save is pressed', (tester) async {
@@ -2065,6 +2135,7 @@ CreateRepository _repo(
       }
       return switch (name) {
         'createNode' => {'nodeId': 'node_1'},
+        'decideChoiceIcon' => {'icon': 'door', 'iconColor': 'amber'},
         'generateNodeText' => {
           'title': 'Spark title',
           'ttsText': 'What should they do next?',

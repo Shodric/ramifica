@@ -207,6 +207,43 @@ void main() {
       expect(bloc.state.openNodeId, 'node_1');
     });
 
+    test(
+      'DraftNodesObserved keeps unsaved edits while merging remote',
+      () async {
+        final bloc = CreateBloc(repository: _repo(null));
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+
+        // Local unsaved edit (dirty, no save): the reload re-parses below.
+        bloc.add(const NodeFieldChanged(nodeId: 'node_1', title: 'Typed'));
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.nodes.singleWhere((n) => n.nodeId == 'node_1').title ==
+              'Typed',
+        );
+
+        // Remote reload arrives (e.g. server-owned media fields).
+        final remote = [
+          for (final node in bloc.state.nodes)
+            node.nodeId == 'node_1' ? node.copy(ttsStatus: 'ready') : node,
+        ];
+        bloc.add(DraftNodesObserved('story_1', remote));
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.nodes.singleWhere((n) => n.nodeId == 'node_1').ttsStatus ==
+              'ready',
+        );
+
+        final merged = bloc.state.nodes.singleWhere(
+          (n) => n.nodeId == 'node_1',
+        );
+        expect(merged.title, 'Typed');
+        expect(merged.ttsStatus, 'ready');
+        expect(bloc.state.failure, isNull);
+      },
+    );
+
     test('unknown selections and edits are ignored', () async {
       final calls = <_Call>[];
       final bloc = CreateBloc(repository: _repo(calls));
@@ -2171,6 +2208,187 @@ void main() {
       expect(stack.bloc.state.openNode!.choices, hasLength(1));
     });
 
+    test('apply fires one icon decision per unstyled choice', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: _repo(
+          calls,
+          nodes: [
+            MapEntry('node_1', {
+              'title': '',
+              'isEnding': false,
+              'ttsText': '',
+              'choices': [
+                {
+                  'choiceId': 'c1',
+                  'label': 'Old A',
+                  'targetNodeId': 'node_2',
+                  'isDefault': true,
+                  'slot': 'A',
+                },
+                {
+                  'choiceId': 'c2',
+                  'label': 'Old B',
+                  'targetNodeId': 'node_3',
+                  'isDefault': false,
+                  'slot': 'B',
+                },
+              ],
+            }),
+            MapEntry('node_2', {'title': 'T2', 'isEnding': true}),
+            MapEntry('node_3', {'title': 'T3', 'isEnding': true}),
+          ],
+          decideChoiceIcon: (data) async => {
+            'icon': 'door',
+            'iconColor': 'amber',
+          },
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      const proposal = SceneProposal(
+        title: 'AI title',
+        ttsText: 'A line',
+        choices: [
+          SceneProposalChoice(label: 'Enter'),
+          SceneProposalChoice(label: 'Climb'),
+        ],
+      );
+      bloc.add(
+        const SceneProposalApplied(nodeId: 'node_1', proposal: proposal),
+      );
+      final styled = await bloc.stream.firstWhere(
+        (state) => state.nodes
+            .singleWhere((n) => n.nodeId == 'node_1')
+            .choices
+            .every((c) => c.icon != null),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final decides = calls
+          .where((call) => call.name == 'decideChoiceIcon')
+          .toList();
+      expect(decides, hasLength(2));
+      expect(decides.map((call) => call.data['choiceLabel']).toSet(), {
+        'Enter',
+        'Climb',
+      });
+      final enter = decides.singleWhere(
+        (call) => call.data['choiceLabel'] == 'Enter',
+      );
+      expect(enter.data['siblingLabels'], ['Climb']);
+      expect(enter.data.containsKey('previousDecision'), isFalse);
+      expect(enter.data['sceneTitle'], 'AI title');
+      expect(enter.data['narratorLine'], 'A line');
+      final node = styled.nodes.singleWhere((n) => n.nodeId == 'node_1');
+      expect(node.choices.map((c) => c.icon).toSet(), {'door'});
+      expect(node.choices.map((c) => c.iconColor).toSet(), {'amber'});
+      final saves = calls.where(
+        (call) =>
+            call.name == 'saveNode' &&
+            ((call.data['node'] as Map)['choices'] as List).every(
+              (c) => (c as Map)['icon'] == 'door',
+            ),
+      );
+      expect(saves, hasLength(2));
+      expect(bloc.state.failure, isNull);
+    });
+
+    test(
+      'ChoiceIconDecided fills unstyled choices and never overwrites',
+      () async {
+        final calls = <_Call>[];
+        final bloc = CreateBloc(repository: _repo(calls));
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+
+        bloc.add(
+          const NodeFieldChanged(
+            nodeId: 'node_2',
+            choiceIcons: {'c1': 'key'},
+            choiceIconColors: {'c1': 'blue'},
+          ),
+        );
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.nodes
+                  .singleWhere((n) => n.nodeId == 'node_2')
+                  .choices
+                  .single
+                  .icon ==
+              'key',
+        );
+
+        // A late decision for the styled choice is dropped silently.
+        bloc.add(
+          const ChoiceIconDecided(
+            nodeId: 'node_2',
+            choiceId: 'c1',
+            icon: 'door',
+            iconColor: 'amber',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        final kept = bloc.state.nodes.singleWhere((n) => n.nodeId == 'node_2');
+        expect(kept.choices.single.icon, 'key');
+        expect(kept.choices.single.iconColor, 'blue');
+
+        // A decision for an unstyled choice fills it and saves.
+        bloc.add(
+          const ChoiceIconDecided(
+            nodeId: 'node_1',
+            choiceId: 'c1',
+            icon: 'door',
+            iconColor: 'amber',
+          ),
+        );
+        await bloc.stream.firstWhere(
+          (state) =>
+              state.nodes
+                  .singleWhere((n) => n.nodeId == 'node_1')
+                  .choices
+                  .single
+                  .icon ==
+              'door',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(calls.where((call) => call.name == 'saveNode'), hasLength(1));
+      },
+    );
+
+    test('a failing icon decision stays silent', () async {
+      final bloc = CreateBloc(
+        repository: _repo(
+          null,
+          decideChoiceIcon: (data) async => throw const AppFailure(.offline),
+        ),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      const proposal = SceneProposal(
+        title: 'AI title',
+        ttsText: 'A line',
+        choices: [SceneProposalChoice(label: 'Enter')],
+      );
+      bloc.add(
+        const SceneProposalApplied(nodeId: 'node_1', proposal: proposal),
+      );
+      final applied = await bloc.stream.firstWhere(
+        (state) =>
+            state.job == CreateJob.none &&
+            (state.openNode?.choices.isNotEmpty ?? false),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(applied.openNode!.choices.single.icon, isNull);
+      expect(bloc.state.failure, isNull);
+    });
+
     test('NodeDeleted drops an untargeted node and reopens the root', () async {
       final stack = _memoryStack(
         nodes: const [
@@ -2607,6 +2825,7 @@ CreateRepository _repo(
   List<_Call>? calls, {
   List<MapEntry<String, Map<String, dynamic>>>? nodes,
   UploadVideoFile? upload,
+  Future<Map<String, dynamic>> Function(Map<String, dynamic>)? decideChoiceIcon,
 }) {
   return testCreateRepository(
     createDraftDoc: ({required authorId, required title}) async => 'story_1',
@@ -2616,6 +2835,9 @@ CreateRepository _repo(
         [MapEntry('node_1', _nodeDoc()), MapEntry('node_2', _nodeDoc())],
     callFunction: (name, data) async {
       calls?.add(_Call(name, data));
+      if (name == 'decideChoiceIcon' && decideChoiceIcon != null) {
+        return decideChoiceIcon(data);
+      }
       return switch (name) {
         'createNode' => {'nodeId': 'node_1'},
         'generateNodeText' => {
