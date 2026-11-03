@@ -282,6 +282,27 @@ final class NodeEndingToggled extends CreateEvent {
   final bool isEnding;
 }
 
+/// Sets the ending type of [nodeId] to one of [kEndingTypeCodes] and
+/// persists it through the node save path. Unknown nodes and codes
+/// outside the list are ignored.
+final class NodeEndingTypeChanged extends CreateEvent {
+  const NodeEndingTypeChanged({required this.nodeId, required this.endingType});
+
+  final String nodeId;
+  final String endingType;
+}
+
+/// Asks for the ending badge via `generateEndingBadge` and stores the
+/// returned URL on [nodeId] through the node save path. Failures land
+/// as [CreateState.failure] (the shared snack), never inline. Unknown
+/// nodes and missing drafts are ignored. `droppable`: a second tap
+/// while one generation is in flight is dropped.
+final class NodeEndingBadgeRequested extends CreateEvent {
+  const NodeEndingBadgeRequested(this.nodeId);
+
+  final String nodeId;
+}
+
 /// Asks for the node voice via `generateNodeVoice`. GATED server-side on
 /// the non-blank narrator line; the call re-renders the take. The bloc
 /// reloads the nodes after so the take status shows up. `restartable`:

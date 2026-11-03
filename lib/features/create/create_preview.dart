@@ -166,6 +166,7 @@ Playback _draftPlayback(DraftNode node, DraftStory? story, String? authorName) {
       videoUrl: node.videoUrl ?? '',
       durationSeconds: node.durationSeconds ?? 0,
       videoFrameLastBlurData: node.videoFrameLastBlurData ?? '',
+      videoFrameFirstBlurData: node.videoFrameFirstBlurData,
       ttsText: node.ttsText,
       ttsAudioUrl: node.ttsAudioUrl,
       ttsDurationSeconds: node.ttsDurationSeconds,

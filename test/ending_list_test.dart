@@ -7,12 +7,12 @@ const _endings = [
   UnlockedEnding(
     storyId: 'story_temple',
     name: 'The open door',
-    type: 'abierto',
+    type: 'open',
   ),
   UnlockedEnding(
     storyId: 'story_river',
     name: 'The last crossing',
-    type: 'tragico',
+    type: 'tragic',
   ),
 ];
 
@@ -57,5 +57,26 @@ void main() {
     expect(find.byType(FilledButton), findsNothing);
     expect(find.byType(OutlinedButton), findsNothing);
     expect(find.byType(TextButton), findsNothing);
+  });
+
+  testWidgets('EndingList shows a thumbnail only for rows with a badge', (
+    tester,
+  ) async {
+    const endings = [
+      UnlockedEnding(
+        storyId: 'story_temple',
+        name: 'The open door',
+        type: 'open',
+        badgeUrl: 'https://media/badge.png',
+      ),
+      UnlockedEnding(
+        storyId: 'story_river',
+        name: 'The last crossing',
+        type: 'tragic',
+      ),
+    ];
+    await _pump(tester, endings, (_) {});
+
+    expect(find.byKey(const ValueKey('ending-thumbnail')), findsOneWidget);
   });
 }

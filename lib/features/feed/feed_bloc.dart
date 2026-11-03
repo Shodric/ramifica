@@ -14,7 +14,7 @@ import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:uuid/uuid.dart';
 
-/// Resolves a preview tap target: the playback when its video is finished,
+/// Resolves a preview hold target: the playback when its video is finished,
 /// plus whether the target exists in the draft. An existing but unfinished
 /// node shows a notice with an edit action; an unknown one shows the
 /// notice alone.
@@ -66,7 +66,6 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<VideoTapped>(_onVideoTapped);
     on<VoiceFinished>(_onVoice);
     on<PreviewCueStarted>(_onPreviewCueStarted);
-    on<PreviewChoiceTaken>(_onPreviewTaken);
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
     on<HoldCompleted>(_onHeld, transformer: droppable());
@@ -252,6 +251,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     _clock.cancel();
     narrator.stop();
     _holdSealed = false;
+    _preloadChoiceTargets();
     emit(state.copy(phase: .window, clearHold: true));
   }
 
@@ -260,18 +260,16 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     emit(state.copy(previewCueStarted: true));
   }
 
-  /// A preview tap on a hotspot. Jumps straight to the target draft scene
-  /// and plays it like the feed would, with no hold, portal, or commit.
-  /// A target with no finished video keeps the current scene and raises a
+  /// A preview hold ran its full 1.5 seconds. Arrives like the feed would,
+  /// locally: the preview has no run to commit, so the held choice jumps
+  /// straight to the target draft scene. A target with no finished video
+  /// keeps the current scene, falls back to the window, and raises a
   /// transient notice instead, carrying the target when the editor can
   /// open it.
-  void _onPreviewTaken(PreviewChoiceTaken event, Emitter<FeedState> emit) {
-    if (!_preview) return;
-    final zonesVisible =
-        (state.phase == .speaking && state.previewCueStarted) ||
-        state.phase == .window;
-    if (!zonesVisible) return;
-    final choice = _choice(event.choiceId);
+  void _previewArrive(Emitter<FeedState> emit) {
+    if (state.phase != .holding) return;
+    final heldId = state.holdChoiceId;
+    final choice = heldId == null ? null : _choice(heldId);
     if (choice == null) return;
     final resolved = _resolvePreview?.call(choice.targetNodeId);
     final next = resolved?.playback;
@@ -279,8 +277,11 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       final label =
           _previewNodeLabel?.call(choice.targetNodeId) ?? choice.targetNodeId;
       final editable = resolved?.exists ?? false;
+      _preloadChoiceTargets();
       emit(
         state.copy(
+          phase: .window,
+          clearHold: true,
           previewNotice: 'Node "$label" not finished yet',
           previewNoticeSerial: state.previewNoticeSerial + 1,
           previewNoticeTarget: editable ? choice.targetNodeId : null,
@@ -309,8 +310,16 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }
 
   void _onHold(HoldStarted event, Emitter<FeedState> emit) {
-    if (_preview) return;
-    if (state.phase != .window) return;
+    if (_preview) {
+      // The preview shows its zones early, once the cue starts, so a
+      // hold may begin mid-narration too. The feed only holds at window.
+      final zonesUp =
+          (state.phase == .speaking && state.previewCueStarted) ||
+          state.phase == .window;
+      if (!zonesUp) return;
+    } else if (state.phase != .window) {
+      return;
+    }
     final choice = _choice(event.choiceId);
     if (choice == null) return;
     _startHold(choice, emit);
@@ -319,10 +328,15 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   void _onCancel(HoldCancelled event, Emitter<FeedState> emit) {
     if (state.phase != .holding || _holdSealed) return;
     _holdSealed = false;
+    _preloadChoiceTargets();
     emit(state.copy(phase: .window, clearHold: true));
   }
 
   Future<void> _onHeld(HoldCompleted event, Emitter<FeedState> emit) async {
+    if (_preview) {
+      _previewArrive(emit);
+      return;
+    }
     final playback = state.playback;
     final runId = state.runId;
     final holdChoiceId = state.holdChoiceId;
@@ -496,8 +510,26 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     // map tab for this story. Kept here so the event has a handler.
   }
 
+  /// Warms every choice target clip for the current scene. Runs each
+  /// time the window opens so destinations load before the hold.
+  /// Best-effort only: `warm` skips secret and empty targets the same
+  /// way [_startHold] skips them, duplicate warms are harmless, and any
+  /// failure is swallowed instead of reaching bloc state.
+  void _preloadChoiceTargets() {
+    final playback = state.playback;
+    if (playback == null) return;
+    try {
+      prefetcher.warm(playback);
+    } catch (_) {
+      // A failed preload must never surface into bloc state.
+    }
+  }
+
   void _startHold(PlaybackChoice choice, Emitter<FeedState> emit) {
     _holdSealed = false;
+    // A preview hold may begin mid-narration; grabbing a choice cuts it.
+    // The feed only holds once the cue is done, so this is a no-op there.
+    if (_preview) _silence();
     final url = choice.target?.videoUrl.trim();
     if (url != null && url.isNotEmpty) prefetcher.promote(url);
     emit(

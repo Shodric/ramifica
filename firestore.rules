@@ -45,12 +45,18 @@ service cloud.firestore {
       return n.title is string && n.title.size() <= 40
         && n.visibility in ['visible', 'secret'] && n.isEnding is bool
         && optionalText(n, 'endingName', 40)
-        && n.get('endingType', null) in [null, 'abierto', 'tragico', 'secreto']
+        && n.get('endingType', null) in [null, 'open', 'tragic', 'secret',
+          'heroic', 'mysterious', 'bittersweet', 'dark', 'epic', 'incomplete',
+          // Legacy Spanish codes, still accepted for older stories.
+          'abierto', 'tragico', 'secreto', 'heroico', 'misterioso', 'agridulce',
+          'oscuro', 'epico', 'incompleto']
         && n.ttsText is string && n.ttsText.size() <= 1000
         && n.lineApproved is bool && n.ttsApproved is bool
         && optionalText(n, 'startImagePrompt', 2000)
         && optionalText(n, 'videoPrompt', 2000)
         && optionalText(n, 'sceneDirection', 2000)
+        && optionalText(n, 'badgeUrl', 2000)
+        && optionalText(n, 'endingBadgeUrl', 2000)
         && n.choices is list && n.choices.size() <= 2
         && (n.get('cutSlots', null) == null || (n.cutSlots is list
           && n.cutSlots.size() <= 2
@@ -68,7 +74,7 @@ service cloud.firestore {
       return ['title', 'visibility', 'isEnding', 'endingName', 'endingType',
         'ttsText', 'lineApproved', 'ttsApproved', 'choices', 'cutSlots',
         'startImagePrompt', 'videoPrompt', 'sceneDirection',
-        'startImageApproved'];
+        'startImageApproved', 'badgeUrl', 'endingBadgeUrl'];
     }
     function initialNode(n) {
       return validNode(n) && n.keys().hasOnly(authorNodeKeys().concat([

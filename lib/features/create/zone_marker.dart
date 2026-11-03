@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/ending_setup_dialog.dart';
 
 /// Hold-zone editor over the node's LAST frame (the E image, which is what
 /// the player holds on). One circle per choice, positioned in 0-1 frame
@@ -40,6 +41,10 @@ class ZoneMarker extends StatefulWidget {
     this.onOpenChild,
     this.cutSlots = const {},
     this.isEnding = false,
+    this.endingType,
+    this.endingBadgeUrl,
+    this.onEndingTypeChanged,
+    this.onEndingBadgeRequested,
     this.onCutToggled,
     this.errorChoiceIds,
     this.focusChoiceId,
@@ -100,6 +105,17 @@ class ZoneMarker extends StatefulWidget {
 
   /// Endings render no add row at all.
   final bool isEnding;
+
+  /// Current ending-type code and badge URL, shown in the setup popup.
+  final String? endingType;
+  final String? endingBadgeUrl;
+
+  /// Fires when the author picks an ending-type code in the setup popup.
+  final ValueChanged<String>? onEndingTypeChanged;
+
+  /// Runs the badge generation from the setup popup; the dialog shows a
+  /// loader until the returned future completes.
+  final Future<void> Function()? onEndingBadgeRequested;
 
   /// Long-press on a free slot cuts it; long-press on a cut slot
   /// restores it. Null disables the gesture.
@@ -962,30 +978,49 @@ class _ZoneMarkerState extends State<ZoneMarker> {
 
   /// Final-scene container: same 48px height, [containerBase] fill and
   /// 12px radius as the Add Option buttons, so the HUD keeps its shape
-  /// when the option buttons go away.
+  /// when the option buttons go away. Tapping it opens the ending setup
+  /// popup (type picker + badge generation).
   Widget _endingRow(String nodeId) {
     return SizedBox(
       height: 48,
-      child: DecoratedBox(
-        key: ValueKey('final-scene-$nodeId'),
-        decoration: BoxDecoration(
-          color: RamificaColors.containerBase,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Center(
-          child: Row(
-            mainAxisSize: .min,
-            children: [
-              Icon(
-                Icons.emoji_events,
-                size: 20,
-                color: RamificaColors.rewardGold,
-              ),
-              SizedBox(width: 8),
-              Text('Final scene', style: RamificaText.label),
-            ],
+      child: GestureDetector(
+        onTap: widget.busy ? null : () => _openEndingSetup(nodeId),
+        child: DecoratedBox(
+          key: ValueKey('final-scene-$nodeId'),
+          decoration: BoxDecoration(
+            color: RamificaColors.containerBase,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Center(
+            child: Row(
+              mainAxisSize: .min,
+              children: [
+                Icon(
+                  Icons.emoji_events,
+                  size: 20,
+                  color: RamificaColors.rewardGold,
+                ),
+                SizedBox(width: 8),
+                Text('Final scene', style: RamificaText.label),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Opens the ending setup popup for [nodeId], carrying the current
+  /// type and badge plus the caller's callbacks.
+  Future<void> _openEndingSetup(String nodeId) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => EndingSetupDialog(
+        nodeId: nodeId,
+        endingType: widget.endingType,
+        endingBadgeUrl: widget.endingBadgeUrl,
+        onEndingTypeChanged: widget.onEndingTypeChanged,
+        onBadgeRequested: widget.onEndingBadgeRequested,
       ),
     );
   }

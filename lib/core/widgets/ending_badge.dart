@@ -5,7 +5,10 @@ import 'package:ramifica/app/theme.dart';
 class EndingBadge extends StatelessWidget {
   const EndingBadge({super.key, required this.type});
 
-  /// `abierto`, `tragico`, or `secreto`. Unknown values render as-is.
+  /// One of the nine ending types (`open`, `tragic`, `secret`,
+  /// `heroic`, `mysterious`, `bittersweet`, `dark`, `epic`, `incomplete`).
+  /// Legacy Spanish codes render their English label too.
+  /// Unknown values render as-is.
   final String? type;
 
   @override
@@ -28,6 +31,12 @@ class EndingBadge extends StatelessWidget {
       'abierto' || 'open' => 'Open',
       'tragico' || 'tragic' => 'Tragic',
       'secreto' || 'secret' => 'Secret',
+      'heroico' || 'heroic' => 'Heroic',
+      'misterioso' || 'mysterious' => 'Mysterious',
+      'agridulce' || 'bittersweet' => 'Bittersweet',
+      'oscuro' || 'dark' => 'Dark',
+      'epico' || 'epic' => 'Epic',
+      'incompleto' || 'incomplete' => 'Incomplete',
       null || '' => 'Ending',
       _ => type!,
     };
@@ -37,6 +46,11 @@ class EndingBadge extends StatelessWidget {
     return switch (type?.trim().toLowerCase()) {
       'tragico' || 'tragic' => RamificaColors.error,
       'secreto' || 'secret' => RamificaColors.nodeActive,
+      'heroico' || 'heroic' => RamificaColors.rewardGold,
+      'misterioso' || 'mysterious' => RamificaColors.brandViolet,
+      'agridulce' || 'bittersweet' => RamificaColors.danger,
+      'oscuro' || 'dark' => RamificaColors.textPrimary,
+      'incompleto' || 'incomplete' => RamificaColors.textSecondary,
       _ => RamificaColors.hotspot,
     };
   }

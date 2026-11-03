@@ -99,6 +99,7 @@ export const metaConfig = (env: Env = process.env) => {
     ),
     chatUrl: endpoint(env, "META_CHAT_URL", base, "chat/completions"),
     imagesUrl: endpoint(env, "META_IMAGES_URL", base, "images/generations"),
+    responsesUrl: endpoint(env, "META_RESPONSES_URL", base, "responses"),
     transcribeUrl: endpoint(
       env, "META_TRANSCRIBE_URL", base, "asr/transcribe"
     ),

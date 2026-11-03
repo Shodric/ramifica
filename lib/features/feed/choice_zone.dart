@@ -25,6 +25,7 @@ class ChoiceZone extends StatelessWidget {
     this.iconColor,
     this.index = 0,
     this.compact = false,
+    this.dimmed = false,
   });
 
   final String choiceId;
@@ -49,6 +50,10 @@ class ChoiceZone extends StatelessWidget {
   /// False while a hold is already running. A new press does not steal it.
   final bool enabled;
 
+  /// True for the zones nobody is holding: they fade out while the held
+  /// hotspot grows its circle, and fade back in on release.
+  final bool dimmed;
+
   /// Called with the pointer id. The matching release ends the hold.
   final ValueChanged<int> onHoldStart;
 
@@ -59,58 +64,68 @@ class ChoiceZone extends StatelessWidget {
     final diameter = ring * 2;
     final visibleDiameter = compact ? diameter.clamp(0.0, 40.0) : diameter;
     return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned(
-            left: center.dx - ring,
-            top: center.dy - ring,
-            width: diameter,
-            height: diameter,
-            child: _ZoneRing(
-              key: ValueKey('ring-$choiceId'),
-              visualKey: ValueKey('visible-ring-$choiceId'),
-              icon: choiceIconData(icon, index),
-              color: choiceIconColor(
-                iconColor,
-                index % 2 == 0
-                    ? RamificaColors.hotspot
-                    : RamificaColors.nodeActive,
-              ),
-              visibleDiameter: visibleDiameter,
-              enabled: enabled,
-              onHoldStart: onHoldStart,
-            ),
-          ),
-          Positioned(
-            left: center.dx,
-            top: center.dy + visibleDiameter / 2 + 8,
-            child: FractionalTranslation(
-              translation: const Offset(-0.5, 0),
-              child: IgnorePointer(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: compact ? 120 : double.infinity,
+      child: AnimatedOpacity(
+        key: ValueKey('zone-fade-$choiceId'),
+        opacity: dimmed ? 0 : 1,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        // Inside the Positioned: isolates zone repaints from the portal
+        // without breaking the Stack parent data.
+        child: RepaintBoundary(
+          child: Stack(
+            children: [
+              Positioned(
+                left: center.dx - ring,
+                top: center.dy - ring,
+                width: diameter,
+                height: diameter,
+                child: _ZoneRing(
+                  key: ValueKey('ring-$choiceId'),
+                  visualKey: ValueKey('visible-ring-$choiceId'),
+                  icon: choiceIconData(icon, index),
+                  color: choiceIconColor(
+                    iconColor,
+                    index % 2 == 0
+                        ? RamificaColors.hotspot
+                        : RamificaColors.nodeActive,
                   ),
-                  child: GlassPanel(
-                    padding: compact
-                        ? const .symmetric(horizontal: 8, vertical: 3)
-                        : const .symmetric(horizontal: 10, vertical: 4),
-                    borderRadius: const .all(.circular(999)),
-                    child: Text(
-                      label,
-                      maxLines: 2,
-                      overflow: .ellipsis,
-                      textAlign: .center,
-                      style: compact
-                          ? RamificaText.labelSM
-                          : RamificaText.label,
+                  visibleDiameter: visibleDiameter,
+                  enabled: enabled,
+                  onHoldStart: onHoldStart,
+                ),
+              ),
+              Positioned(
+                left: center.dx,
+                top: center.dy + visibleDiameter / 2 + 8,
+                child: FractionalTranslation(
+                  translation: const Offset(-0.5, 0),
+                  child: IgnorePointer(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: compact ? 120 : double.infinity,
+                      ),
+                      child: GlassPanel(
+                        padding: compact
+                            ? const .symmetric(horizontal: 8, vertical: 3)
+                            : const .symmetric(horizontal: 10, vertical: 4),
+                        borderRadius: const .all(.circular(999)),
+                        child: Text(
+                          label,
+                          maxLines: 2,
+                          overflow: .ellipsis,
+                          textAlign: .center,
+                          style: compact
+                              ? RamificaText.labelSM
+                              : RamificaText.label,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -133,7 +148,8 @@ class _ZoneRing extends StatelessWidget {
   });
 
   /// Author-picked hotspot glyph, drawn centred in the ring (the label
-  /// already rides under it), tinted with the picked icon color.
+  /// already rides under it), tinted with the picked icon color. The
+  /// ring border shares the same color.
   final IconData icon;
   final Color color;
   final Key visualKey;
@@ -165,7 +181,7 @@ class _ZoneRing extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               shape: .circle,
-              border: Border.all(color: RamificaColors.hotspot, width: 2),
+              border: Border.all(color: color, width: 2),
             ),
             child: Center(
               child: IgnorePointer(

@@ -31,6 +31,8 @@ class StepHotspots extends StatefulWidget {
     this.onOpenChild,
     this.onCutToggled,
     this.onEndingToggled,
+    this.onEndingTypeChanged,
+    this.onEndingBadgeRequested,
     this.onDelete,
     this.deleteBlockedReason,
     this.active = true,
@@ -86,6 +88,13 @@ class StepHotspots extends StatefulWidget {
   /// drop their options, so enabling with options asks first.
   final ValueChanged<bool>? onEndingToggled;
 
+  /// Fires when the author picks an ending-type code in the setup popup.
+  final ValueChanged<String>? onEndingTypeChanged;
+
+  /// Runs the badge generation from the setup popup; the dialog shows a
+  /// loader until the returned future completes.
+  final Future<void> Function()? onEndingBadgeRequested;
+
   /// Deletes the open node. Null while no draft guards apply.
   final VoidCallback? onDelete;
 
@@ -131,6 +140,10 @@ class _StepHotspotsState extends State<StepHotspots> {
             busy: widget.busy,
             cutSlots: node.cutSlots,
             isEnding: node.isEnding,
+            endingType: node.endingType,
+            endingBadgeUrl: node.endingBadgeUrl,
+            onEndingTypeChanged: widget.onEndingTypeChanged,
+            onEndingBadgeRequested: widget.onEndingBadgeRequested,
             choiceDestinations: widget.targetTitles,
             errorChoiceIds: errorIds,
             focusChoiceId: widget.focusChoiceId,

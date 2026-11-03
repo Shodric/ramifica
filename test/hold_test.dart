@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/functions_client.dart';
 import 'package:ramifica/core/prefetcher.dart';
@@ -11,6 +12,7 @@ import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:ramifica/features/feed/feed_view.dart';
+import 'package:ramifica/features/feed/hold_portal.dart';
 import 'package:ramifica/features/feed/node_video.dart';
 import 'package:ramifica/features/feed/video_frame.dart';
 
@@ -336,7 +338,48 @@ void main() {
     expect(bloc.state.holdChoiceId, isNull);
   });
 
-  testWidgets('holding for one second keeps the portal open', (tester) async {
+  testWidgets(
+    'holding halfway grows the choice color and dims the other zone',
+    (tester) async {
+      final clock = _Clock();
+      final bloc = _bloc(clock, voice: false);
+      addTearDown(bloc.close);
+      await _showWindow(tester, bloc);
+
+      final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
+      await tester.pump();
+      await tester.pump();
+      expect(bloc.state.phase, FeedPhase.holding);
+
+      // Halfway through the 1.5 seconds: the circle grows in the held
+      // hotspot's color at half opacity (ridge is the second choice with
+      // no authored color, so its fallback is nodeActive) while the
+      // untouched zone fades out.
+      await tester.pump(const Duration(milliseconds: 750));
+      expect(bloc.state.phase, FeedPhase.holding);
+      expect(
+        tester
+            .widget<ColoredBox>(find.byKey(const ValueKey('hold-fill')))
+            .color,
+        RamificaColors.nodeActive.withValues(alpha: 0.5),
+      );
+      expect(_fade(tester, 'choice_temple'), 0);
+      expect(_fade(tester, 'choice_ridge'), 1);
+
+      // Released halfway: the circle shrinks back, nothing commits, and the
+      // faded zone comes back.
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(bloc.state.phase, FeedPhase.window);
+      expect(bloc.state.holdChoiceId, isNull);
+      expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+      expect(_fade(tester, 'choice_temple'), 1);
+    },
+  );
+
+  testWidgets('releasing mid-hold keeps the growing color while shrinking', (
+    tester,
+  ) async {
     final clock = _Clock();
     final bloc = _bloc(clock, voice: false);
     addTearDown(bloc.close);
@@ -345,16 +388,150 @@ void main() {
     final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
     await tester.pump();
     await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    final growing = tester
+        .widget<ColoredBox>(find.byKey(const ValueKey('hold-fill')))
+        .color;
+
+    // The release clears the held choice, but the shrinking circle must
+    // keep the color it grew with instead of flashing to the fallback.
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.holdChoiceId, isNull);
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+    expect(
+      tester.widget<ColoredBox>(find.byKey(const ValueKey('hold-fill'))).color,
+      growing,
+    );
+  });
+
+  testWidgets('hotspot rings wear their icon color', (tester) async {
+    Color ringOf(String choiceId) {
+      final box =
+          tester
+                  .widget<DecoratedBox>(
+                    find.descendant(
+                      of: find.byKey(ValueKey('visible-ring-$choiceId')),
+                      matching: find.byType(DecoratedBox),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      return (box.border! as Border).top.color;
+    }
+
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await _showWindow(tester, bloc);
+
+    // No authored colors: the first choice falls back to hotspot cyan,
+    // the second to nodeActive — icon and ring alike.
+    expect(ringOf('choice_temple'), RamificaColors.hotspot);
+    expect(ringOf('choice_ridge'), RamificaColors.nodeActive);
+  });
+
+  testWidgets('swiping mid-hold cancels instead of committing', (tester) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await _showWindow(tester, bloc);
+
+    final start = _ring(tester, 'choice_ridge');
+    final gesture = await tester.startGesture(start);
+    await tester.pump();
+    await tester.pump();
     expect(bloc.state.phase, FeedPhase.holding);
-    expect(find.byType(Image), findsOneWidget);
+
+    // A vertical drag is never a hold: the drag start cancels, the swipe
+    // itself is ignored outside playing, and nothing commits.
+    await gesture.moveTo(start + const Offset(0, 100));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.holdChoiceId, isNull);
+    expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+  });
+
+  testWidgets('the portal reports completion only at full cover', (
+    tester,
+  ) async {
+    var completed = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HoldPortal(
+          open: true,
+          serial: 1,
+          center: const Offset(200, 400),
+          startRadius: 20,
+          fillColor: const Color(0xFFFF5252),
+          onCompleted: () => completed++,
+        ),
+      ),
+    );
 
     await tester.pump(const Duration(seconds: 1));
-    await gesture.up();
+    expect(completed, 0);
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 1);
+
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(completed, 1);
+  });
+
+  testWidgets('closing mid-hold reverses without completing', (tester) async {
+    var completed = 0;
+    Widget portal(bool open) => MaterialApp(
+      home: HoldPortal(
+        open: open,
+        serial: 1,
+        center: const Offset(200, 400),
+        startRadius: 20,
+        fillColor: const Color(0xFFFF5252),
+        onCompleted: () => completed++,
+      ),
+    );
+
+    await tester.pumpWidget(portal(true));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+
+    await tester.pumpWidget(portal(false));
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.pump();
 
-    expect(bloc.state.phase, FeedPhase.holding);
-    expect(bloc.state.holdChoiceId, 'choice_ridge');
-    expect(find.byType(Image), findsOneWidget);
+    expect(completed, 0);
+    expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+  });
+
+  testWidgets('a new serial restarts the growth', (tester) async {
+    var completed = 0;
+    Widget portal(int serial) => MaterialApp(
+      home: HoldPortal(
+        open: true,
+        serial: serial,
+        center: const Offset(200, 400),
+        startRadius: 20,
+        fillColor: const Color(0xFFFF5252),
+        onCompleted: () => completed++,
+      ),
+    );
+
+    await tester.pumpWidget(portal(1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 0);
+
+    await tester.pumpWidget(portal(2));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 0);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 1);
   });
 
   testWidgets('releasing outside the ring cancels the hold', (tester) async {
@@ -430,6 +607,84 @@ void main() {
       offsetMoreOrLessEquals(origin + const Offset(149.7225, 244.76)),
     );
   });
+
+  testWidgets('completing then closing runs the ring exit', (tester) async {
+    var completed = 0;
+    Widget portal(bool open) => MaterialApp(
+      home: HoldPortal(
+        open: open,
+        serial: 1,
+        center: const Offset(200, 400),
+        startRadius: 20,
+        fillColor: const Color(0xFFFF5252),
+        onCompleted: () => completed++,
+      ),
+    );
+
+    await tester.pumpWidget(portal(true));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 1);
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+
+    // Closing after completion runs the ring exit instead of shrinking.
+    await tester.pumpWidget(portal(false));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(completed, 1);
+    expect(find.byKey(const ValueKey('hold-ring')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+
+    await tester.pumpAndSettle();
+    expect(completed, 1);
+    expect(find.byKey(const ValueKey('hold-ring')), findsNothing);
+    expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+  });
+
+  testWidgets('a new hold mid-exit restarts growth', (tester) async {
+    var completed = 0;
+    Widget portal({required bool open, required int serial}) => MaterialApp(
+      home: HoldPortal(
+        open: open,
+        serial: serial,
+        center: const Offset(200, 400),
+        startRadius: 20,
+        fillColor: const Color(0xFFFF5252),
+        onCompleted: () => completed++,
+      ),
+    );
+
+    await tester.pumpWidget(portal(open: true, serial: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 1);
+
+    // Reopening with the same serial mid-exit cancels the exit and grows.
+    await tester.pumpWidget(portal(open: false, serial: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('hold-ring')), findsOneWidget);
+
+    await tester.pumpWidget(portal(open: true, serial: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hold-ring')), findsNothing);
+
+    // A new serial mid-exit restarts growth too, and still completes.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 2);
+    await tester.pumpWidget(portal(open: false, serial: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('hold-ring')), findsOneWidget);
+
+    await tester.pumpWidget(portal(open: true, serial: 2));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('hold-fill')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hold-ring')), findsNothing);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, 3);
+  });
 }
 
 Future<void> _open(FeedBloc bloc) async {
@@ -471,6 +726,12 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() done) async {
 
 Offset _ring(WidgetTester tester, String choiceId) {
   return tester.getCenter(find.byKey(ValueKey('ring-$choiceId')));
+}
+
+double _fade(WidgetTester tester, String choiceId) {
+  return tester
+      .widget<AnimatedOpacity>(find.byKey(ValueKey('zone-fade-$choiceId')))
+      .opacity;
 }
 
 FeedBloc _bloc(_Clock clock, {bool voice = true}) {

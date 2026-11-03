@@ -139,7 +139,10 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
     // a tapped mini is replaced by its child on the same spot) but never
     // drag the parent sideways. Single-child runs stack vertically and
     // every connector keeps the same length.
-    final real = [for (final kid in kids) if (!kid.startsWith('mini:')) kid];
+    final real = [
+      for (final kid in kids)
+        if (!kid.startsWith('mini:')) kid,
+    ];
     final span = real.isEmpty ? kids : real;
     left[id] = (left[span.first]! + left[span.last]!) / 2;
   }

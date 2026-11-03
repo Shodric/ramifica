@@ -51,6 +51,14 @@ AppLocation parseLocation(String? name) {
     return GraphLocation(graphId);
   }
 
+  final profileTab = _oneSegment(path, '${AppRoutes.profile}/');
+  if (profileTab != null) {
+    if (AppRoutes.profileTabs.contains(profileTab)) {
+      return ProfileLocation(tab: profileTab);
+    }
+    return UnknownLocation(path);
+  }
+
   return UnknownLocation(path);
 }
 
@@ -70,7 +78,7 @@ String pathOf(AppLocation location) {
             ? AppRoutes.createNew
             : AppRoutes.createFor(Uri.encodeComponent(storyId)),
     AccessLocation() => AppRoutes.access,
-    ProfileLocation() => AppRoutes.profile,
+    ProfileLocation(:final tab) => AppRoutes.profileTab(tab),
     UnknownLocation(:final path) => path.isEmpty ? '/' : path,
   };
 }
@@ -112,9 +120,17 @@ abstract final class AppRoutes {
   static const createNew = '/create/new-creation';
   static const access = '/access';
 
+  /// Profile content tabs addressable as `/profile/<tab>`.
+  static const profileTabs = ['sagas', 'endings', 'creations'];
+
   static String storyPath(String storyId) => '$story/$storyId';
 
   static String graphPath(String storyId) => '$graph/$storyId';
+
+  /// Profile path with an optional content tab selected. Unknown or null
+  /// tabs fall back to the plain profile route.
+  static String profileTab(String? tab) =>
+      tab != null && profileTabs.contains(tab) ? '$profile/$tab' : profile;
 
   /// Deep link that opens a creation straight on the canvas editor.
   static String createFor(String storyId) => '$create/$storyId';
@@ -150,7 +166,11 @@ final class GraphLocation extends AppLocation {
 }
 
 final class ProfileLocation extends AppLocation {
-  const ProfileLocation();
+  const ProfileLocation({this.tab});
+
+  /// Content tab to select (`sagas`, `endings`, `creations`), or null
+  /// for the default tab.
+  final String? tab;
 }
 
 final class UnknownLocation extends AppLocation {

@@ -50,22 +50,15 @@ final class PreviewCueStarted extends FeedEvent {
   const PreviewCueStarted();
 }
 
-/// A finger pressed a zone during the window.
+/// A finger pressed a zone during the window (or mid-narration in the
+/// editor preview, whose zones show once the cue starts).
 final class HoldStarted extends FeedEvent {
   const HoldStarted(this.choiceId);
 
   final String choiceId;
 }
 
-/// A preview tap on a hotspot. Unlike [HoldStarted], it navigates at once:
-/// the preview has no run to commit, so there is no hold or portal.
-final class PreviewChoiceTaken extends FeedEvent {
-  const PreviewChoiceTaken(this.choiceId);
-
-  final String choiceId;
-}
-
-/// The finger came up, or the pointer was cancelled, before one second.
+/// The finger came up, or the pointer was cancelled, before 1.5 seconds.
 final class HoldCancelled extends FeedEvent {
   const HoldCancelled();
 }

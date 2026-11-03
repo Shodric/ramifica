@@ -18,6 +18,7 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
     'isEnding': node.isEnding,
     'endingName': clean(node.endingName),
     'endingType': clean(node.endingType),
+    'endingBadgeUrl': clean(node.endingBadgeUrl),
     'ttsText': node.ttsText.trim(),
     'choices': [for (final choice in node.choices) choice.toJson()],
     'cutSlots': [

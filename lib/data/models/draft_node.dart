@@ -1,5 +1,19 @@
 import 'package:ramifica/data/models/app_failure.dart';
 
+/// Valid ending-type codes (Firestore `endingType`), in dialog order.
+/// Endings default to `incomplete` until the author picks one.
+const kEndingTypeCodes = [
+  'open',
+  'tragic',
+  'secret',
+  'heroic',
+  'mysterious',
+  'bittersweet',
+  'dark',
+  'epic',
+  'incomplete',
+];
+
 /// One exit of a draft node. Mirrors the server `ValidatableChoice`
 /// shape (see functions/src/publish/validateStory.ts): the label the
 /// player reads, the target node, which exit is the default, and the
@@ -144,6 +158,7 @@ class DraftNode {
     this.isEnding = false,
     this.endingName,
     this.endingType,
+    this.endingBadgeUrl,
     this.videoUrl,
     this.videoStatus = 'idle',
     this.videoSource,
@@ -156,6 +171,7 @@ class DraftNode {
     this.videoFrameLastUrl,
     this.videoFrameLastHash,
     this.videoFrameLastBlurData,
+    this.videoFrameFirstBlurData,
     this.thumbnailUrl,
     this.startImageWidth,
     this.startImageHeight,
@@ -198,6 +214,7 @@ class DraftNode {
       isEnding: data['isEnding'] == true,
       endingName: _optionalString(data['endingName']),
       endingType: _optionalString(data['endingType']),
+      endingBadgeUrl: _optionalString(data['endingBadgeUrl']),
       videoUrl: _optionalString(data['videoUrl']),
       videoStatus: _optionalString(data['videoStatus']) ?? 'idle',
       videoSource: _optionalString(data['videoSource']),
@@ -210,6 +227,7 @@ class DraftNode {
       videoFrameLastUrl: _optionalString(data['videoFrameLastUrl']),
       videoFrameLastHash: _optionalString(data['videoFrameLastHash']),
       videoFrameLastBlurData: _optionalString(data['videoFrameLastBlurData']),
+      videoFrameFirstBlurData: _optionalString(data['videoFrameFirstBlurData']),
       thumbnailUrl: _optionalString(data['thumbnailUrl']),
       startImageWidth: _optionalInt(data['startImageWidth']),
       startImageHeight: _optionalInt(data['startImageHeight']),
@@ -259,6 +277,10 @@ class DraftNode {
   final bool isEnding;
   final String? endingName;
   final String? endingType;
+
+  /// Public URL of the generated ending badge (`generateEndingBadge`).
+  /// Null until the author generates one.
+  final String? endingBadgeUrl;
   final String? videoUrl;
   final String? videoStatus;
   final String? videoSource;
@@ -274,6 +296,10 @@ class DraftNode {
   /// parent clip by this hash link (see [startParentFrameHash]).
   final String? videoFrameLastHash;
   final String? videoFrameLastBlurData;
+
+  /// Blur of the clip's opening frame. The gap poster shows the frame the
+  /// clip starts with, not the last one.
+  final String? videoFrameFirstBlurData;
   final String? thumbnailUrl;
   final int? startImageWidth;
   final int? startImageHeight;
@@ -372,6 +398,7 @@ class DraftNode {
       'isEnding': isEnding,
       'endingName': endingName,
       'endingType': endingType,
+      'endingBadgeUrl': endingBadgeUrl,
       'videoUrl': videoUrl,
       'videoStatus': videoStatus,
       'videoSource': videoSource,
@@ -384,6 +411,7 @@ class DraftNode {
       'videoFrameLastUrl': videoFrameLastUrl,
       'videoFrameLastHash': videoFrameLastHash,
       'videoFrameLastBlurData': videoFrameLastBlurData,
+      'videoFrameFirstBlurData': videoFrameFirstBlurData,
       'thumbnailUrl': thumbnailUrl,
       'startImageWidth': startImageWidth,
       'startImageHeight': startImageHeight,
@@ -408,7 +436,10 @@ class DraftNode {
       'ttsDurationSeconds': ttsDurationSeconds,
       'ttsApproved': ttsApproved,
       'choices': [for (final choice in choices) choice.toJson()],
-      'cutSlots': [for (final slot in const ['A', 'B']) if (cutSlots.contains(slot)) slot],
+      'cutSlots': [
+        for (final slot in const ['A', 'B'])
+          if (cutSlots.contains(slot)) slot,
+      ],
     };
   }
 
@@ -418,6 +449,7 @@ class DraftNode {
     bool? isEnding,
     String? Function()? endingName,
     String? Function()? endingType,
+    String? Function()? endingBadgeUrl,
     String? Function()? videoUrl,
     String? videoStatus,
     String? Function()? videoSource,
@@ -430,6 +462,7 @@ class DraftNode {
     String? Function()? videoFrameLastUrl,
     String? Function()? videoFrameLastHash,
     String? Function()? videoFrameLastBlurData,
+    String? Function()? videoFrameFirstBlurData,
     String? Function()? thumbnailUrl,
     int? Function()? startImageWidth,
     int? Function()? startImageHeight,
@@ -463,6 +496,9 @@ class DraftNode {
       isEnding: isEnding ?? this.isEnding,
       endingName: endingName == null ? this.endingName : endingName(),
       endingType: endingType == null ? this.endingType : endingType(),
+      endingBadgeUrl: endingBadgeUrl == null
+          ? this.endingBadgeUrl
+          : endingBadgeUrl(),
       videoUrl: videoUrl == null ? this.videoUrl : videoUrl(),
       videoStatus: videoStatus ?? this.videoStatus,
       videoSource: videoSource == null ? this.videoSource : videoSource(),
@@ -485,6 +521,9 @@ class DraftNode {
       videoFrameLastBlurData: videoFrameLastBlurData == null
           ? this.videoFrameLastBlurData
           : videoFrameLastBlurData(),
+      videoFrameFirstBlurData: videoFrameFirstBlurData == null
+          ? this.videoFrameFirstBlurData
+          : videoFrameFirstBlurData(),
       thumbnailUrl: thumbnailUrl == null ? this.thumbnailUrl : thumbnailUrl(),
       startImageWidth: startImageWidth == null
           ? this.startImageWidth
@@ -546,6 +585,7 @@ class DraftNode {
         other.isEnding == isEnding &&
         other.endingName == endingName &&
         other.endingType == endingType &&
+        other.endingBadgeUrl == endingBadgeUrl &&
         other.videoUrl == videoUrl &&
         other.videoStatus == videoStatus &&
         other.videoSource == videoSource &&
@@ -593,6 +633,7 @@ class DraftNode {
     isEnding,
     endingName,
     endingType,
+    endingBadgeUrl,
     videoUrl,
     videoStatus,
     videoSource,

@@ -64,6 +64,11 @@ class _CreateViewState extends State<CreateView> {
   var _pendingPush = false;
   String? _pendingOpenStory;
   String? _routeStoryId;
+
+  /// The last story the canvas centered on by itself. Entering a draft
+  /// with a tree (e.g. a `/create/:id` deep link) recenters once on
+  /// arrival; later edits keep the author's pan.
+  String? _centeredStoryId;
   final _canvasKey = GlobalKey();
 
   /// Deep links like `/create/<id>` open that creation directly. Runs on
@@ -288,30 +293,56 @@ class _CreateViewState extends State<CreateView> {
               if (state.failure != null || opened == null) return;
               _go(context, AppRoutes.createFor(opened));
             },
-            child: Scaffold(
-              appBar: list
-                  ? AppBar(
-                      backgroundColor: RamificaColors.surface,
-                      surfaceTintColor: Colors.transparent,
-                      elevation: 0,
-                      title: Text('Create', style: RamificaText.headlineSM),
-                      actions: [
-                        IconButton(
-                          key: const ValueKey('create-new'),
-                          tooltip: 'New creation',
-                          icon: const Icon(Icons.add, size: 24),
-                          color: RamificaColors.nodeActive,
-                          onPressed: () {
-                            bloc.add(const DraftRequested());
-                            _go(context, AppRoutes.createNew);
-                          },
-                        ),
-                      ],
-                    )
-                  : null,
-              body: SafeArea(
-                child: BlocBuilder<CreateBloc, CreateState>(
-                  builder: (context, state) => _body(context, state),
+            child: BlocListener<CreateBloc, CreateState>(
+              // A newly arrived story with a tree centers the canvas on
+              // its root, like the recenter button. Fires once per story:
+              // node edits and same-story reloads keep the author's pan.
+              listenWhen: (previous, next) {
+                final id = next.story?.storyId;
+                return id != null &&
+                    next.nodes.isNotEmpty &&
+                    id != _centeredStoryId;
+              },
+              listener: (context, state) {
+                final id = state.story?.storyId;
+                if (id == null ||
+                    state.nodes.isEmpty ||
+                    id == _centeredStoryId) {
+                  return;
+                }
+                _centeredStoryId = id;
+                // The canvas needs a laid-out viewport to center on, so
+                // this runs after the frame that draws the arrived tree.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _recenter(context, state);
+                });
+              },
+              child: Scaffold(
+                appBar: list
+                    ? AppBar(
+                        backgroundColor: RamificaColors.surface,
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 0,
+                        title: Text('Create', style: RamificaText.headlineSM),
+                        actions: [
+                          IconButton(
+                            key: const ValueKey('create-new'),
+                            tooltip: 'New creation',
+                            icon: const Icon(Icons.add, size: 24),
+                            color: RamificaColors.nodeActive,
+                            onPressed: () {
+                              bloc.add(const DraftRequested());
+                              _go(context, AppRoutes.createNew);
+                            },
+                          ),
+                        ],
+                      )
+                    : null,
+                body: SafeArea(
+                  child: BlocBuilder<CreateBloc, CreateState>(
+                    builder: (context, state) => _body(context, state),
+                  ),
                 ),
               ),
             ),
