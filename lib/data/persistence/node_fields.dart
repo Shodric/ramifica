@@ -20,6 +20,10 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
     'endingType': clean(node.endingType),
     'ttsText': node.ttsText.trim(),
     'choices': [for (final choice in node.choices) choice.toJson()],
+    'cutSlots': [
+      for (final slot in const ['A', 'B'])
+        if (node.cutSlots.contains(slot)) slot,
+    ],
     'startImagePrompt': clean(node.startImagePrompt),
     'videoPrompt': clean(node.videoPrompt),
     'sceneDirection': clean(node.sceneDirection),

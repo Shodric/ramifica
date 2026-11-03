@@ -958,6 +958,22 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           ),
                                         ),
                                       ),
+                                      onCutToggled: (slot) => _edited(
+                                        () => widget.bloc.add(
+                                          ChoiceCutToggled(
+                                            nodeId: widget.nodeId,
+                                            slot: slot,
+                                          ),
+                                        ),
+                                      ),
+                                      onEndingToggled: (isEnding) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeEndingToggled(
+                                            nodeId: widget.nodeId,
+                                            isEnding: isEnding,
+                                          ),
+                                        ),
+                                      ),
                                       onOpenChild: (targetId) async {
                                         widget.bloc.add(NodeSelected(targetId));
                                         // Covered players must not keep

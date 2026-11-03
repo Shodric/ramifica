@@ -91,6 +91,8 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<ZoneMoved>(_onZoneMoved);
     on<ChoiceAdded>(_onChoiceAdded);
     on<ChoiceRemoved>(_onChoiceRemoved);
+    on<ChoiceCutToggled>(_onChoiceCutToggled);
+    on<NodeEndingToggled>(_onNodeEndingToggled);
     on<ChoiceIconDecided>(_onChoiceIconDecided);
     on<TextGenerateRequested>(
       _serialized(_onGenerate),
@@ -900,7 +902,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       : -1;
 
   /// Adds a blank choice pointing at [target] on [slot] (or the first free
-  /// slot when null, taken, or invalid), inserted in slot order so the
+  /// open slot when null, taken, cut, or invalid), inserted in slot order
   /// canvas puts the child exactly on the tapped mini. The sole choice
   /// carries the hold. Null on endings, past two choices, or with no
   /// free slot.
@@ -908,10 +910,13 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     if (node.isEnding || node.choices.length >= 2) return null;
     final used = {for (final choice in node.choices) choice.slot};
     String? at;
-    if ((slot == 'A' || slot == 'B') && !used.contains(slot)) {
+    if ((slot == 'A' || slot == 'B') &&
+        !used.contains(slot) &&
+        // The first check narrowed slot to A/B; `==` cannot promote it.
+        !node.isSlotCut(slot!)) {
       at = slot;
     } else {
-      for (final candidate in const ['A', 'B']) {
+      for (final candidate in node.openSlots) {
         if (!used.contains(candidate)) {
           at = candidate;
           break;
@@ -966,6 +971,88 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
               current.copy(choices: survivors)
             else
               current,
+        ],
+        failure: () => null,
+        focusChoiceId: () => null,
+      ),
+    );
+  }
+
+  /// Effective branch slot of [choice]: its slot when set, else the
+  /// legacy position-derived slot. Mirrors persistence `_slot`.
+  String _choiceSlot(DraftNode node, DraftChoice choice) {
+    if (choice.slot == 'A' || choice.slot == 'B') return choice.slot!;
+    final free = ['A', 'B']
+      ..removeWhere((slot) => node.choices.any((c) => c.slot == slot));
+    final legacy = node.choices
+        .where((c) => c.slot != 'A' && c.slot != 'B')
+        .toList();
+    final index = legacy.indexOf(choice);
+    return index >= 0 && index < free.length ? free[index] : '';
+  }
+
+  /// Toggles the cut mark on a branch. Cutting a slot that already holds
+  /// a scene, or the last open slot, is rejected with a failure so the
+  /// snack says why; uncutting is always allowed. Unknown nodes, endings,
+  /// and invalid slots are ignored.
+  void _onChoiceCutToggled(ChoiceCutToggled event, Emitter<CreateState> emit) {
+    final slot = event.slot;
+    if (slot != 'A' && slot != 'B') return;
+    final index = state.nodes.indexWhere((node) => node.nodeId == event.nodeId);
+    if (index < 0) return;
+    final node = state.nodes[index];
+    if (node.isEnding) return;
+    final cut = {...node.cutSlots};
+    if (cut.contains(slot)) {
+      cut.remove(slot);
+    } else {
+      if (node.choices.any((c) => _choiceSlot(node, c) == slot)) {
+        emit(state.copy(failure: () => 'That path already has a scene.'));
+        return;
+      }
+      if (node.openSlots.length <= 1) {
+        emit(state.copy(failure: () => 'One path must stay open.'));
+        return;
+      }
+      cut.add(slot);
+    }
+    _markEdited(event.nodeId);
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId)
+              current.copy(cutSlots: cut)
+            else
+              current,
+        ],
+        failure: () => null,
+        focusChoiceId: () => null,
+      ),
+    );
+  }
+
+  /// Flips the final-node switch. Turning final on drops every Option
+  /// and clears cut marks; turning it off reopens both slots. The UI
+  /// confirms before sending `true` with Options present. Unknown nodes
+  /// and no-op flips are ignored.
+  void _onNodeEndingToggled(
+    NodeEndingToggled event,
+    Emitter<CreateState> emit,
+  ) {
+    final index = state.nodes.indexWhere((node) => node.nodeId == event.nodeId);
+    if (index < 0) return;
+    final node = state.nodes[index];
+    if (node.isEnding == event.isEnding) return;
+    final next = event.isEnding
+        ? node.copy(isEnding: true, choices: const [], cutSlots: const {})
+        : node.copy(isEnding: false);
+    _markEdited(event.nodeId);
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId) next else current,
         ],
         failure: () => null,
         focusChoiceId: () => null,

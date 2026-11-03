@@ -98,7 +98,7 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
       kids.addAll(unslotted);
       if (!node.isEnding) {
         var remaining = 2 - node.choices.length;
-        for (final s in const ['A', 'B']) {
+        for (final s in node.openSlots) {
           final real = bySlot[s];
           if (real != null) {
             kids.add(real);

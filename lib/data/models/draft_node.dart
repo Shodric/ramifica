@@ -180,6 +180,7 @@ class DraftNode {
     this.ttsDurationSeconds,
     this.ttsApproved = false,
     this.choices = const [],
+    this.cutSlots = const {},
   });
 
   factory DraftNode.fromMap(String nodeId, Map<String, dynamic> data) {
@@ -189,6 +190,7 @@ class DraftNode {
       throw const AppFailure(.invalid);
     }
     final rawChoices = data['choices'];
+    final rawCut = data['cutSlots'];
     return DraftNode(
       nodeId: nodeId,
       title: _optionalString(data['title']) ?? '',
@@ -240,6 +242,12 @@ class DraftNode {
                   ),
             ]
           : const [],
+      cutSlots: rawCut is List
+          ? {
+              for (final raw in rawCut)
+                if (raw == 'A' || raw == 'B') raw as String,
+            }
+          : const {},
     );
   }
 
@@ -320,12 +328,26 @@ class DraftNode {
   final bool ttsApproved;
   final List<DraftChoice> choices;
 
+  /// Branch slots the author cut: `A`/`B` subset. A cut slot never
+  /// renders an add-node mini on the canvas and rejects new options,
+  /// so a node with one cut slot keeps a single child cleanly.
+  final Set<String> cutSlots;
+
   /// True while the map must hide the body from players.
   bool get secret => visibility == 'secret';
 
   /// Destination ids, in choice order. Drives canvas edges and orphans.
   List<String> get childIds => [
     for (final choice in choices) choice.targetNodeId,
+  ];
+
+  /// True when the author cut [slot] (`A`/`B`).
+  bool isSlotCut(String slot) => cutSlots.contains(slot);
+
+  /// Slots still accepting options, in A/B order.
+  List<String> get openSlots => [
+    for (final slot in const ['A', 'B'])
+      if (!cutSlots.contains(slot)) slot,
   ];
 
   /// True when this non-root node's video is stale: it inherited S from
@@ -386,6 +408,7 @@ class DraftNode {
       'ttsDurationSeconds': ttsDurationSeconds,
       'ttsApproved': ttsApproved,
       'choices': [for (final choice in choices) choice.toJson()],
+      'cutSlots': [for (final slot in const ['A', 'B']) if (cutSlots.contains(slot)) slot],
     };
   }
 
@@ -431,6 +454,7 @@ class DraftNode {
     double? Function()? ttsDurationSeconds,
     bool? ttsApproved,
     List<DraftChoice>? choices,
+    Set<String>? cutSlots,
   }) {
     return DraftNode(
       nodeId: nodeId,
@@ -509,6 +533,7 @@ class DraftNode {
           : ttsDurationSeconds(),
       ttsApproved: ttsApproved ?? this.ttsApproved,
       choices: choices ?? this.choices,
+      cutSlots: cutSlots ?? this.cutSlots,
     );
   }
 
@@ -556,7 +581,8 @@ class DraftNode {
         other.ttsStatus == ttsStatus &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
         other.ttsApproved == ttsApproved &&
-        _sameChoices(other.choices, choices);
+        _sameChoices(other.choices, choices) &&
+        _sameSlots(other.cutSlots, cutSlots);
   }
 
   @override
@@ -603,6 +629,7 @@ class DraftNode {
     ttsDurationSeconds,
     ttsApproved,
     Object.hashAll(choices),
+    Object.hashAll(const ['A', 'B'].where(cutSlots.contains)),
   ]);
 }
 
@@ -633,4 +660,9 @@ bool _sameChoices(List<DraftChoice> a, List<DraftChoice> b) {
     if (a[i] != b[i]) return false;
   }
   return true;
+}
+
+bool _sameSlots(Set<String> a, Set<String> b) {
+  if (a.length != b.length) return false;
+  return a.containsAll(b);
 }
