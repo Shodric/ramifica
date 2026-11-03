@@ -153,6 +153,11 @@ export const finalizeUploadWith = async (
     return {status: "rejected", uploadError: "unknown-target"};
   }
   const {uid, storyId, nodeId, takeId} = parsed;
+  console.info(
+    `[onUploadFinalized] ${name} story=${storyId} node=${nodeId} ` +
+      `take=${takeId ?? "?"} size=${object.size ?? "?"} ` +
+      `type=${object.contentType ?? "?"}`
+  );
 
   const extOk = uploadExt.test(name);
   const type = (object.contentType ?? "").toLowerCase();
@@ -243,7 +248,14 @@ export const finalizeUploadWith = async (
       }
     );
     await download(name, inputPath);
+    console.info(
+      `[onUploadFinalized] downloaded ${name} take=${takeId ?? "?"}`
+    );
     const out = await process(inputPath, dir);
+    console.info(
+      `[onUploadFinalized] encoded take=${takeId ?? "?"} ` +
+        `duration=${out.durationSeconds}s ${out.width}x${out.height}`
+    );
     const frameBytes = await readLocal(out.lastFramePath);
     const frameHash = createHash("sha256")
       .update(frameBytes)
@@ -263,6 +275,10 @@ export const finalizeUploadWith = async (
       `stories/${storyId}/${nodeId}-end-${frameHash}.png`,
       frameBytes,
       "image/png"
+    );
+    console.info(
+      `[onUploadFinalized] stored take=${takeId ?? "?"} ` +
+        `video=${videoUrl} frame=${frameUrl}`
     );
     const desynced = await childIdsDesyncedBy(db, storyId, nodeId, frameHash);
     await draftTransaction(db, storyId, async (tx) => {
@@ -308,6 +324,11 @@ export const finalizeUploadWith = async (
     await safeDelete(deps, name);
     return {status: "ready", storyId, nodeId, videoUrl, frameHash};
   } catch (error) {
+    console.error(
+      `[onUploadFinalized] encode-failed ${storyId}/${nodeId} ` +
+        `take=${takeId ?? "?"}`,
+      error instanceof Error ? (error.stack ?? error.message) : error
+    );
     await writeMedia(
       db,
       storyId,
@@ -317,6 +338,9 @@ export const finalizeUploadWith = async (
         uploadGeneration: object.generation ?? null,
         uploadTakeId: takeId,
         uploadError: "encode-failed",
+        uploadErrorDetail: String(
+          error instanceof Error ? error.message : error
+        ).slice(0, 500),
         videoStatus: "failed",
         mediaError: "Video processing failed. " +
           "Try another clip.",
@@ -388,6 +412,10 @@ const rejectOnNode = async (
   takeId: string | null
 ): Promise<void> => {
   try {
+    console.warn(
+      `[onUploadFinalized] reject ${storyId}/${nodeId} ` +
+        `code=${code} take=${takeId ?? "?"} object=${name}`
+    );
     const target = parseUploadName(name);
     const snap = await db.doc(`stories/${storyId}`).get();
     const story = snap.exists ? docData(snap, "Story") : {};
