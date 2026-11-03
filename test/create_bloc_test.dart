@@ -2975,6 +2975,55 @@ void main() {
       }
     });
 
+    test('a branching chain keeps the main thread vertical', () {
+      // Root -A-> s1 -A-> s2 -A-> s3, each with a dead-end leaf on slot B.
+      // The midpoint pivot used to zigzag the chain (498 -> 476 -> 432 ->
+      // 280); following the deepest child keeps every main link at 280.
+      DraftChoice choice(String id, String target, String slot) {
+        return DraftChoice(
+          choiceId: id,
+          label: '',
+          targetNodeId: target,
+          isDefault: true,
+          slot: slot,
+        );
+      }
+
+      final nodes = [
+        DraftNode(
+          nodeId: 'root',
+          choices: [choice('c0', 's1', 'A'), choice('d0', 'l0', 'B')],
+        ),
+        DraftNode(
+          nodeId: 's1',
+          choices: [choice('c1', 's2', 'A'), choice('d1', 'l1', 'B')],
+        ),
+        DraftNode(
+          nodeId: 's2',
+          choices: [choice('c2', 's3', 'A'), choice('d2', 'l2', 'B')],
+        ),
+        const DraftNode(nodeId: 's3'),
+        const DraftNode(nodeId: 'l0'),
+        const DraftNode(nodeId: 'l1'),
+        const DraftNode(nodeId: 'l2'),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'root');
+
+      const chain = ['root', 's1', 's2', 's3'];
+      for (var i = 0; i < chain.length - 1; i++) {
+        final parent = layout.positions[chain[i]]!;
+        final child = layout.positions[chain[i + 1]]!;
+        expect(child.dx, parent.dx);
+        expect(child.dy - parent.dy, 280);
+      }
+      // Side leaves hang off the thread instead of bending it.
+      for (final leaf in ['l0', 'l1', 'l2']) {
+        final x = layout.positions[leaf]!.dx;
+        expect(x, isNot(layout.positions['root']!.dx));
+      }
+    });
+
     test('recenter lands the target at the viewport center', () {
       const viewport = Size(400, 600);
       final transform = recenterTransform(viewport, const Offset(172, 122));

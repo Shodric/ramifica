@@ -56,7 +56,8 @@ class DraftLayout {
 }
 
 /// Tree layout from [DraftNode.childIds]: a top-down pyramid. Leaves run left
-/// to right; each parent centers over its children. Children order by slot:
+/// to right; each parent aligns over its deepest real child, so the longest
+/// thread drops straight down. Children order by slot:
 /// unslotted legacy choices first (append order), then slot `A`, then `B`;
 /// empty slots become `+` minis in place, so tapping a mini is always
 /// replaced by its child on the same spot. Merged nodes keep their
@@ -122,26 +123,43 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
   for (final node in nodes) {
     if (!depth.containsKey(node.nodeId)) visit(node.nodeId, 0);
   }
-  // Leaves run left to right; each parent centers over first/last child.
+  // Leaves run left to right; each parent aligns over the deepest real
+  // child, so the longest thread drops straight down instead of zigzagging
+  // at midpoints with ever-shorter connectors.
   final left = <String, double>{};
+  final height = <String, int>{};
   var leaf = 0.0;
   void place(String id) {
     final kids = treeKids[id] ?? const <String>[];
     if (kids.isEmpty) {
       left[id] = leaf;
+      height[id] = 0;
       leaf += _hGap;
       return;
     }
+    var grown = 0;
     for (final kid in kids) {
       if (!left.containsKey(kid)) place(kid);
+      final branch = height[kid]! + 1;
+      if (branch > grown) grown = branch;
     }
+    height[id] = grown;
     // Pivot over real children only: `+` minis keep their leaf slots (so
     // a tapped mini is replaced by its child on the same spot) but never
     // drag the parent sideways. Single-child runs stack vertically and
     // every connector keeps the same length.
     final real = [for (final kid in kids) if (!kid.startsWith('mini:')) kid];
-    final span = real.isEmpty ? kids : real;
-    left[id] = (left[span.first]! + left[span.last]!) / 2;
+    if (real.isEmpty) {
+      left[id] = (left[kids.first]! + left[kids.last]!) / 2;
+      return;
+    }
+    // Spine rule: follow the deepest real child (ties keep slot order),
+    // so the main thread stays vertical while side branches hang off it.
+    var spine = real.first;
+    for (final kid in real.skip(1)) {
+      if (height[kid]! > height[spine]!) spine = kid;
+    }
+    left[id] = left[spine]!;
   }
 
   place(root);
