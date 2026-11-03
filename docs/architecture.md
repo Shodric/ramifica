@@ -75,7 +75,7 @@ Bucket CORS is `cors.json`: `GET` and `HEAD` from `https://meta-ramifica.web.app
 gcloud storage buckets update gs://meta-ramifica.firebasestorage.app --cors-file=cors.json
 ```
 
-Firestore and Storage rules are `firestore.rules` and `storage.rules`. Unmatched paths are denied. Players do not read `nodes` directly. Story media is not readable through the Storage SDK. A signed-in creator may upload one `mp4` or `mov` under `uploads/{uid}/`, under 100 MB.
+Firestore and Storage rules are `firestore.rules` and `storage.rules`. Unmatched paths are denied. Players do not read `nodes` directly. Story media is not readable through the Storage SDK. A signed-in creator may upload one `mp4` or `mov` under `uploads/{uid}/`, 10 MB or smaller, in 1 MiB resumable chunks minted by `createVideoUploadUrl`.
 
 Functions default to `us-central1` (`setGlobalOptions` in `functions/src/index.ts`). Callables enforce App Check when they are added. The client activates App Check right after `Firebase.initializeApp`: reCAPTCHA Enterprise with the site key in `lib/main.dart` (override with `--dart-define=APP_CHECK_SITE_KEY`), and the debug provider on localhost, in debug, or with `EMULATOR`. The reCAPTCHA secret is registered in Firebase App Check, not in the repo or in Secret Manager. `web/index.html` sets `FIREBASE_APPCHECK_DEBUG_TOKEN` only when the hostname is `localhost` or `127.0.0.1`.
 
@@ -371,8 +371,10 @@ anti-cheat. Another account's drafts, progress and secret bodies remain isolated
 
 ## Functions
 
-Only six callables are deployed: `generateNodeText`, `proposeStoryOutline`,
-`generateNodeImage`, `generateNodeVideo`, `generateNodeVoice`, `transcribeVoice`.
+Eight callables are deployed: `generateNodeText`, `proposeStoryOutline`,
+`generateNodeImage`, `generateNodeVideo`, `generateNodeVoice`,
+`transcribeVoice`, `decideChoiceIcon`, and `createVideoUploadUrl`
+(signed upload target for manual clips; the client PUTs the bytes there).
 `onUploadFinalized` processes uploaded clips. The live dictation relay continues
 in Cloud Run. API keys remain in server secrets. No business operation calls
 Functions and `/story/{id}` does not invoke a function.
@@ -419,12 +421,13 @@ Realtime flow:
 S1 uses the same `DictationController` and microphone bar as S0: live PCM,
 with one complete WAV transcription when realtime is unavailable. A denied
 microphone, empty take, or transcription error preserves the previous direction.
-Continue calls the existing `generateNodeText` after flushing pending node
-edits, then auto-applies the proposal without review UI. Apply fills empty
-author fields and missing A/B branches, preserving existing choice IDs,
-destinations, geometry, defaults, and the manual title/ending name. S1 scene
-proposals include the narrator line, and Script requires a valid scene title
-plus the line to continue.
+Continue never proposes: it only gates and advances. The AppBar spark calls
+the existing `generateNodeText` after flushing pending node edits, narrows
+the answer to the active section, and previews it for Accept/Discard. Apply
+fills empty author fields and missing A/B branches, preserving existing
+choice IDs, destinations, geometry, defaults, and the manual title/ending
+name. S1 scene proposals include the narrator line, and Script requires only
+a valid scene title to continue; Voice gates the line where it is edited.
 S3 owns the decision narration: write or generate the line, approve it, then
 generate and approve voice. This line is heard after the clip, just before the
 player chooses an option; endings use a closing line without inventing choices.
@@ -442,7 +445,10 @@ Scene proposals carry no icons. After a successful apply the client fires one
 `decideChoiceIcon` call per unstyled choice — previous decision plus proposal
 context plus the sibling label — and merges each answer only while the choice
 is still unstyled, so a late answer never overwrites a manual pick. A failed
-decision stays silent and the usual display fallback remains.
+decision stays silent and the usual display fallback remains. Inside the call
+the model decides in two stages — icon category plus color, then the icon
+inside that category — because one choice question caps at 256 options while
+the catalog holds 391 icons.
 
 The text contract caps title/ending name at 40 characters, narration at 280,
 choice labels at 24, and the three media prompts at 2000, with at most two choices.

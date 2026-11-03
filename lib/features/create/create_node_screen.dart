@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/app_snackbar.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/models/draft_node.dart';
@@ -18,6 +19,7 @@ import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_preview.dart';
 import 'package:ramifica/features/create/create_state.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
+import 'package:ramifica/features/create/steps/fill_preview_dialog.dart';
 import 'package:ramifica/features/create/steps/step_clip.dart';
 import 'package:ramifica/features/create/steps/step_frames.dart';
 import 'package:ramifica/features/create/steps/step_hotspots.dart';
@@ -34,9 +36,9 @@ enum _LeaveChoice { stay, discard, save }
 /// Scenes, Options, Voice, Clip. One step shows at a time ([IndexedStack]
 /// keeps controllers alive). Continue saves the pending edits, runs the
 /// step predicate, and reports the first missing piece inline, never as
-/// a toast. On Info, Continue first auto-proposes from the direction and
-/// applies it. Revisits are always free; jumping forward stops at the
-/// first incomplete step.
+/// a toast; it never proposes. The AppBar spark proposes values for the
+/// active section only and previews them for Accept/Discard. Revisits are
+/// always free; jumping forward stops at the first incomplete step.
 ///
 /// Manual edits stay in the bloc until Continue, Finish, or a generation
 /// request persists them. Typing, changing steps, and leaving the editor
@@ -238,10 +240,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       _leavePremise();
       return;
     }
-    if (_stepIndex == 0) {
-      _onContinueScript(node, isRoot);
-      return;
-    }
     final missing = firstMissingForStep(
       step: _stepIndex,
       node: node,
@@ -269,55 +267,72 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     }
   }
 
-  /// Info Continue: complete steps advance without proposing; otherwise
-  /// the direction is proposed and auto-applied, then the gate re-checks
-  /// on the fresh node. Propose failures surface as inline step hints;
-  /// apply failures do too, via [StepScriptState.showError].
-  Future<void> _onContinueScript(DraftNode node, bool isRoot) async {
+  /// AppBar spark: proposes from the direction, narrows the answer to
+  /// the active section, and previews it for Accept/Discard. Never
+  /// advances the step. Failures surface once, as an error snackbar.
+  Future<void> _onProposeForStep(DraftNode node, bool isRoot) async {
     if (_scriptProposing) return;
-    final missing = firstMissingForStep(step: 0, node: node, isRoot: isRoot);
-    if (missing == null) {
-      _stopScriptDictation();
-      if (!mounted || _stepIndex != 0) return;
-      if (!await _flushEdits(node.nodeId)) return;
-      if (!mounted || _stepIndex != 0) return;
-      final next = _nextStep(isRoot);
-      setState(() {
-        if (next != null) _stepIndex = next;
-        _banner = null;
-      });
-      return;
-    }
     final script = _scriptKey.currentState;
-    if (script == null || !script.directionReady) {
-      setState(() {
-        _showErrors[0] = true;
-        _banner = 'a scene direction to propose from';
-      });
-      return;
-    }
+    if (script == null || !script.directionReady) return;
+    final step = _stepIndex;
     setState(() => _scriptProposing = true);
+    late final SceneProposal sliced;
     try {
-      final proposal = await script.proposeDirection();
-      if (!mounted || _stepIndex != 0) return;
+      // Each section asks for its own scope: small shaped answers at
+      // minimal reasoning, never the whole scene.
+      final proposal = await script.proposeDirection(
+        purpose: switch (step) {
+          0 => 'info',
+          1 => 'startframe',
+          2 => 'narration',
+          3 => 'clip',
+          4 => 'options',
+          _ => 'scene',
+        },
+      );
+      if (!mounted || _stepIndex != step) return;
       if (proposal == null) {
-        setState(() {
-          _showErrors[0] = true;
-          _banner = null;
-        });
+        final reason = script.takeProposalError();
+        showErrorSnackBar(
+          context,
+          reason ?? 'Could not propose for this section. Try again.',
+        );
         return;
       }
-      final applied = await _applyProposal(node.nodeId, proposal);
-      if (!mounted || _stepIndex != 0) return;
+      final section = sliceProposalForStep(
+        proposal,
+        step: step,
+        isEnding: node.isEnding,
+      );
+      if (section == null) {
+        showErrorSnackBar(
+          context,
+          'Spark had nothing for this section. '
+          'Add more detail to the direction and try again.',
+        );
+        return;
+      }
+      sliced = section;
+    } finally {
+      // The spinner stops while the preview is reviewed.
+      if (mounted) setState(() => _scriptProposing = false);
+    }
+    final accepted = await showFillPreview(
+      context: context,
+      step: step,
+      proposal: sliced,
+    );
+    if (!mounted || _stepIndex != step || accepted != true) return;
+    setState(() => _scriptProposing = true);
+    try {
+      final applied = await _applyProposal(node.nodeId, sliced);
+      if (!mounted || _stepIndex != step) return;
       if (!applied) {
-        script.showError(
+        showErrorSnackBar(
+          context,
           widget.bloc.state.failure ??
               'Could not apply the proposal. Try again.',
         );
-        setState(() {
-          _showErrors[0] = true;
-          _banner = null;
-        });
         return;
       }
       final fresh = widget.bloc.state.nodes.singleWhere(
@@ -325,32 +340,17 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         orElse: () => node,
       );
       final stillMissing = firstMissingForStep(
-        step: 0,
+        step: step,
         node: fresh,
         isRoot: isRoot,
       );
-      if (stillMissing != null) {
-        setState(() {
-          _showErrors[0] = true;
-          _banner = stillMissing;
-        });
-        return;
-      }
-      _stopScriptDictation();
-      // Catches edits typed while the proposal was in flight.
-      if (!await _flushEdits(node.nodeId)) return;
-      if (!mounted || _stepIndex != 0) return;
-      final next = _nextStep(isRoot);
-      setState(() {
-        if (next != null) _stepIndex = next;
-        _banner = null;
-      });
+      setState(() => _banner = stillMissing);
     } finally {
       if (mounted) setState(() => _scriptProposing = false);
     }
   }
 
-  /// Dispatches the auto-built proposal and waits for persistence.
+  /// Dispatches the reviewed proposal and waits for persistence.
   Future<bool> _applyProposal(String nodeId, SceneProposal proposal) async {
     final completion = Completer<bool>();
     widget.bloc.add(
@@ -428,8 +428,11 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
               stepIndex == logical &&
               !_previewOpen &&
               !_childOpen;
+          // Continue never spins for the spark (its flush included):
+          // the AppBar button shows its own spinner, and stepping away
+          // mid-propose aborts it.
           final continueAction = WizardContinueButton(
-            busy: busy || _scriptProposing,
+            busy: busy && !_scriptProposing,
             onContinue: () => _onContinue(node, isRoot),
             isLastStep: !showPremise && stepIndex == wizardStepCount - 1,
           );
@@ -510,16 +513,28 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                   ],
                 ),
                 actions: [
-                  // Saving indicator only: Continue and Finish persist.
-                  if (state.job == CreateJob.saving)
-                    const Padding(
-                      key: ValueKey('wizard-saving'),
-                      padding: EdgeInsets.all(14),
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                  // Section fill: proposes from the direction for the
+                  // active step only, then previews for Accept/Discard.
+                  if (!showPremise)
+                    IconButton(
+                      key: const ValueKey('wizard-fill-section'),
+                      tooltip: 'Propose for this section',
+                      icon: _scriptProposing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.auto_awesome, size: 22),
+                      color: RamificaColors.textPrimary,
+                      onPressed:
+                          busy ||
+                              _scriptProposing ||
+                              !(_scriptKey.currentState?.directionReady ??
+                                  false) ||
+                              (stepIndex == 4 && node.isEnding)
+                          ? null
+                          : () => _onProposeForStep(node, isRoot),
                     ),
                   if (node.videoStatus == 'ready' &&
                       (node.videoUrl ?? '').isNotEmpty)
@@ -674,7 +689,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             );
                                         return slice.text;
                                       },
-                                      propose: (direction) async {
+                                      propose:
+                                          (direction, {purpose}) async {
                                         final storyId =
                                             widget.bloc.state.story!.storyId;
                                         if (!await widget.bloc.flushNode(
@@ -687,7 +703,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                               storyId: storyId,
                                               nodeId: widget.nodeId,
                                               prompt: direction,
-                                              purpose: 'scene',
+                                              purpose: purpose ?? 'scene',
                                             );
                                       },
                                       onTitleChanged: (value) => _edited(
@@ -770,10 +786,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                         widget.nodeId,
                                         'voice',
                                       ),
-                                      generatingLine: state.generating(
-                                        widget.nodeId,
-                                        'text',
-                                      ),
                                       phase: state.operationPhase == 'saving'
                                           ? 'saving'
                                           : node.generationPhase ??
@@ -784,11 +796,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             nodeId: widget.nodeId,
                                             ttsText: value,
                                           ),
-                                        ),
-                                      ),
-                                      onLineGenerate: () => widget.bloc.add(
-                                        NarrationGenerateRequested(
-                                          widget.nodeId,
                                         ),
                                       ),
                                       node: node,
@@ -871,24 +878,17 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                                 );
                                               } on AppFailure catch (error) {
                                                 if (context.mounted) {
-                                                  ScaffoldMessenger.of(
+                                                  showErrorSnackBar(
                                                     context,
-                                                  ).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text(error.hint),
-                                                    ),
+                                                    error.hint,
                                                   );
                                                 }
                                               } catch (_) {
                                                 if (context.mounted) {
-                                                  ScaffoldMessenger.of(context)
-                                                      .showSnackBar(
-                                                        const SnackBar(
-                                                          content: Text(
-                                                            'Could not read the selected clip. Try again.',
-                                                          ),
-                                                        ),
-                                                      );
+                                                  showErrorSnackBar(
+                                                    context,
+                                                    'Could not read the selected clip. Try again.',
+                                                  );
                                                 }
                                               }
                                             },

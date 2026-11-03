@@ -1,10 +1,11 @@
 export 'package:ramifica/data/persistence/node_fields.dart';
 
-import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:ramifica/data/persistence/node_fields.dart';
 import 'package:ramifica/data/persistence/document_store.dart';
 import 'package:ramifica/data/persistence/draft_persistence.dart';
@@ -206,8 +207,8 @@ List<GeneratedChoice> _optionalChoices(Object? value) {
   return choices;
 }
 
-/// Max creator upload: storage.rules allows under 100 MB.
-const maxVideoUploadBytes = 100 * 1024 * 1024;
+/// Max creator upload: storage.rules allows 10 MB or smaller.
+const maxVideoUploadBytes = 10 * 1024 * 1024;
 
 /// Content types the upload trigger accepts (storage.rules mirrors this).
 const videoUploadContentTypes = {'video/mp4', 'video/quicktime'};
@@ -228,20 +229,26 @@ class PickedVideoFile {
 /// one, the upload button stays hidden.
 typedef PickVideoFile = Future<PickedVideoFile?> Function();
 
-/// Raw upload transport: bytes to an exact Storage path. Tests inject a
-/// fake; production needs firebase_storage (putData/putFile with the given
-/// content type — not a dependency yet, so the factory default throws
-/// [AppFailure.failed] instead of pretending to upload).
+/// Raw upload transport: bytes to a minted upload URL. Resumable
+/// sessions take 1 MiB chunk PUTs with real progress; one-shot URLs
+/// (emulator media POST) take the bytes in a single request.
+/// Tests inject a fake; production uses [putVideoBytesToUrl].
 typedef UploadVideoFile = Future<void> Function({
-  required String path,
+  required String url,
+  required String method,
+  required bool resumable,
   required String contentType,
   required List<int> bytes,
   void Function(double progress)? onProgress,
 });
 
+/// Resumable chunk size: 1 MiB keeps non-final chunks in the 256 KiB
+/// multiples GCS requires, with ~10 progress ticks on a full-size clip.
+const videoUploadChunkBytes = 1024 * 1024;
+
 /// Client-side upload pre-check. Returns the phrase to show, or null when
 /// the file may be sent. Runs before any network call, so rejections never
-/// touch Storage. Mirrors storage.rules (`video/(mp4|quicktime)`, <100MB).
+/// touch Storage. Mirrors storage.rules (`video/(mp4|quicktime)`, <=10MB).
 String? validateVideoUpload({
   required String contentType,
   required int byteLength,
@@ -250,7 +257,7 @@ String? validateVideoUpload({
     return 'Only mp4 or mov videos can be uploaded.';
   }
   if (byteLength <= 0 || byteLength > maxVideoUploadBytes) {
-    return 'Videos must be 100 MB or smaller.';
+    return 'Videos must be 10 MB or smaller.';
   }
   return null;
 }
@@ -294,10 +301,12 @@ Future<void> _unwiredUpdateStory({
   throw const AppFailure(.failed);
 }
 
-/// Fail-closed upload default: used when no transport is wired (no
-/// firebase_storage dependency yet). Throws instead of pretending to work.
+/// Fail-closed upload default: used when no transport is wired.
+/// Throws instead of pretending to work.
 Future<void> _unwiredUpload({
-  required String path,
+  required String url,
+  required String method,
+  required bool resumable,
   required String contentType,
   required List<int> bytes,
   void Function(double progress)? onProgress,
@@ -632,8 +641,11 @@ class CreateRepository {
   /// The server also accepts an optional `context` key and a null
   /// `nodeId` for new-node proposals; the client always has an open node
   /// here, so it sends both ids and the optional author prompt.
-  /// [purpose] is `scene` for S1 or `narration` for S3. Omission retains
-  /// the legacy full proposal contract.
+  /// [purpose] selects the scope: one of `info`, `startframe`,
+  /// `narration`, `clip`, or `options` for a single section, `scene`
+  /// for the whole-scene fields. Scoped answers carry only their own
+  /// keys; missing keys read as null. Omission retains the legacy
+  /// full proposal contract.
   Future<GeneratedNodeText> generateNodeText({
     required String storyId,
     required String nodeId,
@@ -835,7 +847,11 @@ class CreateRepository {
   /// Blank ids, a blank take id, an unsupported content type, or empty
   /// bytes throw [AppFailure.invalid] without touching the network — the
   /// bloc runs [validateVideoUpload] first, so this is a second gate, not
-  /// the UX. [onProgress] reports 0..1 (transport-dependent granularity).
+  /// the UX. Mints an upload target from `createVideoUploadUrl`, then
+  /// sends the bytes there: [videoUploadChunkBytes] chunks against a
+  /// resumable session (real progress per chunk), one request otherwise.
+  /// Upload servers answer JSON errors, so failures carry the status
+  /// and body — never a bare phrase.
   Future<void> uploadNodeVideo({
     required String uid,
     required String storyId,
@@ -859,10 +875,37 @@ class CreateRepository {
         bytes.isEmpty) {
       throw const AppFailure(.invalid);
     }
-    final extension = type == 'video/quicktime' ? 'mov' : 'mp4';
+    debugPrint(
+      'uploadNodeVideo: minting URL for $story/$node take=$take '
+      'type=$type bytes=${bytes.length}',
+    );
+    final minted = await callFunction('createVideoUploadUrl', {
+      'storyId': story,
+      'nodeId': node,
+      'takeId': take,
+      'contentType': type,
+      'byteLength': bytes.length,
+    });
+    final url = minted['uploadUrl'];
+    final method = minted['method'];
+    if (url is! String ||
+        url.isEmpty ||
+        (method != 'PUT' && method != 'POST')) {
+      debugPrint('uploadNodeVideo: mint answer off-shape: $minted');
+      throw const AppFailure(.failed);
+    }
+    // Older deploys mint without the flag: their signed PUT takes the
+    // whole object in one request.
+    final resumable = minted['resumable'] == true;
+    debugPrint(
+      'uploadNodeVideo: minted $method to ${Uri.tryParse(url)?.host} '
+      'for $story/$node take=$take resumable=$resumable',
+    );
     try {
       await uploadVideoFile(
-        path: 'uploads/$user/${story}_${node}_$take.$extension',
+        url: url,
+        method: method as String,
+        resumable: resumable,
         contentType: type,
         bytes: bytes,
         onProgress: onProgress,
@@ -955,45 +998,181 @@ CreateRepository createFirebaseCreateRepository([
     fetchAuthorStoryDocs: ({required String authorId}) =>
         store.list('stories', equals: {'authorId': authorId}),
     callFunction: (name, data) => calls(name, data),
-    uploadVideoFile: uploadVideoFile ?? uploadVideoToFirebase,
+    uploadVideoFile: uploadVideoFile ?? putVideoBytesToUrl,
   );
 }
 
-Future<void> uploadVideoToFirebase({
-  required String path,
+/// Sends the bytes to a minted upload URL. Resumable sessions take
+/// [videoUploadChunkBytes] chunk PUTs with a progress tick per stored
+/// chunk (308 continues, 200/201 finishes); one-shot URLs take the
+/// bytes in a single request. Every step logs: the target host, the
+/// byte count, each chunk outcome, and on failure the status plus the
+/// server's JSON error body, so an upload rejection is diagnosable
+/// from the console. [client] is injectable for tests.
+///
+/// GCS answers the finalizing request without CORS headers, so browsers
+/// surface it as a transport failure even when the bytes landed. A
+/// [http.ClientException] on the final request is therefore tolerated:
+/// the trigger echo (which the bloc already polls) confirms or denies
+/// the upload. Any other failure aborts loudly.
+Future<void> putVideoBytesToUrl({
+  required String url,
+  required String method,
+  required bool resumable,
   required String contentType,
   required List<int> bytes,
   void Function(double progress)? onProgress,
+  http.Client? client,
 }) async {
-  final task = FirebaseStorage.instance
-      .ref(path)
-      .putData(
-        bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
-        SettableMetadata(contentType: contentType),
-      );
-  final subscription = task.snapshotEvents.listen((snapshot) {
-    if (snapshot.totalBytes > 0) {
-      onProgress?.call(snapshot.bytesTransferred / snapshot.totalBytes);
-    }
-  }, onError: (Object _) {});
-  try {
-    await task.timeout(
-      const Duration(minutes: 5),
-      onTimeout: () {
-        task.cancel();
-        throw const AppFailure(
-          .offline,
-          detail: 'Upload timed out. Try again.',
-        );
-      },
-    );
-  } on FirebaseException catch (error) {
-    throw AppFailure(
-      appFailureCodeFor(error.code),
-      detail: error.message,
-      cause: error,
-    );
-  } finally {
-    await subscription.cancel();
+  if (bytes.isEmpty) throw const AppFailure(.invalid);
+  final uri = Uri.tryParse(url);
+  if (uri == null || (method != 'PUT' && method != 'POST')) {
+    throw const AppFailure(.invalid);
   }
+  debugPrint(
+    'putVideoBytesToUrl: $method ${bytes.length} bytes '
+    'to ${uri.host} as $contentType resumable=$resumable',
+  );
+  final sender = client ?? http.Client();
+  try {
+    if (!resumable) {
+      await _sendFinalUploadRequest(
+        sender,
+        method: method,
+        uri: uri,
+        contentType: contentType,
+        bytes: bytes,
+        where: 'one-shot',
+        onProgress: onProgress,
+      );
+      return;
+    }
+    final total = bytes.length;
+    final chunks = (total + videoUploadChunkBytes - 1) ~/ videoUploadChunkBytes;
+    for (var index = 0; index < chunks; index++) {
+      final start = index * videoUploadChunkBytes;
+      var end = start + videoUploadChunkBytes - 1;
+      if (end >= total) end = total - 1;
+      if (index == chunks - 1) {
+        await _sendFinalUploadRequest(
+          sender,
+          method: 'PUT',
+          uri: uri,
+          contentType: contentType,
+          bytes: bytes.sublist(start, end + 1),
+          where: 'chunk ${index + 1}/$chunks bytes $start-$end',
+          contentRange: 'bytes $start-$end/$total',
+          onProgress: onProgress,
+        );
+        return;
+      }
+      final status = await _sendUploadRequest(
+        sender,
+        method: 'PUT',
+        uri: uri,
+        contentType: contentType,
+        bytes: bytes.sublist(start, end + 1),
+        where: 'chunk ${index + 1}/$chunks bytes $start-$end',
+        contentRange: 'bytes $start-$end/$total',
+      );
+      if (status == 308) {
+        onProgress?.call((end + 1) / total);
+        continue;
+      }
+      // 200/201 mid-loop means the object completed early; anything
+      // else already threw inside the sender.
+      onProgress?.call(1);
+      return;
+    }
+  } on AppFailure {
+    rethrow;
+  } on TimeoutException {
+    debugPrint('putVideoBytesToUrl: timed out after 5 minutes');
+    throw const AppFailure(.offline, detail: 'Upload timed out. Try again.');
+  } catch (error) {
+    debugPrint('putVideoBytesToUrl: transport failed: $error');
+    throw AppFailure(.failed, cause: error);
+  } finally {
+    if (client == null) sender.close();
+  }
+}
+
+/// Sends the finalizing request: 200/201 completes, and a transport
+/// failure is tolerated (see [putVideoBytesToUrl]) while the trigger
+/// echo confirms. Anything else throws.
+Future<void> _sendFinalUploadRequest(
+  http.Client sender, {
+  required String method,
+  required Uri uri,
+  required String contentType,
+  required List<int> bytes,
+  required String where,
+  required void Function(double progress)? onProgress,
+  String? contentRange,
+}) async {
+  try {
+    final status = await _sendUploadRequest(
+      sender,
+      method: method,
+      uri: uri,
+      contentType: contentType,
+      bytes: bytes,
+      where: where,
+      contentRange: contentRange,
+    );
+    if (status != 200 && status != 201) {
+      throw AppFailure(
+        .failed,
+        detail: 'Upload incomplete at $where ($status).',
+      );
+    }
+  } on http.ClientException catch (error) {
+    debugPrint(
+      'putVideoBytesToUrl: $where response unreadable ($error); '
+      'the trigger echo will confirm.',
+    );
+  }
+  onProgress?.call(1);
+}
+
+/// Sends one upload request and returns its status. Non-2xx answers
+/// throw with the server's error body. Transport failures propagate
+/// untouched so the final request can tell them apart.
+Future<int> _sendUploadRequest(
+  http.Client sender, {
+  required String method,
+  required Uri uri,
+  required String contentType,
+  required List<int> bytes,
+  required String where,
+  String? contentRange,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  final request = http.Request(method, uri)
+    ..headers['Content-Type'] = contentType
+    ..bodyBytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+  final range = contentRange;
+  if (range != null) request.headers['Content-Range'] = range;
+  final response = await sender
+      .send(request)
+      .timeout(const Duration(minutes: 5));
+  final body = await response.stream.bytesToString();
+  stopwatch.stop();
+  debugPrint(
+    'putVideoBytesToUrl: $where → ${response.statusCode} in '
+    '${stopwatch.elapsedMilliseconds}ms',
+  );
+  if (response.statusCode == 308) return response.statusCode;
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    final trimmed = body.trim();
+    final snippet = trimmed.isEmpty
+        ? '(empty body)'
+        : trimmed.substring(0, trimmed.length > 300 ? 300 : trimmed.length);
+    debugPrint('putVideoBytesToUrl: server refused: $snippet');
+    throw AppFailure(
+      .failed,
+      detail: 'Upload refused (${response.statusCode}): $snippet',
+    );
+  }
+  return response.statusCode;
 }

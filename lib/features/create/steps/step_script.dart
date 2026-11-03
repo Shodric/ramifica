@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/app_snackbar.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
@@ -16,11 +17,11 @@ import 'package:ramifica/features/create/voice_recorder.dart';
 /// them; there is no visibility toggle. [showErrors] renders error text
 /// under each manual field; correcting a field clears its own error live.
 ///
-/// The scene proposal runs automatically on Continue: the wizard calls
+/// The scene proposal runs from the AppBar spark: the wizard calls
 /// [StepScriptState.proposeDirection], which calls [propose] with the
 /// direction text and returns the normalized [SceneProposal] without
 /// writing the node. The manual title and ending name are preserved
-/// (returned null) so auto-apply never overwrites them.
+/// (returned null) so apply never overwrites them.
 class StepScript extends StatefulWidget {
   const StepScript({
     super.key,
@@ -69,8 +70,13 @@ class StepScript extends StatefulWidget {
   final TranscribeAudio? transcribe;
 
   /// Proposal-only `generateNodeText` call for the direction text. Never
-  /// writes the node.
-  final Future<GeneratedNodeText> Function(String direction)? propose;
+  /// writes the node. [purpose] selects the backend scope (`scene` for
+  /// the whole-scene fields, `narration` for the voice line only).
+  final Future<GeneratedNodeText> Function(
+    String direction, {
+    String? purpose,
+  })?
+  propose;
 
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onEndingNameChanged;
@@ -121,19 +127,23 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     return text.isNotEmpty && text != listeningPlaceholder;
   }
 
-  /// Shows an inline step error. The wizard calls this when the
-  /// Continue-time apply fails.
-  void showError(String message) {
-    if (!mounted) return;
-    setState(() => _hint = message);
+  /// Takes the pending proposal failure for the wizard snackbar and
+  /// clears the inline hint, so the error shows once. Null when the
+  /// last proposal did not fail.
+  String? takeProposalError() {
+    final error = _hint;
+    if (error != null && mounted) setState(() => _hint = null);
+    return error;
   }
 
   /// Proposes scene text for the current direction without writing the
   /// node. Stops an open dictation take first so its words join the
-  /// direction. Returns null (with an inline hint) when the direction is
-  /// empty, generation is unavailable or fails, the direction changed
-  /// mid-flight, or Spark returned nothing usable.
-  Future<SceneProposal?> proposeDirection() async {
+  /// direction. [purpose] selects the backend scope; null asks for the
+  /// whole scene. Returns null when the direction is empty, generation
+  /// is unavailable or fails, the direction changed mid-flight, or
+  /// Spark returned nothing usable; the reason waits in
+  /// [takeProposalError] for the wizard snackbar.
+  Future<SceneProposal?> proposeDirection({String? purpose}) async {
     final propose = widget.propose;
     if (_proposing) return null;
     if (_dictation.recording) await stopDictation();
@@ -159,7 +169,7 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       _hint = null;
     });
     try {
-      final answer = await propose(direction);
+      final answer = await propose(direction, purpose: purpose);
       if (!mounted || gen != _proposalGen) return null;
       // Late node switches reset the generation, so this answer belongs
       // to the open node.
@@ -244,12 +254,7 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     };
     _dictation.onCap = () {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Recording stopped: 90 second limit.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showNoticeSnackBar(context, 'Recording stopped at the 90-second limit.');
     };
     _dictation.addListener(_onDictation);
   }

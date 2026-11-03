@@ -1917,7 +1917,7 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
 String _uploadErrorPhrase(String code) {
   return switch (code) {
     'invalid-type' => 'Only mp4 or mov videos can be uploaded.',
-    'too-large' => 'Videos must be 100 MB or smaller.',
+    'too-large' => 'Videos must be 10 MB or smaller.',
     'unknown-target' => const AppFailure(.invalid).phrase,
     'not-author' || 'not-draft' => const AppFailure(.denied).phrase,
     'encode-unavailable' => 'Video encoding is unavailable',

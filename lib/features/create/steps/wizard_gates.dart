@@ -25,8 +25,9 @@ int wizardDisplayIndex({required int step, required bool isRoot}) =>
 /// The first missing piece of [step] for [node], in UI-facing words, or
 /// null when the step is complete.
 ///
-/// * Info needs a title plus the narrator line; generated media is
-///   accepted as-is (regen replaces it).
+/// * Info needs a title. The narrator line, prompts, and options are
+///   optional on-demand fills (the AppBar spark); Voice still gates
+///   the line where it is edited.
 /// * Scenes needs the root S ready. Children skip the step entirely
 ///   and inherit S from the parent clip's last frame; the Clip gate
 ///   enforces the parent clip instead.
@@ -43,9 +44,6 @@ String? firstMissingForStep({
       final title = node.title.trim();
       if (title.isEmpty || title.length > 40) {
         return 'a scene title (1-40 characters)';
-      }
-      if (node.ttsText.trim().isEmpty) {
-        return 'the narrator line';
       }
       return null;
     case 1:

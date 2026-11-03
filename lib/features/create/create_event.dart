@@ -182,7 +182,7 @@ final class VideoGenerateRequested extends CreateEvent {
 }
 
 /// Uploads a picked video for one node to `uploads/{uid}/`. The bloc
-/// validates type (mp4/mov) and size (<=100MB) before any network call,
+/// validates type (mp4/mov) and size (<=10MB) before any network call,
 /// then streams [VideoUploadProgressed] ticks while the bytes go up.
 /// `restartable`: picking again cancels the in-flight upload.
 final class VideoUploadRequested extends CreateEvent {
@@ -351,8 +351,8 @@ final class SceneProposalChoice {
   final String? iconColor;
 }
 
-/// An auto-built S1 scene proposal: text plus visual prompts plus up to
-/// two branches. Proposal-only: Continue builds this from the direction
+/// A Spark scene proposal: text plus visual prompts plus up to
+/// two branches. Proposal-only: the wizard builds this from the direction
 /// and [SceneProposalApplied] writes it. All fields nullable;
 /// absent/blank/invalid normalize to null in the bloc. Children
 /// proposals carry `startImagePrompt: null` (S is inherited); endings
@@ -435,7 +435,7 @@ final class SceneProposal {
   final List<SceneProposalChoice> choices;
 }
 
-/// Applies an auto-built S1 [proposal] to [nodeId]: flushes pending edits,
+/// Applies a reviewed [proposal] to [nodeId]: flushes pending edits,
 /// then overwrites non-empty fields (narrator line, start/video prompts)
 /// plus per-slot option label/icon/color — staying on the same scene.
 /// The manual title and ending name arrive null (preserved).

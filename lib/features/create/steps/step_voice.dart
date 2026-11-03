@@ -5,9 +5,9 @@ import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
 
 /// S3 Voice owns the line heard when the player is about to choose.
-/// Write or generate the text, then generate audio. Generated media is
-/// accepted as-is: regen replaces it. Approval fields are ignored
-/// (kept for compat until callers drop them).
+/// Write the text (or fill it from the AppBar spark), then generate
+/// audio. Generated media is accepted as-is: regen replaces it.
+/// Approval fields are ignored (kept for compat until callers drop them).
 class StepVoice extends StatefulWidget {
   const StepVoice({
     super.key,
@@ -15,11 +15,9 @@ class StepVoice extends StatefulWidget {
     required this.busy,
     this.active = true,
     this.generating = false,
-    this.generatingLine = false,
     this.phase,
     required this.showErrors,
     this.onLineChanged,
-    this.onLineGenerate,
     this.onLineApprovalChanged,
     this.onVoiceGenerate,
     this.onVoiceApprovalChanged,
@@ -33,11 +31,9 @@ class StepVoice extends StatefulWidget {
   /// Continue action placed at the step's end; mounted only while
   /// [active]. Null renders nothing.
   final Widget? continueAction;
-  final bool generatingLine;
   final String? phase;
   final bool showErrors;
   final ValueChanged<String>? onLineChanged;
-  final VoidCallback? onLineGenerate;
   // Legacy approval callback, ignored. Kept for compat until callers drop it.
   final ValueChanged<bool>? onLineApprovalChanged;
   final VoidCallback? onVoiceGenerate;
@@ -139,35 +135,6 @@ class _StepVoiceState extends State<StepVoice> {
                     : null,
               ),
               onChanged: widget.onLineChanged,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: .end,
-              children: [
-                OutlinedButton.icon(
-                  key: ValueKey('gen-line-$nodeId'),
-                  onPressed: busy || widget.onLineGenerate == null
-                      ? null
-                      : () {
-                          _focus.unfocus();
-                          widget.onLineGenerate?.call();
-                        },
-                  icon: widget.generatingLine
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.auto_awesome, size: 18),
-                  label: Text(
-                    widget.generatingLine
-                        ? widget.phase == 'saving'
-                              ? 'Saving changes…'
-                              : 'Suggesting line…'
-                        : 'Suggest line',
-                  ),
-                ),
-              ],
             ),
           ],
         ),

@@ -19,7 +19,11 @@ Adapters read configuration for each request, after secrets have been injected.
 Google supplies the TTS model and HeyGen supplies the video model. Both connect
 through OpenRouter: they use an OpenRouter key, without an additional Google or
 HeyGen key. This table lists code defaults; model access depends on the provider
-catalog and the account's permissions.
+catalog and the account's permissions. Each single-section scope
+(`info`, `startframe`, `narration`, `clip`, `options`) sends
+`reasoning_effort: minimal` (Spark has no off switch) with a generous
+token cap, since Meta counts reasoning against it; whole-scene
+proposals use the model default.
 
 ## Local emulator
 

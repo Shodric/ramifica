@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/app_snackbar.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/dictation/dictation_controller.dart';
 import 'package:ramifica/features/create/dictation/dictation_controls.dart';
@@ -150,12 +151,7 @@ class _PremiseSheetState extends State<PremiseSheet>
     };
     _dictation.onCap = () {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Recording stopped: 90 second limit.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showNoticeSnackBar(context, 'Recording stopped at the 90-second limit.');
     };
     _dictation.addListener(_onDictation);
   }
