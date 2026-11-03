@@ -1,36 +1,39 @@
-// A schema change requires a new running client, including already-open tabs.
+const mediaOnly = new URL(self.location.href).searchParams.has("media-only");
+
+// Development uses only the media handler, leaving Flutter's hot reload and
+// freshly served code outside the worker's shell cache.
+if (!mediaOnly) {
+  // A schema change requires a new running client, including already-open tabs.
+  self.addEventListener("activate", function (event) {
+    event.waitUntil(self.clients.matchAll({type: "window"}).then(function (clients) {
+      return Promise.all(clients.map(function (client) { return client.navigate(client.url); }));
+    }));
+  });
+}
+
+self.addEventListener("install", function (event) {
+  event.waitUntil(self.skipWaiting());
+});
 self.addEventListener("activate", function (event) {
-  event.waitUntil(self.clients.matchAll({type: "window"}).then(function (clients) {
-    return Promise.all(clients.map(function (client) { return client.navigate(client.url); }));
-  }));
+  event.waitUntil(self.clients.claim());
 });
 
 // Ramifica shell. Workbox is loaded from the CDN on first install.
 // The browser keeps the imported script with this worker after that.
-// If the CDN is unreachable, this file installs with no fetch handlers.
-try {
-  importScripts(
-    "https://storage.googleapis.com/workbox-cdn/releases/7.3.0/workbox-sw.js",
-  );
-} catch (error) {
-  // Leave the worker empty so requests stay on the network.
+// The local media handler remains available when the CDN is unreachable.
+if (!mediaOnly) {
+  try {
+    importScripts(
+      "https://storage.googleapis.com/workbox-cdn/releases/7.3.0/workbox-sw.js",
+    );
+  } catch (error) {
+    // Media caching still works if the shell library cannot be loaded.
+  }
 }
 
 if (self.workbox) {
   const shellRevision =
     new URL(self.location.href).searchParams.get("v") || "dev";
-  const thirtyDays = 30 * 24 * 60 * 60;
-
-  // Registered before any Workbox route. A Range or mp4 request must
-  // not be answered by this worker.
-  self.addEventListener("fetch", function (event) {
-    const url = new URL(event.request.url);
-    const path = url.pathname.toLowerCase();
-    if (event.request.headers.has("range") || path.endsWith(".mp4")) {
-      event.stopImmediatePropagation();
-    }
-  });
-
   workbox.core.skipWaiting();
   workbox.core.clientsClaim();
 
@@ -88,42 +91,6 @@ if (self.workbox) {
     }),
   );
 
-  const cachedMedia = new workbox.cacheableResponse.CacheableResponsePlugin({
-    statuses: [200],
-  });
-
-  workbox.routing.registerRoute(
-    function (context) {
-      return context.url.pathname.toLowerCase().endsWith(".webp");
-    },
-    new workbox.strategies.CacheFirst({
-      cacheName: "images",
-      plugins: [
-        cachedMedia,
-        new workbox.expiration.ExpirationPlugin({
-          maxEntries: 300,
-          maxAgeSeconds: thirtyDays,
-        }),
-      ],
-    }),
-  );
-
-  workbox.routing.registerRoute(
-    function (context) {
-      return context.url.pathname.toLowerCase().endsWith(".m4a");
-    },
-    new workbox.strategies.CacheFirst({
-      cacheName: "voices",
-      plugins: [
-        cachedMedia,
-        new workbox.expiration.ExpirationPlugin({
-          maxEntries: 100,
-          maxAgeSeconds: thirtyDays,
-        }),
-      ],
-    }),
-  );
-
   workbox.routing.registerRoute(
     function (context) {
       const host = context.url.hostname;
@@ -135,3 +102,7 @@ if (self.workbox) {
     new workbox.strategies.NetworkOnly(),
   );
 }
+
+// Registered after the shell routes so their precached assets keep priority.
+// This local script also works without the Workbox CDN.
+importScripts("media_cache.js");

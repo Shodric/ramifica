@@ -33,7 +33,7 @@ Ship with `flutter build web`. That compile is dart2js and the CanvasKit rendere
 
 CanvasKit draws text on a canvas, so a hold does not select text by accident.
 
-There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch](#prefetch).
+The web worker keeps downloaded media in browser storage. See [Prefetch](#prefetch).
 
 ## Web shell
 
@@ -43,20 +43,21 @@ There is no local file API. Prefetch uses the browser HTTP cache. See [Prefetch]
 
 `web/manifest.webmanifest` is the only manifest. Name `Ramifica`, `start_url` `/?source=pwa`, scope `/`, `display` standalone, `orientation` portrait, colors `#131318`. Icons are the existing `icons/Icon-*.png` files. `/?source=pwa` parses as Feed because the parser uses the path.
 
-`web/flutter_bootstrap.js` is the build template. `flutter run` gets a null service-worker version and does not register a worker. A release build registers `sw.js?v=` plus that version. Flutter still emits `flutter_service_worker.js`. This app does not register it.
+`web/flutter_bootstrap.js` is the build template. `flutter run` registers `sw.js?media-only=1`, which leaves the development shell and hot reload on the network. A release build registers the full `sw.js?v=` plus the build version. Flutter still emits `flutter_service_worker.js`. This app does not register it. Local Storage CORS expects the app at `http://localhost:5000`, as in `.vscode/launch.json`.
 
-`web/sw.js` uses Workbox 7.3.0 from the Workbox CDN. If that script fails to load, the worker installs with no fetch handlers.
+`web/sw.js` uses Workbox 7.3.0 from the Workbox CDN for the release shell and imports the local `media_cache.js` in both modes. Media caching continues if the Workbox CDN is unavailable.
 
 | Request | What the worker does |
 |---|---|
 | Document navigation, including `/story/**` | Network first, then the cached shell. `/story/**` opens the SPA with generic Ramifica share metadata. |
 | JS, wasm, and fonts in the precache list | Precache. The revision is the `v` query on the worker script, so the next build fetches a new shell. |
-| `.webp` | Cache first. 300 entries, 30 days. Status 200 only. |
-| `.m4a` | Cache first. 100 entries, 30 days. Status 200 only. |
-| `.mp4`, or any request with a `Range` header | Not intercepted. The worker does not call `respondWith`. |
+| Images, including PNG, JPEG, WebP and extensionless CORS responses | Cache first; refresh mutable URLs after one hour. Up to 300 entries. |
+| Audio and video | Save the bytes that the player actually consumes. Once ranges cover the complete file, store it locally and serve subsequent byte ranges from that copy. Up to 100 audio and 30 video entries. |
 | `cloudfunctions.net` and `cloudfunctions.googleapis.com` | Network only. |
 
-The precache list is the CanvasKit shell (full and Chromium, not Skwasm), `main.dart.js`, `flutter.js`, the icon PNGs, the four WOFF2 files, and the manifest. The document itself is not precached. Phase 0 does not play offline. The cache only speeds the next visit.
+The worker keeps incomplete media ranges in IndexedDB, bounded by the same entry limits; it never downloads the rest of a video solely to fill the cache. A completed, readable response goes to Cache Storage. Content-hashed URLs are reused for 30 days; mutable audio/video URLs are refreshed on a later playback after one hour. Requests with authorization headers, credentialed CORS requests, errors and `no-store` responses are not cached. Signed URLs are stored with their complete query string. Byte ranges require a readable CORS response; otherwise playback falls back to the normal network request. The browser may evict local data under storage pressure. The application still needs its network services to load stories and progress.
+
+The release precache list is the CanvasKit shell (full and Chromium, not Skwasm), `main.dart.js`, `flutter.js`, the icon PNGs, the four WOFF2 files, and the manifest. The document itself is not precached.
 
 ## Firebase
 
@@ -64,7 +65,7 @@ Project id: `meta-ramifica`. Config lives in `firebase.json` and `.firebaserc`.
 
 Emulators: Auth `9099`, Functions `5001`, Firestore `8080`, Hosting `5000`, Storage `9199`. One project mode. The UI is on.
 
-Hosting serves `build/web` with `cleanUrls`. Every path, including `/story/**`, rewrites directly to `/index.html`. Share metadata is generic and never includes a private scene. `index.html`, `sw.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
+Hosting serves `build/web` with `cleanUrls`. Every path, including `/story/**`, rewrites directly to `/index.html`. Share metadata is generic and never includes a private scene. `index.html`, `sw.js`, `media_cache.js`, `manifest.json`, and `manifest.webmanifest` are `Cache-Control: no-cache`. `wasm`, `woff2`, `png`, `webp`, and `svg` are cached for one year, immutable. Do not send COOP or COEP headers.
 
 The first `pointerdown` anywhere sends `UserGestured`: it clears `autoMuted`, resumes the audio context, and resumes a clip parked by hiding. It never overrides a manual mute. `FeedView` also reads `window.__ramificaGestured` on start, so a login tap counts. Hiding the browser tab sends `AppHidden`, which parks the video until the next tap; becoming visible again never resumes on its own. Switching tabs uses `TickerMode` instead and does resume.
 
@@ -311,7 +312,7 @@ The portal, the zones, and the player live in Feed. The map canvas lives in Grap
 
 ## Prefetch
 
-`Prefetcher` uses the browser HTTP cache. It creates hidden `<video preload="auto" muted>` elements for each destination URL. Cap: 3 live videos (the current clip and up to two destinations). Past the cap, drop the oldest that is not the current clip.
+`Prefetcher` creates hidden `<video preload="auto" muted>` elements for each destination URL. The browser chooses how much to request; the worker records received bytes without requesting the rest. Cap: 3 live videos (the current clip and up to two destinations). Past the cap, drop the oldest that is not the current clip.
 
 | Priority | What | When |
 |---|---|---|
@@ -319,7 +320,7 @@ The portal, the zones, and the player live in Feed. The map canvas lives in Grap
 | — | Portal blur | Not downloaded. It is `videoFrameLastBlurData` of the current node, already in memory. |
 | 1 | mp4 of each destination that is not secret | After the current clip. One or two. `HoldStarted` moves that zone's clip to the front. |
 
-A `secret` destination is not prefetched before `commitChoice`. Do not prefetch grandchildren. Changing stories clears the queue and keeps only the new node. Signing out clears it too. The URLs are the ones `loadPlayback` already returned. The service worker does not intercept mp4 or requests with a `Range` header. `promote` moves one destination to the newest slot. The voice file is decoded with the narrator.
+A `secret` destination is not prefetched before `commitChoice`. Do not prefetch grandchildren. Changing stories clears the queue and keeps only the new node. Signing out clears the queue too. The URLs are the ones `loadPlayback` already returned. `promote` moves one destination to the newest slot. The voice file is decoded with the narrator.
 
 Playback files are progressive MP4, H.264, 480x854, faststart. One resolution. No HLS.
 
