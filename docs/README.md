@@ -5,6 +5,7 @@ Start with [Getting started](getting-started.md), then [Development](development
 - [Getting started](getting-started.md): install, configure, and run.
 - [Architecture](architecture.md): client spec, routes, theme, layers.
 - [Design](design.md): visual spec and tokens.
+- [Flows](flows.md): user journey and system diagrams in Mermaid.
 - [Creating stories](creating.md): the authoring wizard, step by step.
 - [Data model](data-model.md): Firestore paths, publications, progress.
 - [Security](security.md): rules, App Check, and auth flows.

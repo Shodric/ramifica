@@ -73,6 +73,7 @@ CI runs all of these plus a docs link check on every push to `main` and every pu
 - [Getting started](docs/getting-started.md): install, configure, and run.
 - [Architecture](docs/architecture.md): client spec, routes, theme, layers.
 - [Design](docs/design.md): visual spec and tokens.
+- [Flows](docs/flows.md): user journey and system diagrams in Mermaid.
 - [Creating stories](docs/creating.md): the authoring wizard, step by step.
 - [Data model](docs/data-model.md): Firestore paths, publications, progress.
 - [Security](docs/security.md): rules, App Check, and auth flows.
