@@ -2212,6 +2212,140 @@ void main() {
       expect(choices.single['targetNodeId'], 'node_1');
       expect(choices.single['x'], 0.75);
     });
+
+    test('cutting a free path marks it and keeps the other open', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, {'B'});
+      expect(node.openSlots, ['A']);
+    });
+
+    test('uncutting restores the path', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(node.openSlots, ['A', 'B']);
+    });
+
+    test('cutting an occupied path fails', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      // The seed choice has no stored slot, so it lands on A.
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(bloc.state.failure, 'That path already has a scene.');
+    });
+
+    test('cutting the last open path fails', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceRemoved(nodeId: 'node_1', choiceId: 'c1'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, {'B'});
+      expect(bloc.state.failure, 'One path must stay open.');
+    });
+
+    test('cut toggles on unknown nodes, endings, and slots do nothing',
+        () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      final before = bloc.state.nodes;
+
+      bloc
+        ..add(const ChoiceCutToggled(nodeId: 'missing', slot: 'B'))
+        ..add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'C'))
+        ..add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // Only the ending flip lands; every cut is ignored.
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(node.isEnding, isTrue);
+      expect(bloc.state.failure, isNull);
+      expect(before.any((n) => n.nodeId == 'node_1' && n.isEnding), isFalse);
+    });
+
+    test('marking final drops choices and cut marks', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.isEnding, isTrue);
+      expect(node.choices, isEmpty);
+      expect(node.cutSlots, isEmpty);
+    });
+
+    test('unmarking final reopens both paths', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: false));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.isEnding, isFalse);
+      expect(node.openSlots, ['A', 'B']);
+    });
   });
 
   group('CreateBlocDirectPersistence', () {
