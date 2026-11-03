@@ -212,6 +212,11 @@ class _ClipPreviewState extends State<ClipPreview> {
         widget.expand
             ? Expanded(child: videoBox)
             : SizedBox(height: 280, child: videoBox),
+        if (ready)
+          Text(
+            '${v!.size.width.round()} × ${v.size.height.round()} · '
+            '${(v.duration.inMilliseconds / 1000).toStringAsFixed(1)}s',
+          ),
         Row(
           children: [
             IconButton(

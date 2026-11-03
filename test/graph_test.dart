@@ -673,9 +673,7 @@ void main() {
       final player = _FakeClip();
       final bloc = FeedBloc(repository: _runRepo(), clock: _StillClock());
       addTearDown(() async {
-        print('SEE-MAP closing ${DateTime.now().millisecondsSinceEpoch}');
         await bloc.close();
-        print('SEE-MAP closed ${DateTime.now().millisecondsSinceEpoch}');
       });
       await tester.pumpWidget(
         MaterialApp(
@@ -687,22 +685,13 @@ void main() {
       );
       bloc.add(const StoryOpened(storyId: 'story_temple'));
       for (var i = 0; i < 50 && bloc.state.phase != FeedPhase.playing; i++) {
-        print(
-          'SEE-MAP $i ${DateTime.now().millisecondsSinceEpoch} '
-          'phase=${bloc.state.phase}',
-        );
         await tester.pump(const Duration(milliseconds: 100));
       }
-      print('SEE-MAP done phase=${bloc.state.phase}');
-
       expect(bloc.state.phase, FeedPhase.playing);
       final button = find.byTooltip('See map');
       expect(button, findsOneWidget);
-      print('SEE-MAP tapping ${DateTime.now().millisecondsSinceEpoch}');
       await tester.tap(button);
-      print('SEE-MAP tapped ${DateTime.now().millisecondsSinceEpoch}');
       await tester.pump();
-      print('SEE-MAP pumped ${DateTime.now().millisecondsSinceEpoch}');
     });
   });
 }
@@ -828,7 +817,6 @@ RunRepository _runRepo() {
   return RunRepository(
     execute: FunctionsClient(
       call: (name, data) async {
-        print('SEE-MAP call: $name');
         if (name == 'startRun') {
           return {
             'runId': 'run_1',

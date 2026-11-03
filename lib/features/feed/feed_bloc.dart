@@ -35,15 +35,13 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     String Function()? newRequestId,
     Random? random,
     Playback? previewPlayback,
-    PreviewNodeResolver? resolvePreview,
-    PreviewNodeLabel? previewNodeLabel,
+    this._resolvePreview,
+    this._previewNodeLabel,
   }) : prefetcher = prefetcher ?? Prefetcher(),
        narrator = narrator ?? openNarrator(),
        _clock = clock ?? TimerCueClock(),
        _newRequestId = newRequestId ?? _uuidRequestId,
        _random = random ?? Random(),
-       _resolvePreview = resolvePreview,
-       _previewNodeLabel = previewNodeLabel,
        _preview = previewPlayback != null,
        super(
          previewPlayback == null

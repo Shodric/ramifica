@@ -73,12 +73,10 @@ class GlassPanel extends StatelessWidget {
     required this.child,
     required this.padding,
     required this.borderRadius,
-    required Color fill,
-    required Color border,
-    required double sigma,
-  }) : _fill = fill,
-       _border = border,
-       _sigma = sigma;
+    required this._fill,
+    required this._border,
+    required this._sigma,
+  });
 
   @override
   Widget build(BuildContext context) {
