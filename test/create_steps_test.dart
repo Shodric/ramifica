@@ -542,4 +542,73 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('gen-video-root')));
     expect(sent, 'Submitted motion');
   });
+
+  testWidgets('S4 hides the prompt card while generating', (tester) async {
+    await mount(
+      tester,
+      StepClip(
+        node: const DraftNode(
+          nodeId: 'root',
+          videoPrompt: 'Submitted motion',
+          videoStatus: 'pending',
+        ),
+        busy: true,
+        generating: true,
+        showErrors: false,
+        active: true,
+        continueAction: const Text('Continue'),
+      ),
+    );
+    expect(find.byKey(const ValueKey('video-prompt-root')), findsNothing);
+    expect(find.byKey(const ValueKey('gen-video-root')), findsNothing);
+    expect(find.text('Continue'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('S4 hides the prompt card while uploading, keeps progress', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      StepClip(
+        node: const DraftNode(nodeId: 'root', videoPrompt: 'Clip idea'),
+        busy: true,
+        generating: true,
+        showErrors: false,
+        uploadProgress: 0.4,
+        active: true,
+        continueAction: const Text('Continue'),
+      ),
+    );
+    expect(find.byKey(const ValueKey('video-prompt-root')), findsNothing);
+    expect(find.byKey(const ValueKey('gen-video-root')), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('40%'), findsOneWidget);
+    expect(find.text('Continue'), findsOneWidget);
+  });
+
+  testWidgets('S4 shows the prompt card again when the clip fails', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      StepClip(
+        node: const DraftNode(
+          nodeId: 'root',
+          videoPrompt: 'Clip idea',
+          videoStatus: 'failed',
+        ),
+        busy: false,
+        generating: true,
+        showErrors: false,
+        onVideoGenerate: (_) {},
+      ),
+    );
+    expect(find.byKey(const ValueKey('video-prompt-root')), findsOneWidget);
+    expect(find.byKey(const ValueKey('gen-video-root')), findsOneWidget);
+    expect(
+      find.text('Video generation failed. Retry Generate.'),
+      findsOneWidget,
+    );
+  });
 }

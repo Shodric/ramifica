@@ -113,9 +113,16 @@ class _StepClipState extends State<StepClip> {
           expand: bounded,
         );
         // A ready clip is final: the player takes the area and the
-        // prompt plus actions hide. Anything else keeps the editor.
+        // prompt plus actions hide. An actively generating or uploading
+        // clip also hides the editor: only the loader square, the upload
+        // progress, and Continue stay, until the job fails or ends.
         final finished =
             (node.videoUrl?.isNotEmpty ?? false) && node.videoStatus == 'ready';
+        // Keyed off the live operation signals, not `generating`: an idle
+        // pending job still needs its editor for the resume button.
+        final promptHidden =
+            (widget.generating || widget.uploadProgress != null) &&
+            node.videoStatus != 'failed';
         return Column(
           crossAxisAlignment: .stretch,
           mainAxisSize: bounded ? .max : .min,
@@ -130,7 +137,7 @@ class _StepClipState extends State<StepClip> {
                       height: 180,
                       child: _GeneratingPlaceholder(),
                     ),
-            if (!finished) ...[
+            if (!finished && !promptHidden) ...[
               if (node.videoUrl?.isNotEmpty == true || generating)
                 const SizedBox(height: 12),
               _PromptCard(
@@ -197,23 +204,6 @@ class _StepClipState extends State<StepClip> {
                         label: const Text('Upload clip'),
                       ),
                     ],
-                    if (widget.uploadProgress != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: LinearProgressIndicator(
-                              value: widget.uploadProgress!.clamp(0, 1),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
-                            style: RamificaText.meta,
-                          ),
-                        ],
-                      ),
-                    ],
                     if (node.videoStatus == 'failed') ...[
                       const SizedBox(height: 8),
                       const Text('Video generation failed. Retry Generate.'),
@@ -230,6 +220,25 @@ class _StepClipState extends State<StepClip> {
                     ],
                   ],
                 ),
+              ),
+            ],
+            // Upload progress lives outside the prompt card so it stays
+            // visible while the editor hides during the upload.
+            if (!finished && widget.uploadProgress != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: widget.uploadProgress!.clamp(0, 1),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${(widget.uploadProgress!.clamp(0, 1) * 100).round()}%',
+                    style: RamificaText.meta,
+                  ),
+                ],
               ),
             ],
             if (finished &&
