@@ -1,8 +1,8 @@
 import 'package:ramifica/core/warm_slot.dart';
 import 'package:web/web.dart';
 
-/// Hidden `<video preload="auto" muted>`. The browser HTTP cache keeps the
-/// bytes for [NodeVideo]. This element never plays.
+/// Hidden `<video preload="auto" muted>`. The browser decides how much to
+/// download; the media worker records the bytes it receives. This never plays.
 WarmSlot createWarmSlot() => HtmlWarmSlot();
 
 class HtmlWarmSlot implements WarmSlot {

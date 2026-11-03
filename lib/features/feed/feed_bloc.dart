@@ -14,6 +14,17 @@ import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:uuid/uuid.dart';
 
+/// Resolves a preview tap target: the playback when its video is finished,
+/// plus whether the target exists in the draft. An existing but unfinished
+/// node shows a notice with an edit action; an unknown one shows the
+/// notice alone.
+typedef PreviewNodeResolver = ({Playback? playback, bool exists}) Function(
+  String targetNodeId,
+);
+
+/// Display label for a draft node in preview notices, e.g. `1A`.
+typedef PreviewNodeLabel = String Function(String targetNodeId);
+
 class FeedBloc extends Bloc<FeedEvent, FeedState> {
   FeedBloc({
     required this.repository,
@@ -23,25 +34,65 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     CueClock? clock,
     String Function()? newRequestId,
     Random? random,
+    Playback? previewPlayback,
+    PreviewNodeResolver? resolvePreview,
+    PreviewNodeLabel? previewNodeLabel,
   }) : prefetcher = prefetcher ?? Prefetcher(),
        narrator = narrator ?? openNarrator(),
        _clock = clock ?? TimerCueClock(),
        _newRequestId = newRequestId ?? _uuidRequestId,
        _random = random ?? Random(),
-       super(const FeedState()) {
+       _resolvePreview = resolvePreview,
+       _previewNodeLabel = previewNodeLabel,
+       _preview = previewPlayback != null,
+       super(
+         previewPlayback == null
+             ? const FeedState()
+             : FeedState(
+                 phase: .playing,
+                 storyId: previewPlayback.story.storyId,
+                 runId: previewPlayback.runId,
+                 playback: previewPlayback,
+                 muted: false,
+                 autoMuted: false,
+               ),
+       ) {
     on<StoryOpened>(_onOpened, transformer: restartable());
     on<StorySwiped>(_onSwiped, transformer: restartable());
     on<PauseReached>(_onPause);
     on<UserGestured>(_onUserGestured);
     on<AppHidden>(_onAppHidden);
     on<MuteToggled>(_onMute);
+    on<VideoTapped>(_onVideoTapped);
     on<VoiceFinished>(_onVoice);
+    on<PreviewCueStarted>(_onPreviewCueStarted);
+    on<PreviewChoiceTaken>(_onPreviewTaken);
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
     on<HoldCompleted>(_onHeld, transformer: droppable());
     on<OtherPathRequested>(_onOtherPath, transformer: restartable());
     on<MapRequested>(_onMap, transformer: droppable());
+    final voice = previewPlayback?.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(this.narrator.prepare(voice));
+    }
   }
+
+  /// Plays a draft scene using the feed's normal phases without a server run.
+  FeedBloc.preview({
+    required Playback playback,
+    Narrator? narrator,
+    CueClock? clock,
+    PreviewNodeResolver? resolvePreview,
+    PreviewNodeLabel? previewNodeLabel,
+  }) : this(
+         repository: RunRepository(execute: _previewRunUnavailable),
+         narrator: narrator,
+         clock: clock,
+         previewPlayback: playback,
+         resolvePreview: resolvePreview,
+         previewNodeLabel: previewNodeLabel,
+       );
 
   final RunRepository repository;
 
@@ -52,9 +103,13 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   final CueClock _clock;
   final String Function() _newRequestId;
   final Random _random;
+  final PreviewNodeResolver? _resolvePreview;
+  final PreviewNodeLabel? _previewNodeLabel;
+  final bool _preview;
   var _holdSealed = false;
 
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
+    if (_preview) return;
     final raw = event.storyId?.trim();
     await _loadStory(
       storyId: raw == null || raw.isEmpty ? null : raw,
@@ -67,6 +122,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   /// the card visible; without another story, or without a catalog, it is
   /// ignored. Best-effort: a catalog failure keeps the current clip.
   Future<void> _onSwiped(StorySwiped event, Emitter<FeedState> emit) async {
+    if (_preview) return;
     final current = state;
     final cardVisible = current.phase == .ending && !current.endingSpeaking;
     if (current.phase != .playing && !cardVisible) return;
@@ -176,6 +232,14 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     }
   }
 
+  /// Toggles the tap pause. Only while the clip is playing: narration,
+  /// decision, and ending phases ignore the tap, and so does a hidden
+  /// clip (its wake tap belongs to [UserGestured]).
+  void _onVideoTapped(VideoTapped event, Emitter<FeedState> emit) {
+    if (state.phase != .playing || state.hiddenPaused) return;
+    emit(state.copy(userPaused: !state.userPaused));
+  }
+
   void _onVoice(VoiceFinished event, Emitter<FeedState> emit) {
     if (state.phase == .ending) {
       if (!state.endingSpeaking) return;
@@ -191,7 +255,61 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     emit(state.copy(phase: .window, clearHold: true));
   }
 
+  void _onPreviewCueStarted(PreviewCueStarted event, Emitter<FeedState> emit) {
+    if (!_preview || state.phase != .speaking || state.hiddenPaused) return;
+    emit(state.copy(previewCueStarted: true));
+  }
+
+  /// A preview tap on a hotspot. Jumps straight to the target draft scene
+  /// and plays it like the feed would, with no hold, portal, or commit.
+  /// A target with no finished video keeps the current scene and raises a
+  /// transient notice instead, carrying the target when the editor can
+  /// open it.
+  void _onPreviewTaken(PreviewChoiceTaken event, Emitter<FeedState> emit) {
+    if (!_preview) return;
+    final zonesVisible =
+        (state.phase == .speaking && state.previewCueStarted) ||
+        state.phase == .window;
+    if (!zonesVisible) return;
+    final choice = _choice(event.choiceId);
+    if (choice == null) return;
+    final resolved = _resolvePreview?.call(choice.targetNodeId);
+    final next = resolved?.playback;
+    if (next == null) {
+      final label =
+          _previewNodeLabel?.call(choice.targetNodeId) ?? choice.targetNodeId;
+      final editable = resolved?.exists ?? false;
+      emit(
+        state.copy(
+          previewNotice: 'Node "$label" not finished yet',
+          previewNoticeSerial: state.previewNoticeSerial + 1,
+          previewNoticeTarget: editable ? choice.targetNodeId : null,
+          clearPreviewNoticeTarget: !editable,
+        ),
+      );
+      return;
+    }
+    _holdSealed = false;
+    _silence();
+    prefetcher.warm(next);
+    final voice = next.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(narrator.prepare(voice));
+    }
+    emit(
+      FeedState(
+        phase: .playing,
+        storyId: next.story.storyId,
+        runId: next.runId,
+        playback: next,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
+  }
+
   void _onHold(HoldStarted event, Emitter<FeedState> emit) {
+    if (_preview) return;
     if (state.phase != .window) return;
     final choice = _choice(event.choiceId);
     if (choice == null) return;
@@ -336,6 +454,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     OtherPathRequested event,
     Emitter<FeedState> emit,
   ) async {
+    if (_preview) return;
     if (state.phase != .ending) return;
     final storyId = state.storyId;
     final muted = state.muted;
@@ -411,6 +530,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         add(const VoiceFinished());
         return;
       }
+      if (_preview) add(const PreviewCueStarted());
       _clock.schedule(line, _finishCue);
       return;
     }
@@ -424,13 +544,17 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         state.phase == .speaking ||
         (state.phase == .ending && state.endingSpeaking);
     if (!speaking) return;
-    if (played && !state.muted) return;
+    if (played && !state.muted) {
+      if (_preview) add(const PreviewCueStarted());
+      return;
+    }
     if (played) narrator.stop();
     final line = _lineDuration();
     if (line == null) {
       _finishCue();
       return;
     }
+    if (_preview) add(const PreviewCueStarted());
     _clock.schedule(line, _finishCue);
   }
 
@@ -471,3 +595,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 }
 
 String _uuidRequestId() => const Uuid().v4();
+
+Future<Map<String, dynamic>> _previewRunUnavailable(
+  String operation,
+  Map<String, dynamic> data,
+) async => throw StateError('A preview cannot create or change a run.');

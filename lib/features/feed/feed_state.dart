@@ -27,6 +27,11 @@ class FeedState {
     this.pendingRequestId,
     this.endingSpeaking = false,
     this.hiddenPaused = false,
+    this.userPaused = false,
+    this.previewCueStarted = false,
+    this.previewNotice,
+    this.previewNoticeSerial = 0,
+    this.previewNoticeTarget,
   });
   final FeedPhase phase;
   final String? storyId;
@@ -64,6 +69,27 @@ class FeedState {
   /// next tap; becoming visible again never resumes on its own.
   final bool hiddenPaused;
 
+  /// The viewer paused the clip with a tap. Cleared by the next tap or by
+  /// any transition that replaces the playback; mute and narration cues
+  /// are untouched.
+  final bool userPaused;
+
+  /// The preview's narration (or muted subtitle) has actually started.
+  final bool previewCueStarted;
+
+  /// A transient preview message, e.g. a tapped target with no finished
+  /// video. The view shows it as a snackbar; it never changes the phase.
+  final String? previewNotice;
+
+  /// Bumps every time [previewNotice] is set, so the same message twice
+  /// in a row still shows twice.
+  final int previewNoticeSerial;
+
+  /// The unfinished target behind [previewNotice], when it exists in the
+  /// draft and the editor can open it. Null for unknown targets and
+  /// outside the preview notice flow.
+  final String? previewNoticeTarget;
+
   FeedState copy({
     FeedPhase? phase,
     bool? muted,
@@ -74,6 +100,12 @@ class FeedState {
     String? pendingRequestId,
     bool? endingSpeaking,
     bool? hiddenPaused,
+    bool? userPaused,
+    bool? previewCueStarted,
+    String? previewNotice,
+    int? previewNoticeSerial,
+    String? previewNoticeTarget,
+    bool clearPreviewNoticeTarget = false,
   }) {
     return FeedState(
       phase: phase ?? this.phase,
@@ -89,6 +121,13 @@ class FeedState {
       pendingRequestId: pendingRequestId ?? this.pendingRequestId,
       endingSpeaking: endingSpeaking ?? this.endingSpeaking,
       hiddenPaused: hiddenPaused ?? this.hiddenPaused,
+      userPaused: userPaused ?? this.userPaused,
+      previewCueStarted: previewCueStarted ?? this.previewCueStarted,
+      previewNotice: previewNotice ?? this.previewNotice,
+      previewNoticeSerial: previewNoticeSerial ?? this.previewNoticeSerial,
+      previewNoticeTarget: clearPreviewNoticeTarget
+          ? null
+          : previewNoticeTarget ?? this.previewNoticeTarget,
     );
   }
 
@@ -107,7 +146,12 @@ class FeedState {
         other.holdSerial == holdSerial &&
         other.pendingRequestId == pendingRequestId &&
         other.endingSpeaking == endingSpeaking &&
-        other.hiddenPaused == hiddenPaused;
+        other.hiddenPaused == hiddenPaused &&
+        other.userPaused == userPaused &&
+        other.previewCueStarted == previewCueStarted &&
+        other.previewNotice == previewNotice &&
+        other.previewNoticeSerial == previewNoticeSerial &&
+        other.previewNoticeTarget == previewNoticeTarget;
   }
 
   @override
@@ -125,5 +169,10 @@ class FeedState {
     pendingRequestId,
     endingSpeaking,
     hiddenPaused,
+    userPaused,
+    previewCueStarted,
+    previewNotice,
+    previewNoticeSerial,
+    previewNoticeTarget,
   );
 }

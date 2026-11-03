@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/features/feed/video_click_through.dart';
 import 'package:video_player/video_player.dart';
 
 /// Plays one node mp4 and reports the first frame and the last frame.
@@ -17,6 +18,8 @@ class NodeVideo extends StatefulWidget {
     required this.onFirstFrame,
     required this.onEnded,
     this.player,
+    this.fit = BoxFit.cover,
+    this.onVideoSizeChanged,
   });
 
   final String url;
@@ -28,6 +31,12 @@ class NodeVideo extends StatefulWidget {
   final VoidCallback onFirstFrame;
   final VoidCallback onEnded;
 
+  /// How the decoded video is fitted to the available surface.
+  final BoxFit fit;
+
+  /// Reports decoded dimensions so overlays can follow the actual video.
+  final ValueChanged<Size>? onVideoSizeChanged;
+
   /// Test double. Production builds a [VideoClipPlayer].
   final ClipPlayer? player;
 
@@ -36,20 +45,21 @@ class NodeVideo extends StatefulWidget {
 }
 
 class _NodeVideoState extends State<NodeVideo> {
-  ClipPlayer? _owned;
+  VideoClipPlayer? _owned;
   var _generation = 0;
   var _started = false;
   var _tickerEnabled = true;
   var _sawReady = false;
   var _sawEnded = false;
   var _armEnded = false;
+  Size? _reportedSize;
 
   ClipPlayer get _player => widget.player ?? _owned!;
 
   @override
   void initState() {
     super.initState();
-    if (widget.player == null) _owned = VideoClipPlayer();
+    if (widget.player == null) _owned = VideoClipPlayer(fit: widget.fit);
     _player.addListener(_onTick);
   }
 
@@ -70,9 +80,11 @@ class _NodeVideoState extends State<NodeVideo> {
   @override
   void didUpdateWidget(NodeVideo oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.fit != widget.fit) _owned?.fit = widget.fit;
     if (oldWidget.url != widget.url) {
       _sawReady = false;
       _sawEnded = false;
+      _reportedSize = null;
       unawaited(_open());
       return;
     }
@@ -122,10 +134,20 @@ class _NodeVideoState extends State<NodeVideo> {
 
   void _onTick() {
     if (!mounted) return;
+    final size = _owned?.videoSize;
+    if (size != null && size != _reportedSize) {
+      _reportedSize = size;
+      widget.onVideoSizeChanged?.call(size);
+    }
     final becameReady = _player.ready && !_sawReady;
     if (becameReady) {
       _sawReady = true;
       widget.onFirstFrame();
+      // The web player mounts its <video> element on the following frame;
+      // hand taps through to Flutter once it is attached. No-op elsewhere.
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => makeVideosClickThrough(),
+      );
     }
     if (_armEnded && _player.ended && !_sawEnded) {
       _sawEnded = true;
@@ -138,7 +160,9 @@ class _NodeVideoState extends State<NodeVideo> {
   Widget build(BuildContext context) {
     return ColoredBox(
       color: RamificaColors.surface,
-      child: SizedBox.expand(child: _player.buildView()),
+      child: IgnorePointer(
+        child: SizedBox.expand(child: _player.buildView()),
+      ),
     );
   }
 }
@@ -171,6 +195,9 @@ abstract class ClipPlayer {
 }
 
 class VideoClipPlayer implements ClipPlayer {
+  VideoClipPlayer({this.fit = BoxFit.cover});
+
+  BoxFit fit;
   VideoPlayerController? _controller;
   final _listeners = <VoidCallback>[];
   var _ready = false;
@@ -183,6 +210,14 @@ class VideoClipPlayer implements ClipPlayer {
 
   @override
   bool get ended => _ended;
+
+  Size? get videoSize {
+    final value = _controller?.value;
+    if (value == null || !value.isInitialized || value.size.isEmpty) {
+      return null;
+    }
+    return value.size;
+  }
 
   @override
   Future<void> open({
@@ -248,7 +283,7 @@ class VideoClipPlayer implements ClipPlayer {
       return const SizedBox.expand();
     }
     return FittedBox(
-      fit: .cover,
+      fit: fit,
       child: SizedBox(
         width: value.size.width,
         height: value.size.height,

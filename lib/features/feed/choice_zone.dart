@@ -24,6 +24,7 @@ class ChoiceZone extends StatelessWidget {
     this.icon,
     this.iconColor,
     this.index = 0,
+    this.compact = false,
   });
 
   final String choiceId;
@@ -42,6 +43,9 @@ class ChoiceZone extends StatelessWidget {
   /// Choice order in the node, for the legacy icon fallback.
   final int index;
 
+  /// Draw a smaller marker while retaining the authored zone geometry.
+  final bool compact;
+
   /// False while a hold is already running. A new press does not steal it.
   final bool enabled;
 
@@ -53,6 +57,7 @@ class ChoiceZone extends StatelessWidget {
     final center = video.point(x, y);
     final ring = video.radius(radius);
     final diameter = ring * 2;
+    final visibleDiameter = compact ? diameter.clamp(0.0, 40.0) : diameter;
     return Positioned.fill(
       child: Stack(
         children: [
@@ -63,6 +68,7 @@ class ChoiceZone extends StatelessWidget {
             height: diameter,
             child: _ZoneRing(
               key: ValueKey('ring-$choiceId'),
+              visualKey: ValueKey('visible-ring-$choiceId'),
               icon: choiceIconData(icon, index),
               color: choiceIconColor(
                 iconColor,
@@ -70,25 +76,35 @@ class ChoiceZone extends StatelessWidget {
                     ? RamificaColors.hotspot
                     : RamificaColors.nodeActive,
               ),
-              diameter: diameter,
+              visibleDiameter: visibleDiameter,
               enabled: enabled,
               onHoldStart: onHoldStart,
             ),
           ),
           Positioned(
             left: center.dx,
-            top: center.dy + ring + 8,
+            top: center.dy + visibleDiameter / 2 + 8,
             child: FractionalTranslation(
               translation: const Offset(-0.5, 0),
               child: IgnorePointer(
-                child: GlassPanel(
-                  padding: const .symmetric(horizontal: 10, vertical: 4),
-                  borderRadius: const .all(.circular(999)),
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: .ellipsis,
-                    style: RamificaText.label,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: compact ? 120 : double.infinity,
+                  ),
+                  child: GlassPanel(
+                    padding: compact
+                        ? const .symmetric(horizontal: 8, vertical: 3)
+                        : const .symmetric(horizontal: 10, vertical: 4),
+                    borderRadius: const .all(.circular(999)),
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: .ellipsis,
+                      textAlign: .center,
+                      style: compact
+                          ? RamificaText.labelSM
+                          : RamificaText.label,
+                    ),
                   ),
                 ),
               ),
@@ -108,9 +124,10 @@ class ChoiceZone extends StatelessWidget {
 class _ZoneRing extends StatelessWidget {
   const _ZoneRing({
     super.key,
+    required this.visualKey,
     required this.icon,
     required this.color,
-    required this.diameter,
+    required this.visibleDiameter,
     required this.enabled,
     required this.onHoldStart,
   });
@@ -119,7 +136,8 @@ class _ZoneRing extends StatelessWidget {
   /// already rides under it), tinted with the picked icon color.
   final IconData icon;
   final Color color;
-  final double diameter;
+  final Key visualKey;
+  final double visibleDiameter;
   final bool enabled;
   final ValueChanged<int> onHoldStart;
 
@@ -139,17 +157,26 @@ class _ZoneRing extends StatelessWidget {
     return Listener(
       behavior: .opaque,
       onPointerDown: (event) => _down(context, event),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: .circle,
-          border: Border.all(color: RamificaColors.hotspot, width: 2),
-        ),
-        child: Center(
-          child: IgnorePointer(
-            child: Icon(
-              icon,
-              size: (diameter * 0.38).clamp(16, 32).toDouble(),
-              color: color,
+      child: Center(
+        child: SizedBox(
+          key: visualKey,
+          width: visibleDiameter,
+          height: visibleDiameter,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: .circle,
+              border: Border.all(color: RamificaColors.hotspot, width: 2),
+            ),
+            child: Center(
+              child: IgnorePointer(
+                child: Icon(
+                  icon,
+                  size: visibleDiameter < 16
+                      ? visibleDiameter
+                      : (visibleDiameter * 0.38).clamp(16, 32).toDouble(),
+                  color: color,
+                ),
+              ),
             ),
           ),
         ),

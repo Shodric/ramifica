@@ -33,14 +33,34 @@ final class MuteToggled extends FeedEvent {
   const MuteToggled();
 }
 
+/// A tap on the video surface. Toggles the user pause while the clip is
+/// playing; anywhere else it is ignored. The view never sends the tap
+/// that wakes a hidden clip, so waking never pauses.
+final class VideoTapped extends FeedEvent {
+  const VideoTapped();
+}
+
 /// The narrator finished, or the muted subtitle ran for `ttsDurationSeconds`.
 final class VoiceFinished extends FeedEvent {
   const VoiceFinished();
 }
 
+/// A preview's narration or muted subtitle has begun.
+final class PreviewCueStarted extends FeedEvent {
+  const PreviewCueStarted();
+}
+
 /// A finger pressed a zone during the window.
 final class HoldStarted extends FeedEvent {
   const HoldStarted(this.choiceId);
+
+  final String choiceId;
+}
+
+/// A preview tap on a hotspot. Unlike [HoldStarted], it navigates at once:
+/// the preview has no run to commit, so there is no hold or portal.
+final class PreviewChoiceTaken extends FeedEvent {
+  const PreviewChoiceTaken(this.choiceId);
 
   final String choiceId;
 }

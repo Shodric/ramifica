@@ -3,7 +3,7 @@ import 'package:ramifica/core/warm_slot_stub.dart'
     if (dart.library.js_interop) 'package:ramifica/core/warm_slot_web.dart';
 import 'package:ramifica/data/models/playback.dart';
 
-/// Warms mp4 URLs in the browser HTTP cache. Not a bloc.
+/// Warms mp4 URLs in the browser's media cache. Not a bloc.
 ///
 /// The current clip and up to two non-secret destinations stay mounted.
 /// A secret target is skipped. Changing story drops the previous queue.
