@@ -337,7 +337,44 @@ void main() {
       expect(calls.where((call) => call.name == 'saveNode'), isEmpty);
     });
 
-    testWidgets('Continue auto-applies the scene proposal', (tester) async {
+    testWidgets('Continue on Info needs only the title, never proposes', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
+
+      // Title present, no line, no direction: Continue advances anyway.
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'generateNodeText'), isEmpty);
+      expect(
+        find.byKey(const ValueKey('prompt-start-node_1')).hitTestable(),
+        findsOneWidget,
+      );
+
+      // Back on Info without a title: the gate holds with no proposal.
+      await tester.tap(find.byKey(const ValueKey('wizard-step-0')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('title-node_1')), '');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'generateNodeText'), isEmpty);
+      expect(
+        find.text('Still missing: a scene title (1-40 characters)'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('script-direction-node_1')).hitTestable(),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the Info fill previews and applies on Accept', (tester) async {
       final calls = <_Call>[];
       final bloc = await _pumpDraft(tester, calls);
 
@@ -348,35 +385,163 @@ void main() {
         'A haunted terminal',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
       await tester.pumpAndSettle();
 
-      // The direction is proposed once with the scene purpose...
+      // The direction is proposed once with the Info purpose...
       final gen = calls.singleWhere((call) => call.name == 'generateNodeText');
       expect(gen.data['prompt'], 'A haunted terminal');
-      expect(gen.data['purpose'], 'scene');
-      // ...and auto-applied: the narrator line, prompts and branches land,
-      // while the manual title is preserved.
+      expect(gen.data['purpose'], 'info');
+      // ...and previewed narrowed to Info: the narrator line only, while
+      // the manual title is preserved and other sections stay out.
+      expect(find.text('Proposed Info'), findsOneWidget);
+      expect(find.text('What should they do next?'), findsOneWidget);
+      expect(find.text('misty gate'), findsNothing);
+      expect(find.text('slow push in'), findsNothing);
+      expect(find.text('Enter'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed Info'), findsNothing);
       expect(bloc.state.openNode?.title, 'Root');
       expect(bloc.state.openNode?.ttsText, 'What should they do next?');
-      expect(bloc.state.openNode?.startImagePrompt, 'misty gate');
-      expect(bloc.state.openNode?.videoPrompt, 'slow push in');
-      expect(bloc.state.openNode?.choices.map((c) => c.label).toList(), [
-        'Enter',
-        'Climb',
-      ]);
-      // Gate complete: the wizard advanced to Scenes.
+      expect(bloc.state.openNode?.startImagePrompt, isNull);
+      expect(bloc.state.openNode?.videoPrompt, isNull);
+      // The pre-existing choice is untouched: Info carries no options.
+      expect(bloc.state.openNode?.choices.map((c) => c.label).toList(), ['']);
+      // The fill never advances the step.
       expect(
-        find.byKey(const ValueKey('prompt-start-node_1')).hitTestable(),
+        find.byKey(const ValueKey('script-direction-node_1')).hitTestable(),
         findsOneWidget,
       );
-      // No review UI anywhere.
+    });
+
+    testWidgets('the Voice fill asks for narration only', (tester) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls, [
+        MapEntry(
+          'node_1',
+          Map<String, dynamic>.from(_defaultDocs().first.value),
+        ),
+        const MapEntry('node_2', {
+          'title': 'Mid',
+          'isEnding': false,
+          'ttsText': '',
+          'startFromNodeId': 'node_1',
+        }),
+      ]);
+
+      await _openNode(tester, 'node_2');
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_2')),
+        'A corridor',
+      );
+      await tester.pump();
+      // Info passes on the title; Voice is the first incomplete step.
+      await tester.tap(find.byKey(const ValueKey('wizard-step-2')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
+      await tester.pumpAndSettle();
+
+      final gen = calls.singleWhere((call) => call.name == 'generateNodeText');
+      expect(gen.data['purpose'], 'narration');
+      expect(find.text('Proposed voice line'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.openNode?.ttsText, 'What should they do next?');
+    });
+
+    testWidgets('Continue stays idle while the spark proposes', (tester) async {
+      final gate = Completer<void>();
+      await _pumpDraft(tester, null, null, () => gate.future);
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_1')),
+        'A haunted terminal',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
+      await tester.pump();
+
+      // The propose stalls on the gated flush: the AppBar spins, but
+      // Continue keeps its label instead of a spinner.
+      expect(find.text('Continue'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('script-proposal-bar-node_1')),
+        find.descendant(
+          of: find.byKey(const ValueKey('wizard-continue')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
         findsNothing,
       );
-      expect(find.byKey(const ValueKey('script-apply-node_1')), findsNothing);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Proposed Info'), findsOneWidget);
     });
+
+    testWidgets('Discarding the fill preview leaves the section untouched', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+
+      await _openNode(tester, 'node_1');
+
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_1')),
+        'A haunted terminal',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed Info'), findsOneWidget);
+      // Proposing flushes the typed direction; the discard must persist
+      // nothing further.
+      final savesBefore = calls.where((call) => call.name == 'saveNode').length;
+      await tester.tap(find.byKey(const ValueKey('fill-discard')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed Info'), findsNothing);
+      expect(bloc.state.openNode?.ttsText, isEmpty);
+      expect(
+        calls.where((call) => call.name == 'saveNode').length,
+        savesBefore,
+      );
+    });
+
+    testWidgets(
+      'the fill button hides on Idea and disables without direction',
+      (tester) async {
+        final calls = <_Call>[];
+        await _pumpDraft(tester, calls);
+
+        // The root opens on the premise: no fill button there.
+        await tester.tap(find.byKey(const ValueKey('canvas-node-node_1')));
+        await tester.pumpAndSettle();
+        expect(find.byType(CreateNodeScreen), findsOneWidget);
+        expect(find.byKey(const ValueKey('wizard-fill-section')), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+        await tester.pumpAndSettle();
+
+        // On Info with no direction the button shows disabled.
+        final fill = find.byKey(const ValueKey('wizard-fill-section'));
+        expect(fill, findsOneWidget);
+        expect(tester.widget<IconButton>(fill).onPressed, isNull);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('script-direction-node_1')),
+          'A haunted terminal',
+        );
+        await tester.pump();
+        expect(tester.widget<IconButton>(fill).onPressed, isNotNull);
+      },
+    );
 
     testWidgets('Continue on a complete script advances without proposing', (
       tester,
@@ -405,36 +570,54 @@ void main() {
       );
     });
 
-    testWidgets('Continue without a direction asks for one', (tester) async {
-      final calls = <_Call>[];
-      await _pumpDraft(tester, calls);
-
-      await _openNode(tester, 'node_1');
-      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
-      await tester.pumpAndSettle();
-
-      expect(calls.where((call) => call.name == 'generateNodeText'), isEmpty);
-      expect(
-        find.text('Still missing: a scene direction to propose from'),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('script-direction-node_1')).hitTestable(),
-        findsOneWidget,
-      );
-    });
-
     testWidgets('decided icons land on the applied choices', (tester) async {
       final calls = <_Call>[];
-      final bloc = await _pumpDraft(tester, calls);
+      final docs = _defaultDocs();
+      final root = Map<String, dynamic>.from(docs.first.value);
+      root['choices'] = [
+        {
+          'choiceId': 'c1',
+          'label': 'Open the door',
+          'targetNodeId': 'node_2',
+          'isDefault': true,
+          'slot': 'A',
+          'x': 0.25,
+          'y': 0.65,
+          'radius': 0.15,
+        },
+      ];
+      final bloc = await _pumpDraft(tester, calls, [
+        MapEntry('node_1', root),
+        const MapEntry('node_2', {
+          'title': 'Mid',
+          'isEnding': false,
+          'ttsText': 'Choose a path',
+          'ttsStatus': 'ready',
+          'ttsAudioUrl': 'https://example.invalid/v.wav',
+          'ttsDurationSeconds': 2,
+          'videoStatus': 'ready',
+          'videoFrameLastUrl': 'https://example.invalid/f.png',
+          'videoFrameLastHash': 'hash-f',
+          'startFromNodeId': 'node_1',
+        }),
+      ]);
 
-      await _openNode(tester, 'node_1');
+      await _openNode(tester, 'node_2');
       await tester.enterText(
-        find.byKey(const ValueKey('script-direction-node_1')),
+        find.byKey(const ValueKey('script-direction-node_2')),
         'A haunted terminal',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      // Every gate but Options passes, so the chip jump lands on it.
+      await tester.tap(find.byKey(const ValueKey('wizard-step-4')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed options'), findsOneWidget);
+      expect(find.text('Enter'), findsOneWidget);
+      expect(find.text('Climb'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
       await tester.pumpAndSettle();
 
       final decides = calls
@@ -453,9 +636,10 @@ void main() {
       final saves = calls.where(
         (call) =>
             call.name == 'saveNode' &&
-            ((call.data['node'] as Map)['choices'] as List).every(
-              (c) => (c as Map)['icon'] == 'door',
-            ),
+            (((call.data['node'] as Map)['choices'] as List).isNotEmpty &&
+                ((call.data['node'] as Map)['choices'] as List).every(
+                  (c) => (c as Map)['icon'] == 'door',
+                )),
       );
       expect(saves, hasLength(2));
     });
@@ -479,7 +663,13 @@ void main() {
       final mid = <String, dynamic>{
         'title': 'Mid',
         'isEnding': false,
-        'ttsText': '',
+        'ttsText': 'Choose a path',
+        'ttsStatus': 'ready',
+        'ttsAudioUrl': 'https://example.invalid/v.wav',
+        'ttsDurationSeconds': 2,
+        'videoStatus': 'ready',
+        'videoFrameLastUrl': 'https://example.invalid/f.png',
+        'videoFrameLastHash': 'hash-f',
         'startFromNodeId': 'node_1',
       };
       await _pumpDraft(tester, calls, [
@@ -493,7 +683,14 @@ void main() {
         'A corridor',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      // Every gate but Options passes, so the chip jump lands on it.
+      await tester.tap(find.byKey(const ValueKey('wizard-step-4')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('wizard-fill-section')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed options'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
       await tester.pumpAndSettle();
 
       final decides = calls
@@ -554,7 +751,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('wizard-continue')));
       await tester.pump();
 
-      expect(find.byKey(const ValueKey('wizard-saving')), findsOneWidget);
+      // No AppBar saving spinner: only the step button shows busy.
+      expect(find.byKey(const ValueKey('wizard-saving')), findsNothing);
       // The step label swaps for a spinner while busy.
       expect(find.text('Continue'), findsNothing);
       expect(
@@ -1224,14 +1422,17 @@ void main() {
         calls: calls,
         upload:
             ({
-              required path,
+              required url,
+              required method,
+              required resumable,
               required contentType,
               required bytes,
               onProgress,
             }) async {
               calls.add(
                 _Call('uploadNodeVideo', {
-                  'path': path,
+                  'url': url,
+                  'method': method,
                   'contentType': contentType,
                   'byteLength': bytes.length,
                 }),
@@ -1249,13 +1450,13 @@ void main() {
       await tester.tap(upload);
       await tester.pump();
 
-      // In flight: the trigger path is hit and progress shows.
+      // In flight: the minted URL is hit and progress shows.
+      final mints = calls.where((call) => call.name == 'createVideoUploadUrl');
+      expect(mints, hasLength(1));
       final uploads = calls.where((call) => call.name == 'uploadNodeVideo');
       expect(uploads, hasLength(1));
-      expect(
-        uploads.single.data['path'],
-        'uploads/uid_1/story_1_node_1_take1.mp4',
-      );
+      expect(uploads.single.data['url'], 'https://upload.invalid/put');
+      expect(uploads.single.data['method'], 'PUT');
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.text('50%'), findsOneWidget);
 
@@ -2246,6 +2447,11 @@ CreateRepository _repo(
       }
       return switch (name) {
         'createNode' => {'nodeId': 'node_1'},
+        'createVideoUploadUrl' => {
+          'uploadUrl': 'https://upload.invalid/put',
+          'method': 'PUT',
+          'resumable': false,
+        },
         'decideChoiceIcon' => {'icon': 'door', 'iconColor': 'amber'},
         'generateNodeText' => {
           'title': 'Spark title',
@@ -2267,14 +2473,17 @@ CreateRepository _repo(
     uploadVideoFile:
         upload ??
         ({
-          required path,
+          required url,
+          required method,
+          required resumable,
           required contentType,
           required bytes,
           onProgress,
         }) async {
           calls?.add(
             _Call('uploadNodeVideo', {
-              'path': path,
+              'url': url,
+              'method': method,
               'contentType': contentType,
               'byteLength': bytes.length,
             }),

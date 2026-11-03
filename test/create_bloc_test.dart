@@ -1213,14 +1213,14 @@ void main() {
       );
       expect(
         validateVideoUpload(contentType: 'video/mp4', byteLength: 0),
-        'Videos must be 100 MB or smaller.',
+        'Videos must be 10 MB or smaller.',
       );
       expect(
         validateVideoUpload(
           contentType: 'video/quicktime',
           byteLength: maxVideoUploadBytes + 1,
         ),
-        'Videos must be 100 MB or smaller.',
+        'Videos must be 10 MB or smaller.',
       );
       expect(
         validateVideoUpload(contentType: 'video/mp4', byteLength: 10),
@@ -1235,7 +1235,7 @@ void main() {
       );
     });
 
-    test('uploadNodeVideo builds the trigger path per content type', () async {
+    test('uploadNodeVideo mints a URL, then sends the bytes there', () async {
       final calls = <_Call>[];
       final repository = _repo(calls);
 
@@ -1247,19 +1247,20 @@ void main() {
         contentType: 'video/mp4',
         bytes: const [1, 2, 3],
       );
-      await repository.uploadNodeVideo(
-        uid: 'uid_1',
-        storyId: 'story_1',
-        nodeId: 'node_2',
-        takeId: 'take7',
-        contentType: 'video/quicktime',
-        bytes: const [1, 2, 3],
-      );
 
       expect(calls, hasLength(2));
-      expect(calls[0].name, 'uploadNodeVideo');
-      expect(calls[0].data['path'], 'uploads/uid_1/story_1_node_2_take7.mp4');
-      expect(calls[1].data['path'], 'uploads/uid_1/story_1_node_2_take7.mov');
+      expect(calls[0].name, 'createVideoUploadUrl');
+      expect(calls[0].data, {
+        'storyId': 'story_1',
+        'nodeId': 'node_2',
+        'takeId': 'take7',
+        'contentType': 'video/mp4',
+        'byteLength': 3,
+      });
+      expect(calls[1].name, 'uploadNodeVideo');
+      expect(calls[1].data['url'], 'https://upload.invalid/put');
+      expect(calls[1].data['method'], 'PUT');
+      expect(calls[1].data['byteLength'], 3);
     });
 
     test('uploadNodeVideo rejects blanks without network', () async {
@@ -1406,15 +1407,21 @@ void main() {
             MapEntry('node_1', {..._nodeDoc(), 'uploadTakeId': 'take1'}),
           ];
         },
-        callFunction: (name, data) async => <String, dynamic>{},
+        callFunction: (name, data) async => <String, dynamic>{
+          'uploadUrl': 'https://upload.invalid/put',
+          'method': 'PUT',
+          'resumable': false,
+        },
         uploadVideoFile:
             ({
-              required path,
+              required url,
+              required method,
+              required resumable,
               required contentType,
               required bytes,
               onProgress,
             }) async {
-              calls.add(_Call('uploadNodeVideo', {'path': path}));
+              calls.add(_Call('uploadNodeVideo', {'url': url}));
             },
       );
       final bloc = CreateBloc(
@@ -1522,10 +1529,16 @@ void main() {
         (state) => state.job == CreateJob.none && state.uploadProgress == null,
       );
 
+      final mint = calls.singleWhere(
+        (call) => call.name == 'createVideoUploadUrl',
+      );
+      expect(mint.data['takeId'], 'take1');
+      expect(mint.data['byteLength'], 3);
       final upload = calls.singleWhere(
         (call) => call.name == 'uploadNodeVideo',
       );
-      expect(upload.data['path'], 'uploads/uid_1/story_1_node_1_take1.mp4');
+      expect(upload.data['url'], 'https://upload.invalid/put');
+      expect(upload.data['method'], 'PUT');
       expect(upload.data['contentType'], 'video/mp4');
       expect(bloc.state.failure, isNull);
     });
@@ -1538,7 +1551,9 @@ void main() {
           null,
           upload:
               ({
-                required path,
+                required url,
+                required method,
+                required resumable,
                 required contentType,
                 required bytes,
                 onProgress,
@@ -1601,7 +1616,7 @@ void main() {
 
     test('a trigger failure surfaces its code as a phrase', () async {
       for (final entry in {
-        'too-large': 'Videos must be 100 MB or smaller.',
+        'too-large': 'Videos must be 10 MB or smaller.',
         'invalid-type': 'Only mp4 or mov videos can be uploaded.',
         'unknown-target': 'That action is not valid',
         'not-author': 'Not allowed',
@@ -1650,10 +1665,16 @@ void main() {
               'story_1',
           fetchStoryDoc: (_) async => _storyDoc(),
           fetchNodeDocs: (_) async => [MapEntry('node_1', _nodeDoc())],
-          callFunction: (name, data) async => <String, dynamic>{},
+          callFunction: (name, data) async => <String, dynamic>{
+            'uploadUrl': 'https://upload.invalid/put',
+            'method': 'PUT',
+            'resumable': false,
+          },
           uploadVideoFile:
               ({
-                required path,
+                required url,
+                required method,
+                required resumable,
                 required contentType,
                 required bytes,
                 onProgress,
@@ -2929,6 +2950,11 @@ CreateRepository _repo(
       }
       return switch (name) {
         'createNode' => {'nodeId': 'node_1'},
+        'createVideoUploadUrl' => {
+          'uploadUrl': 'https://upload.invalid/put',
+          'method': 'PUT',
+          'resumable': false,
+        },
         'generateNodeText' => {
           'title': 'Spark title',
           'ttsText': 'What should they do next?',
@@ -2944,14 +2970,17 @@ CreateRepository _repo(
     uploadVideoFile:
         upload ??
         ({
-          required path,
+          required url,
+          required method,
+          required resumable,
           required contentType,
           required bytes,
           onProgress,
         }) async {
           calls?.add(
             _Call('uploadNodeVideo', {
-              'path': path,
+              'url': url,
+              'method': method,
               'contentType': contentType,
               'byteLength': bytes.length,
             }),

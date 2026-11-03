@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/app_snackbar.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/core/widgets/glass_panel.dart';
@@ -128,5 +129,47 @@ void main() {
     await tester.ensureVisible(find.text('Retry'));
     await tester.tap(find.text('Retry'));
     expect(taps, 1);
+  });
+
+  testWidgets('error and notice snackbars show one styled message', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => Column(
+              children: [
+                TextButton(
+                  onPressed: () =>
+                      showErrorSnackBar(context, 'Something failed.'),
+                  child: const Text('fail'),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      showNoticeSnackBar(context, 'Just so you know.'),
+                  child: const Text('notify'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('fail'));
+    await tester.pump();
+    expect(find.text('Something failed.'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    final errorBar = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect(errorBar.behavior, SnackBarBehavior.floating);
+
+    // A new message replaces the current one instead of stacking.
+    await tester.tap(find.text('notify'));
+    await tester.pump();
+    expect(find.text('Something failed.'), findsNothing);
+    expect(find.text('Just so you know.'), findsOneWidget);
+    expect(find.byIcon(Icons.info_outline), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

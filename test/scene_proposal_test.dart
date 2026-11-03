@@ -318,4 +318,24 @@ void main() {
     expect(h.root['ttsAudioUrl'], isNull);
     expect(bloc.hasUnsavedNodeEdits('root'), false);
   });
+  test('compact scoped answers parse with missing keys as null', () {
+    final narration = GeneratedNodeText.fromJson({
+      'ttsText': 'You choose.',
+    });
+    expect(narration.ttsText, 'You choose.');
+    expect(narration.title, isNull);
+    expect(narration.choices, isEmpty);
+    expect(narration.isEmpty, isFalse);
+
+    final options = GeneratedNodeText.fromJson({
+      'choices': [
+        {'label': 'Enter'},
+        {'label': 'Climb'},
+      ],
+    });
+    expect(options.choiceLabels, ['Enter', 'Climb']);
+    expect(options.ttsText, isNull);
+
+    expect(GeneratedNodeText.fromJson({}).isEmpty, isTrue);
+  });
 }

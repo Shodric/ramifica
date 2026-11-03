@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
+import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/steps/step_script.dart';
@@ -80,7 +81,7 @@ void main() {
   });
 
   test(
-    'Script requires title and narrator line; voice needs a take, not approval',
+    'Script requires only a title; voice gates the line, not approval',
     () {
       const untitled = DraftNode(nodeId: 'n');
       expect(
@@ -88,10 +89,7 @@ void main() {
         'a scene title (1-40 characters)',
       );
       const scene = DraftNode(nodeId: 'n', title: 'Title');
-      expect(
-        firstMissingForStep(step: 0, node: scene, isRoot: true),
-        'the narrator line',
-      );
+      expect(firstMissingForStep(step: 0, node: scene, isRoot: true), isNull);
       final written = scene.copy(ttsText: 'Will you enter or wait?');
       expect(firstMissingForStep(step: 0, node: written, isRoot: true), isNull);
       expect(
@@ -112,7 +110,6 @@ void main() {
       await tester.binding.setSurfaceSize(Size(width, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       String? line;
-      var generated = false;
       await mount(
         tester,
         StepVoice(
@@ -120,7 +117,6 @@ void main() {
           busy: false,
           showErrors: false,
           onLineChanged: (value) => line = value,
-          onLineGenerate: () => generated = true,
         ),
       );
       expect(
@@ -132,8 +128,7 @@ void main() {
         'Enter or wait?',
       );
       expect(line, 'Enter or wait?');
-      await tester.tap(find.byKey(const ValueKey('gen-line-n')));
-      expect(generated, isTrue);
+      expect(find.text('Suggest line'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }
@@ -153,7 +148,7 @@ void main() {
             isRoot: true,
             busy: false,
             showErrors: false,
-            propose: (_) async {
+            propose: (_, {purpose}) async {
               calls++;
               return const GeneratedNodeText(
                 title: 'AI title',
@@ -209,7 +204,7 @@ void main() {
         isRoot: true,
         busy: false,
         showErrors: false,
-        propose: (_) async {
+        propose: (_, {purpose}) async {
           await gate.future;
           return const GeneratedNodeText(title: 'AI title');
         },
@@ -229,6 +224,62 @@ void main() {
     final proposal = await pending;
     await tester.pump();
     expect(proposal?.title, 'AI title');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('proposeDirection forwards the requested purpose', (
+    tester,
+  ) async {
+    String? seen;
+    await mount(
+      tester,
+      StepScript(
+        node: const DraftNode(nodeId: 'root'),
+        isRoot: true,
+        busy: false,
+        showErrors: false,
+        propose: (_, {purpose}) async {
+          seen = purpose;
+          return const GeneratedNodeText(ttsText: 'You choose.');
+        },
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('script-direction-root')),
+      'A rainy door',
+    );
+    await tester.pump();
+    final state = tester.state<StepScriptState>(find.byType(StepScript));
+    await state.proposeDirection(purpose: 'narration');
+    expect(seen, 'narration');
+    await state.proposeDirection();
+    expect(seen, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('takeProposalError returns the reason once', (tester) async {
+    await mount(
+      tester,
+      StepScript(
+        node: const DraftNode(nodeId: 'root'),
+        isRoot: true,
+        busy: false,
+        showErrors: false,
+        propose: (_, {purpose}) async => throw const AppFailure(.failed),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('script-direction-root')),
+      'A rainy door',
+    );
+    await tester.pump();
+    final state = tester.state<StepScriptState>(find.byType(StepScript));
+    expect(await state.proposeDirection(), isNull);
+    final reason = state.takeProposalError();
+    expect(reason, isNotNull);
+    expect(state.takeProposalError(), isNull);
+    await tester.pump();
+    expect(find.text(reason!), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -269,7 +320,7 @@ void main() {
           isRoot: true,
           busy: false,
           showErrors: false,
-          propose: (_) async => const GeneratedNodeText(
+          propose: (_, {purpose}) async => const GeneratedNodeText(
             title: 'Other',
             choices: [
               GeneratedChoice(label: 'Other A', icon: 'rocket'),
@@ -312,7 +363,7 @@ void main() {
           busy: false,
           showErrors: false,
           onEndingNameChanged: (s) => changed = s,
-          propose: (_) async => const GeneratedNodeText(
+          propose: (_, {purpose}) async => const GeneratedNodeText(
             ttsText: 'The end.',
             endingName: 'AI',
             choices: [GeneratedChoice(label: 'Bad')],

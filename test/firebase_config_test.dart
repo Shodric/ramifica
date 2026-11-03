@@ -49,7 +49,7 @@ void main() {
     expect((rc['projects'] as Map)['default'], 'meta-ramifica');
   });
 
-  test('bucket CORS allows the app origins to read media', () {
+  test('bucket CORS allows the app origins to read and upload media', () {
     final cors = jsonDecode(File('cors.json').readAsStringSync()) as List;
     final entry = cors.single as Map;
     expect(entry['origin'], [
@@ -57,13 +57,15 @@ void main() {
       'https://meta-ramifica.firebaseapp.com',
       'http://localhost:5000',
     ]);
-    expect(entry['method'], ['GET', 'HEAD']);
+    expect(entry['method'], ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS']);
     expect(entry['responseHeader'], [
       'Content-Type',
       'Content-Length',
       'Content-Range',
       'Accept-Ranges',
       'Range',
+      'X-Upload-Content-Type',
+      'X-Upload-Content-Length',
     ]);
     expect(entry['maxAgeSeconds'], 3600);
   });
