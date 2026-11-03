@@ -256,13 +256,18 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     return completion.future;
   }
 
-  void _publishNode(DraftNode node, Emitter<CreateState> emit) {
+  void _publishNode(
+    DraftNode node,
+    Emitter<CreateState> emit, {
+    bool clearFocus = false,
+  }) {
     emit(
       state.copy(
         nodes: [
           for (final existing in state.nodes)
             if (existing.nodeId == node.nodeId) node else existing,
         ],
+        focusChoiceId: clearFocus ? () => null : null,
       ),
     );
   }
@@ -832,7 +837,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     ];
     if (fields.isEmpty) return;
     _markEdited(event.nodeId, fields: fields);
-    _publishNode(after, emit);
+    _publishNode(after, emit, clearFocus: fields.contains('choices'));
   }
 
   /// Moves one choice zone, clamping to the 0-1 frame so the payload can
