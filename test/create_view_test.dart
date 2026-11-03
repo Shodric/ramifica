@@ -8,6 +8,7 @@ import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
+import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/core/widgets/status_pill.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
@@ -1484,10 +1485,16 @@ void main() {
       await tester.tap(upload);
       await tester.pumpAndSettle();
 
+      // Rejection snacks from the terminal emission, no inline banner.
+      expect(find.byType(SnackBar), findsOneWidget);
       expect(
-        find.text('Only mp4 or mov videos can be uploaded.'),
+        find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.text('Only mp4 or mov videos can be uploaded.'),
+        ),
         findsOneWidget,
       );
+      expect(find.byType(FailureText), findsNothing);
       expect(calls.where((call) => call.name == 'uploadNodeVideo'), isEmpty);
     });
 
@@ -1510,7 +1517,16 @@ void main() {
       await tester.tap(upload);
       await tester.pumpAndSettle();
 
-      expect(find.text('Something failed'), findsOneWidget);
+      // The phrase shows in a floating snack, not the inline banner.
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.text('Something failed'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(FailureText), findsNothing);
     });
 
     testWidgets('zones render over the last frame', (tester) async {

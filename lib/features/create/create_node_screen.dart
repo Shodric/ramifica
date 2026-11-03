@@ -79,6 +79,15 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   final List<bool> _showErrors = List.filled(wizardStepCount, false);
   String? _banner;
 
+  /// True between an upload dispatch and its terminal settle. The upload
+  /// failure then surfaces once as a floating snack instead of inline.
+  var _uploadSnackArmed = false;
+
+  /// Exact upload failure phrase already shown as a snack. The inline
+  /// slot hides while it matches; a clear drops it so a later identical
+  /// phrase from another op renders inline again.
+  String? _snackedFailure;
+
   /// An Info Continue is mid propose+apply. Disables the footer while
   /// the proposal round-trips.
   var _scriptProposing = false;
@@ -381,7 +390,20 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   Widget build(BuildContext context) {
     return BlocProvider.value(
       value: widget.bloc,
-      child: BlocBuilder<CreateBloc, CreateState>(
+      child: BlocConsumer<CreateBloc, CreateState>(
+        listener: (context, state) {
+          // Settles on the terminal idle emission: the dispatch path goes
+          // through a saving job first, so job != uploading would fire
+          // early and re-snack a stale phrase.
+          if (_uploadSnackArmed && state.job == CreateJob.none) {
+            _uploadSnackArmed = false;
+            if (state.failure case final failure?) {
+              _snackedFailure = failure;
+              showErrorSnackBar(context, failure);
+            }
+          }
+          if (state.failure == null) _snackedFailure = null;
+        },
         builder: (context, state) {
           final scene = sceneIndexes(state.nodes, state.story?.rootNodeId);
           final number = scene[widget.nodeId];
@@ -864,8 +886,9 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                                     picked == null) {
                                                   return;
                                                 }
-                                                _runMedia(
-                                                  () => widget.bloc.add(
+                                                _runMedia(() {
+                                                  _uploadSnackArmed = true;
+                                                  widget.bloc.add(
                                                     VideoUploadRequested(
                                                       nodeId: widget.nodeId,
                                                       contentType:
@@ -874,8 +897,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                                       takeId: widget
                                                           .newTakeId(),
                                                     ),
-                                                  ),
-                                                );
+                                                  );
+                                                });
                                               } on AppFailure catch (error) {
                                                 if (context.mounted) {
                                                   showErrorSnackBar(
@@ -1008,7 +1031,8 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                 ],
                               ),
                       ),
-                      if (state.failure != null)
+                      if (state.failure != null &&
+                          state.failure != _snackedFailure)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                           child: FailureText(message: state.failure!),
