@@ -77,7 +77,7 @@ class FeedState {
   /// The preview's narration (or muted subtitle) has actually started.
   final bool previewCueStarted;
 
-  /// A transient preview message, e.g. a tapped target with no finished
+  /// A transient preview message, e.g. a held target with no finished
   /// video. The view shows it as a snackbar; it never changes the phase.
   final String? previewNotice;
 

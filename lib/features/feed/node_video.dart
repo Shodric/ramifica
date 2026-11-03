@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
@@ -20,7 +22,13 @@ class NodeVideo extends StatefulWidget {
     this.player,
     this.fit = BoxFit.cover,
     this.onVideoSizeChanged,
+    this.poster,
   });
+
+  /// Optional still shown until the first frame arrives, in the same
+  /// `data:image/...;base64,…` encoding as `videoFrameLastBlurData`. Null
+  /// keeps the plain surface underneath (a black frame until ready).
+  final String? poster;
 
   final String url;
   final bool muted;
@@ -53,6 +61,8 @@ class _NodeVideoState extends State<NodeVideo> {
   var _sawEnded = false;
   var _armEnded = false;
   Size? _reportedSize;
+  String? _posterSource;
+  Uint8List? _posterBytes;
 
   ClipPlayer get _player => widget.player ?? _owned!;
 
@@ -156,12 +166,53 @@ class _NodeVideoState extends State<NodeVideo> {
     if (becameReady) setState(() {});
   }
 
+  /// Decodes the poster data URI once per distinct value. A malformed
+  /// value decodes to null, which falls back to the plain surface.
+  Uint8List? _posterOf(String? source) {
+    if (source == null || source.isEmpty) return null;
+    if (source == _posterSource) return _posterBytes;
+    _posterSource = source;
+    _posterBytes = _decodePoster(source);
+    return _posterBytes;
+  }
+
+  static Uint8List? _decodePoster(String source) {
+    try {
+      final comma = source.indexOf(',');
+      final payload = comma < 0 ? source : source.substring(comma + 1);
+      if (payload.isEmpty) return null;
+      return base64Decode(payload);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final poster = _sawReady ? null : _posterOf(widget.poster);
     return ColoredBox(
       color: RamificaColors.surface,
       child: IgnorePointer(
-        child: SizedBox.expand(child: _player.buildView()),
+        child: SizedBox.expand(
+          child: poster == null
+              ? _player.buildView()
+              : Stack(
+                  // The poster paints over the player view, not behind
+                  // it: before the first frame some players paint opaque
+                  // black, which would hide a poster underneath. The
+                  // poster is removed the moment the first frame is
+                  // ready, so it never covers live video.
+                  fit: StackFit.expand,
+                  children: [
+                    _player.buildView(),
+                    Image.memory(
+                      poster,
+                      fit: widget.fit,
+                      gaplessPlayback: true,
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }

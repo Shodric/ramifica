@@ -254,6 +254,7 @@ class PlaybackNode {
     required this.videoUrl,
     required this.durationSeconds,
     required this.videoFrameLastBlurData,
+    this.videoFrameFirstBlurData,
     this.ttsText,
     this.ttsAudioUrl,
     this.ttsDurationSeconds,
@@ -270,6 +271,7 @@ class PlaybackNode {
       videoUrl: _requiredString(json['videoUrl']),
       durationSeconds: _requiredDouble(json['durationSeconds']),
       videoFrameLastBlurData: _requiredString(json['videoFrameLastBlurData']),
+      videoFrameFirstBlurData: _optionalString(json['videoFrameFirstBlurData']),
       ttsText: _optionalString(json['ttsText']),
       ttsAudioUrl: _optionalString(json['ttsAudioUrl']),
       ttsDurationSeconds: _optionalDouble(json['ttsDurationSeconds']),
@@ -285,6 +287,11 @@ class PlaybackNode {
   final String videoUrl;
   final double durationSeconds;
   final String videoFrameLastBlurData;
+
+  /// The clip's opening frame in the same encoding. Optional: older
+  /// payloads only carry the last frame. The gap poster prefers this and
+  /// falls back to [videoFrameLastBlurData].
+  final String? videoFrameFirstBlurData;
   final String? ttsText;
   final String? ttsAudioUrl;
   final double? ttsDurationSeconds;
@@ -301,6 +308,7 @@ class PlaybackNode {
         other.videoUrl == videoUrl &&
         other.durationSeconds == durationSeconds &&
         other.videoFrameLastBlurData == videoFrameLastBlurData &&
+        other.videoFrameFirstBlurData == videoFrameFirstBlurData &&
         other.ttsText == ttsText &&
         other.ttsAudioUrl == ttsAudioUrl &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
@@ -317,6 +325,7 @@ class PlaybackNode {
     videoUrl,
     durationSeconds,
     videoFrameLastBlurData,
+    videoFrameFirstBlurData,
     ttsText,
     ttsAudioUrl,
     ttsDurationSeconds,

@@ -156,6 +156,7 @@ class DraftNode {
     this.videoFrameLastUrl,
     this.videoFrameLastHash,
     this.videoFrameLastBlurData,
+    this.videoFrameFirstBlurData,
     this.thumbnailUrl,
     this.startImageWidth,
     this.startImageHeight,
@@ -208,6 +209,7 @@ class DraftNode {
       videoFrameLastUrl: _optionalString(data['videoFrameLastUrl']),
       videoFrameLastHash: _optionalString(data['videoFrameLastHash']),
       videoFrameLastBlurData: _optionalString(data['videoFrameLastBlurData']),
+      videoFrameFirstBlurData: _optionalString(data['videoFrameFirstBlurData']),
       thumbnailUrl: _optionalString(data['thumbnailUrl']),
       startImageWidth: _optionalInt(data['startImageWidth']),
       startImageHeight: _optionalInt(data['startImageHeight']),
@@ -266,6 +268,10 @@ class DraftNode {
   /// parent clip by this hash link (see [startParentFrameHash]).
   final String? videoFrameLastHash;
   final String? videoFrameLastBlurData;
+
+  /// Blur of the clip's opening frame. The gap poster shows the frame the
+  /// clip starts with, not the last one.
+  final String? videoFrameFirstBlurData;
   final String? thumbnailUrl;
   final int? startImageWidth;
   final int? startImageHeight;
@@ -362,6 +368,7 @@ class DraftNode {
       'videoFrameLastUrl': videoFrameLastUrl,
       'videoFrameLastHash': videoFrameLastHash,
       'videoFrameLastBlurData': videoFrameLastBlurData,
+      'videoFrameFirstBlurData': videoFrameFirstBlurData,
       'thumbnailUrl': thumbnailUrl,
       'startImageWidth': startImageWidth,
       'startImageHeight': startImageHeight,
@@ -407,6 +414,7 @@ class DraftNode {
     String? Function()? videoFrameLastUrl,
     String? Function()? videoFrameLastHash,
     String? Function()? videoFrameLastBlurData,
+    String? Function()? videoFrameFirstBlurData,
     String? Function()? thumbnailUrl,
     int? Function()? startImageWidth,
     int? Function()? startImageHeight,
@@ -461,6 +469,9 @@ class DraftNode {
       videoFrameLastBlurData: videoFrameLastBlurData == null
           ? this.videoFrameLastBlurData
           : videoFrameLastBlurData(),
+      videoFrameFirstBlurData: videoFrameFirstBlurData == null
+          ? this.videoFrameFirstBlurData
+          : videoFrameFirstBlurData(),
       thumbnailUrl: thumbnailUrl == null ? this.thumbnailUrl : thumbnailUrl(),
       startImageWidth: startImageWidth == null
           ? this.startImageWidth

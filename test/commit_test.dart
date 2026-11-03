@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/functions_client.dart';
 import 'package:ramifica/core/prefetcher.dart';
@@ -14,6 +17,7 @@ import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
 import 'package:ramifica/features/feed/feed_view.dart';
+import 'package:ramifica/features/feed/hold_portal.dart';
 import 'package:ramifica/features/feed/node_video.dart';
 
 const _png =
@@ -485,6 +489,67 @@ void main() {
     expect(result.playback.node.rewardCode, 'DOOR-7Q2X');
   });
 
+  testWidgets('an immediate commit preserves the portal for the iris exit', (
+    tester,
+  ) async {
+    final calls = <_Call>[];
+    final bloc = _bloc(clock: _Clock(), voice: false, calls: calls);
+    try {
+      await _showWindow(tester, bloc);
+
+      final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
+      await tester.pump();
+      await tester.pump();
+      final portalState = tester.state(find.byType(HoldPortal));
+      final center = tester.widget<HoldPortal>(find.byType(HoldPortal)).center!;
+      // This hotspot's farthest corner is the top left. Sample along that
+      // radius to verify the painted hole expands while the outer fill stays.
+      final toCorner = const Offset(2, 2) - center;
+      final samples = [
+        center,
+        center + toCorner * 0.35,
+        center + toCorner * 0.8,
+        center + toCorner * 0.97,
+      ];
+      await tester.pump(const Duration(milliseconds: 1499));
+      expect(calls.where((call) => call.name == 'commitChoice'), isEmpty);
+      expect(bloc.state.playback!.node.nodeId, 'node_001');
+
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+      expect(bloc.state.phase, FeedPhase.playing);
+      expect(bloc.state.playback!.node.nodeId, 'node_003');
+      expect(tester.state(find.byType(HoldPortal)), same(portalState));
+      expect(find.byKey(const ValueKey('hold-ring')), findsOneWidget);
+      expect(
+        tester
+            .widget<ColoredBox>(find.byKey(const ValueKey('hold-ring')))
+            .color,
+        RamificaColors.nodeActive.withValues(alpha: 0.5),
+      );
+      expect(await _portalAlpha(tester, samples), [128, 128, 128, 128]);
+
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(await _portalAlpha(tester, samples), [0, 128, 128, 128]);
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(await _portalAlpha(tester, samples), [0, 0, 128, 128]);
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(await _portalAlpha(tester, samples), [0, 0, 0, 128]);
+      await tester.pump(const Duration(milliseconds: 149));
+      expect(find.byKey(const ValueKey('hold-ring')), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(await _portalAlpha(tester, samples), [0, 0, 0, 0]);
+      // The tween is transparent at 600 ms; the next tick reports completed.
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(find.byKey(const ValueKey('hold-ring')), findsNothing);
+      expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
+      expect(calls.where((call) => call.name == 'commitChoice'), hasLength(1));
+    } finally {
+      await _closeBloc(tester, bloc);
+    }
+  });
+
   testWidgets('the portal stays full while committing', (tester) async {
     final gate = Completer<Map<String, dynamic>>();
     addTearDown(() {
@@ -496,7 +561,7 @@ void main() {
       voice: false,
       onCommit: (name, data) => gate.future,
     );
-    addTearDown(bloc.close);
+    addTearDown(() => _closeBloc(tester, bloc));
     await _showWindow(tester, bloc);
 
     final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
@@ -504,10 +569,16 @@ void main() {
     await tester.pump();
     expect(bloc.state.phase, FeedPhase.holding);
 
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 1500));
     await tester.pump();
     expect(bloc.state.phase, FeedPhase.committing);
-    expect(find.byType(Image), findsOneWidget);
+    // The full-cover circle keeps the held hotspot's color at half
+    // opacity (ridge is the second choice with no authored color, so its
+    // fallback is nodeActive).
+    expect(
+      tester.widget<ColoredBox>(find.byKey(const ValueKey('hold-fill'))).color,
+      RamificaColors.nodeActive.withValues(alpha: 0.5),
+    );
 
     await gesture.up();
     await tester.pump();
@@ -517,7 +588,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(bloc.state.phase, FeedPhase.playing);
     expect(bloc.state.playback!.node.nodeId, 'node_003');
-    expect(find.byType(Image), findsNothing);
+    expect(find.byKey(const ValueKey('hold-fill')), findsNothing);
   });
 }
 
@@ -553,6 +624,48 @@ Future<void> _showWindow(WidgetTester tester, FeedBloc bloc) async {
 
 Offset _ring(WidgetTester tester, String choiceId) {
   return tester.getCenter(find.byKey(ValueKey('ring-$choiceId')));
+}
+
+Future<void> _closeBloc(WidgetTester tester, FeedBloc bloc) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  // Drain both fake frames and asynchronous stream cancellation before
+  // leaving the test's clock, as in the preview widget tests.
+  var closed = false;
+  final closing = bloc.close().then((_) => closed = true);
+  for (var i = 0; i < 30 && !closed; i++) {
+    await tester.pump();
+    await tester.runAsync(() async {});
+  }
+  expect(closed, isTrue);
+  await closing;
+}
+
+Future<List<int>> _portalAlpha(WidgetTester tester, List<Offset> points) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find
+        .ancestor(
+          of: find.byType(HoldPortal),
+          matching: find.byType(RepaintBoundary),
+        )
+        .first,
+  );
+  return (await tester.runAsync(() async {
+    final image = await boundary.toImage();
+    try {
+      final pixels = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      final alpha = [
+        for (final point in points)
+          pixels.getUint8(
+            (point.dy.floor() * image.width + point.dx.floor()) * 4 + 3,
+          ),
+      ];
+      return alpha;
+    } finally {
+      image.dispose();
+    }
+  }))!;
 }
 
 class _Call {

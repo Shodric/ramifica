@@ -46,6 +46,6 @@ A floating surface is white at 12%, a 16 px blur, and a 1 px border of white at 
 
 These belong to later screens. The tokens above are what they use.
 
-- A choice hotspot is a circle with a `#00F2FE` border. Holding it fills a ring for one second.
+- A choice hotspot is a circle with the icon color as its border. Holding it grows a half-opacity circle in that color for 1.5 seconds.
 - The map sits on `surface`. A visited edge uses `nodeActive`. An unexplored edge uses `nodeLocked`.
 - Creator inputs are white at 6% with a `glassBorder`. Focus moves the border to `hotspot`.

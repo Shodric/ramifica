@@ -6,6 +6,7 @@ import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/core/browser_gesture.dart';
+import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/features/feed/choice_zone.dart';
 import 'package:ramifica/features/feed/ending_card.dart';
@@ -237,16 +238,28 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                         var holdX = 0.0;
                         var holdY = 0.0;
                         var holdRadius = 0.0;
+                        String? holdIconColor;
+                        var holdIndex = 0;
                         var hasHold = false;
                         if (playback != null && heldId != null) {
-                          for (final choice in playback.choices) {
+                          for (final (i, choice) in playback.choices.indexed) {
                             if (choice.choiceId != heldId) continue;
                             holdX = choice.x;
                             holdY = choice.y;
                             holdRadius = choice.radius;
+                            holdIconColor = choice.iconColor;
+                            holdIndex = i;
                             hasHold = true;
                           }
                         }
+                        // Same resolution as ChoiceZone: the held hotspot's
+                        // icon color, so the circle grows in its color.
+                        final holdColor = choiceIconColor(
+                          holdIconColor,
+                          holdIndex % 2 == 0
+                              ? RamificaColors.hotspot
+                              : RamificaColors.nodeActive,
+                        );
                         return GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           // A tap on the video toggles the pause while the clip
@@ -262,7 +275,17 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                           // A hold never moves, so a vertical drag is never a hold.
                           // The bloc still gates: speaking, window, holding,
                           // committing, and the closing line ignore the swipe.
-                          onVerticalDragStart: (_) => _dragDy = 0,
+                          // Cancelling here (not at drag end) matters: the
+                          // drag-end handler clears `_pointer`, which would
+                          // make the release catcher ignore the finger-up and
+                          // leave the portal growing with no finger on it.
+                          onVerticalDragStart: (_) {
+                            _dragDy = 0;
+                            if (_pointer != null) {
+                              _pointer = null;
+                              bloc.add(const HoldCancelled());
+                            }
+                          },
                           onVerticalDragUpdate: (details) =>
                               _dragDy += details.primaryDelta ?? 0,
                           onVerticalDragEnd: (details) {
@@ -281,6 +304,9 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                 NodeVideo(
                                   key: ValueKey(playback.node.videoUrl),
                                   url: playback.node.videoUrl,
+                                  poster:
+                                      playback.node.videoFrameFirstBlurData ??
+                                      playback.node.videoFrameLastBlurData,
                                   muted: state.muted,
                                   play:
                                       state.phase == .playing &&
@@ -369,6 +395,32 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ),
+                              // The hold circle grows behind the hotspots: the held
+                              // one stays visible on top of it while the
+                              // others fade out (see `dimmed` below).
+                              if (showClip)
+                                Positioned.fill(
+                                  // Preserve the exit when a fast commit swaps
+                                  // the video and removes zones in one build.
+                                  key: const ValueKey('hold-portal'),
+                                  child: RepaintBoundary(
+                                    child: HoldPortal(
+                                      open:
+                                          state.phase == .holding ||
+                                          state.phase == .committing,
+                                      serial: state.holdSerial,
+                                      center: hasHold
+                                          ? video.point(holdX, holdY)
+                                          : null,
+                                      startRadius: hasHold
+                                          ? video.radius(holdRadius)
+                                          : 0,
+                                      fillColor: holdColor,
+                                      onCompleted: () =>
+                                          bloc.add(const HoldCompleted()),
+                                    ),
+                                  ),
+                                ),
                               if (zonesVisible)
                                 for (final (i, choice)
                                     in playback.choices.indexed)
@@ -389,36 +441,14 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     iconColor: choice.iconColor,
                                     index: i,
                                     compact: widget.preview,
+                                    dimmed:
+                                        heldId != null &&
+                                        choice.choiceId != heldId,
                                     onHoldStart: (pointer) {
                                       _pointer = pointer;
-                                      bloc.add(
-                                        widget.preview
-                                            ? PreviewChoiceTaken(
-                                                choice.choiceId,
-                                              )
-                                            : HoldStarted(choice.choiceId),
-                                      );
+                                      bloc.add(HoldStarted(choice.choiceId));
                                     },
                                   ),
-                              if (showClip)
-                                Positioned.fill(
-                                  child: HoldPortal(
-                                    open:
-                                        state.phase == .holding ||
-                                        state.phase == .committing,
-                                    serial: state.holdSerial,
-                                    center: hasHold
-                                        ? video.point(holdX, holdY)
-                                        : null,
-                                    startRadius: hasHold
-                                        ? video.radius(holdRadius)
-                                        : 0,
-                                    blurData:
-                                        playback.node.videoFrameLastBlurData,
-                                    onCompleted: () =>
-                                        bloc.add(const HoldCompleted()),
-                                  ),
-                                ),
                               // Tap-pause feedback, centered over the video. The
                               // pause mark stays while paused; the play mark
                               // flashes once on resume and fades. Display only:

@@ -1,15 +1,17 @@
-import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:ramifica/app/theme.dart';
 
-/// Grows a circle from the zone until it covers the screen, in one second.
+/// Grows a circle from the zone until it covers the screen, in 1.5 seconds.
 ///
-/// The fill is the current node's inline blur, stretched and softened.
-/// Releasing reverses the circle. Covering the screen calls [onCompleted].
+/// The fill is the held hotspot's color at half opacity, drawn behind the
+/// hotspot itself with no ring. The color is remembered when the hold is
+/// active, so releasing keeps the growing color while the circle shrinks
+/// back instead of flashing to the fallback. Covering the screen calls
+/// [onCompleted], which is the only signal that starts the next video.
+/// Closing after cover runs a ring exit instead of shrinking: a hole opens
+/// at the center and grows outward until the fill is gone.
 class HoldPortal extends StatefulWidget {
   const HoldPortal({
     super.key,
@@ -17,7 +19,7 @@ class HoldPortal extends StatefulWidget {
     required this.serial,
     required this.center,
     required this.startRadius,
-    required this.blurData,
+    required this.fillColor,
     required this.onCompleted,
   });
 
@@ -25,30 +27,45 @@ class HoldPortal extends StatefulWidget {
   final int serial;
   final Offset? center;
   final double startRadius;
-  final String? blurData;
+
+  /// The held hotspot's resolved icon color. Shown at half opacity: at
+  /// full cover the previous video shows through faintly while the
+  /// commit runs.
+  final Color fillColor;
   final VoidCallback onCompleted;
 
   @override
   State<HoldPortal> createState() => _HoldPortalState();
 }
 
-class _HoldPortalState extends State<HoldPortal>
-    with SingleTickerProviderStateMixin {
+class _HoldPortalState extends State<HoldPortal> with TickerProviderStateMixin {
   late final AnimationController _controller;
+  late final Animation<double> _growth;
+  late final AnimationController _exit;
+  late final Animation<double> _exitGrowth;
   Offset? _center;
   var _startRadius = 0.0;
-  Uint8List? _bytes;
+  late Color _fillColor;
   var _reported = false;
+  var _exiting = false;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 1),
+      duration: const Duration(milliseconds: 1500),
+      reverseDuration: const Duration(milliseconds: 250),
     );
+    _growth = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
     _controller.addListener(_onTick);
-    _bytes = _decodeBlur(widget.blurData);
+    _exit = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _exitGrowth = CurvedAnimation(parent: _exit, curve: Curves.easeInOut);
+    _exit.addStatusListener(_onExitStatus);
+    _fillColor = widget.fillColor.withValues(alpha: 0.5);
     _remember();
     if (widget.open && _center != null) _grow();
   }
@@ -56,21 +73,23 @@ class _HoldPortalState extends State<HoldPortal>
   @override
   void didUpdateWidget(HoldPortal oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.blurData != oldWidget.blurData) {
-      _bytes = _decodeBlur(widget.blurData);
-    }
     _remember();
     final restarted = widget.open && widget.serial != oldWidget.serial;
     if (restarted || (widget.open && !oldWidget.open)) {
       _grow();
     } else if (!widget.open && oldWidget.open) {
-      _controller.reverse();
+      if (_reported && _controller.value == 1) {
+        _startExit();
+      } else {
+        _controller.reverse();
+      }
     }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _exit.dispose();
     super.dispose();
   }
 
@@ -79,11 +98,35 @@ class _HoldPortalState extends State<HoldPortal>
     if (center == null) return;
     _center = center;
     _startRadius = widget.startRadius;
+    // Only while a hold is tracked: on release the view clears the held
+    // choice (fading the zones back), but the shrinking circle keeps the
+    // color it grew with.
+    _fillColor = widget.fillColor.withValues(alpha: 0.5);
   }
 
   void _grow() {
+    // A new hold mid-exit cancels the exit and grows from zero again.
+    _exiting = false;
+    _exit.stop();
+    _exit.reset();
     _reported = false;
     _controller.forward(from: 0);
+  }
+
+  void _startExit() {
+    _exiting = true;
+    _controller.stop();
+    _exit.forward(from: 0);
+  }
+
+  void _onExitStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (!mounted) return;
+    setState(() {
+      _exiting = false;
+      _reported = false;
+    });
+    _controller.reset();
   }
 
   void _onTick() {
@@ -97,62 +140,42 @@ class _HoldPortalState extends State<HoldPortal>
   Widget build(BuildContext context) {
     return IgnorePointer(
       child: AnimatedBuilder(
-        animation: _controller,
+        animation: Listenable.merge([_controller, _exit]),
         builder: (context, _) {
           return LayoutBuilder(
             builder: (context, constraints) {
               final center = _center;
               final size = constraints.biggest;
-              final idle = !widget.open && _controller.value == 0;
-              if (center == null || size.isEmpty || idle) {
+              if (center == null || size.isEmpty) {
                 return const SizedBox.expand();
               }
               final cover = _cover(size, center);
-              final radius = lerpDouble(
-                _startRadius,
-                math.max(_startRadius, cover),
-                _controller.value,
-              )!;
-              return Stack(
-                fit: .expand,
-                children: [
-                  ClipPath(
-                    clipper: _PortalClipper(center, radius),
-                    child: Stack(
-                      fit: .expand,
-                      children: [
-                        if (_bytes != null)
-                          Positioned.fill(
-                            child: ImageFiltered(
-                              imageFilter: ImageFilter.blur(
-                                sigmaX: 8,
-                                sigmaY: 8,
-                              ),
-                              child: Opacity(
-                                opacity: 0.85,
-                                child: Image.memory(
-                                  _bytes!,
-                                  fit: .cover,
-                                  width: size.width,
-                                  height: size.height,
-                                  gaplessPlayback: true,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      const SizedBox.expand(),
-                                ),
-                              ),
-                            ),
-                          ),
-                        const Positioned.fill(
-                          child: ColoredBox(color: Color(0x66131318)),
-                        ),
-                      ],
+              final full = math.max(_startRadius, cover);
+              if (_exiting) {
+                final hole = lerpDouble(0, full, _exitGrowth.value)!;
+                return SizedBox.expand(
+                  child: ClipPath(
+                    clipper: _RingClipper(center, full, hole),
+                    child: ColoredBox(
+                      key: const ValueKey('hold-ring'),
+                      color: _fillColor,
                     ),
                   ),
-                  CustomPaint(
-                    painter: _RingPainter(center, radius),
-                    child: const SizedBox.expand(),
+                );
+              }
+              final idle = !widget.open && _controller.value == 0;
+              if (idle) {
+                return const SizedBox.expand();
+              }
+              final radius = lerpDouble(_startRadius, full, _growth.value)!;
+              return SizedBox.expand(
+                child: ClipPath(
+                  clipper: _PortalClipper(center, radius),
+                  child: ColoredBox(
+                    key: const ValueKey('hold-fill'),
+                    color: _fillColor,
                   ),
-                ],
+                ),
               );
             },
           );
@@ -174,18 +197,9 @@ double _cover(Size size, Offset center) {
     final distance = (corner - center).distance;
     if (distance > farthest) farthest = distance;
   }
-  return farthest;
-}
-
-Uint8List? _decodeBlur(String? data) {
-  if (data == null) return null;
-  final comma = data.indexOf(',');
-  if (comma < 0 || comma == data.length - 1) return null;
-  try {
-    return base64Decode(data.substring(comma + 1));
-  } on FormatException {
-    return null;
-  }
+  // A couple of pixels past the farthest corner: float rounding must
+  // never leave a sliver of the old video visible at full cover.
+  return farthest + 2;
 }
 
 class _PortalClipper extends CustomClipper<Path> {
@@ -205,23 +219,25 @@ class _PortalClipper extends CustomClipper<Path> {
   }
 }
 
-class _RingPainter extends CustomPainter {
-  const _RingPainter(this.center, this.radius);
+class _RingClipper extends CustomClipper<Path> {
+  const _RingClipper(this.center, this.outerRadius, this.innerRadius);
 
   final Offset center;
-  final double radius;
+  final double outerRadius;
+  final double innerRadius;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..color = RamificaColors.hotspot;
-    canvas.drawCircle(center, radius, paint);
+  Path getClip(Size size) {
+    return Path()
+      ..fillType = PathFillType.evenOdd
+      ..addOval(Rect.fromCircle(center: center, radius: outerRadius))
+      ..addOval(Rect.fromCircle(center: center, radius: innerRadius));
   }
 
   @override
-  bool shouldRepaint(_RingPainter oldDelegate) {
-    return oldDelegate.center != center || oldDelegate.radius != radius;
+  bool shouldReclip(_RingClipper oldClipper) {
+    return oldClipper.center != center ||
+        oldClipper.outerRadius != outerRadius ||
+        oldClipper.innerRadius != innerRadius;
   }
 }
