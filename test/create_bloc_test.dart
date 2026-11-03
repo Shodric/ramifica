@@ -2921,6 +2921,60 @@ void main() {
       expect(layout.edges.every((edge) => !edge.returns), isTrue);
     });
 
+    test('single-child chains keep a uniform node-to-node pitch', () {
+      const nodes = [
+        DraftNode(
+          nodeId: 'root',
+          choices: [
+            DraftChoice(
+              choiceId: 'c0',
+              label: '',
+              targetNodeId: 's1',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(
+          nodeId: 's1',
+          choices: [
+            DraftChoice(
+              choiceId: 'c1',
+              label: '',
+              targetNodeId: 's2',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(
+          nodeId: 's2',
+          choices: [
+            DraftChoice(
+              choiceId: 'c2',
+              label: '',
+              targetNodeId: 's3',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(nodeId: 's3', title: 'End'),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'root');
+
+      // Every link stacks vertically with the same 280px row pitch, so no
+      // connector looks longer or shorter than the previous one.
+      const chain = ['root', 's1', 's2', 's3'];
+      for (var i = 0; i < chain.length - 1; i++) {
+        final parent = layout.positions[chain[i]]!;
+        final child = layout.positions[chain[i + 1]]!;
+        expect(child.dx, parent.dx);
+        expect(child.dy - parent.dy, 280);
+      }
+    });
+
     test('recenter lands the target at the viewport center', () {
       const viewport = Size(400, 600);
       final transform = recenterTransform(viewport, const Offset(172, 122));
