@@ -24,8 +24,8 @@ const exec = promisify(execFile);
 const run = (bin: string, args: string[], options?: ExecFileOptions) =>
   exec(bin, bin === ffmpegBin() ? ["-nostdin", ...args] : args, options);
 
-/** Max upload the trigger accepts: 100 MB, mirroring storage.rules. */
-export const maxUploadBytes = 100 * 1024 * 1024;
+/** Max upload the trigger accepts: 10 MB, mirroring storage.rules. */
+export const maxUploadBytes = 10 * 1024 * 1024;
 
 /** Upload object layout the client writes; the trigger parses the rest. */
 export const uploadsPrefix = "uploads/";

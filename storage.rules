@@ -10,7 +10,7 @@ service firebase.storage {
     match /uploads/{uid}/{fileName} {
       allow create: if request.auth != null
         && request.auth.uid == uid
-        && request.resource.size < 100 * 1024 * 1024
+        && request.resource.size <= 10 * 1024 * 1024
         && request.resource.contentType.matches('video/(mp4|quicktime)');
       allow read, update, delete: if false;
     }
