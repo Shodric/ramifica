@@ -45,9 +45,17 @@ class _GraphViewState extends State<GraphView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _feed = _feedOf(context);
-    _bloc ??= GraphBloc(
-      repository: widget.repository ?? createFirebaseGraphRepository(),
-    );
+    if (_bloc == null) {
+      // Widget tests mount the shell without Firebase: stay on a static
+      // page instead of throwing, like ProfileView and CreateView.
+      try {
+        _bloc = GraphBloc(
+          repository: widget.repository ?? createFirebaseGraphRepository(),
+        );
+      } catch (_) {
+        _bloc = null;
+      }
+    }
     _requestGraph();
   }
 

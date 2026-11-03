@@ -51,14 +51,20 @@ class _ExploreViewState extends State<ExploreView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_bloc != null) return;
-    _bloc =
-        widget.bloc ??
-              ExploreBloc(
-                catalog: createFirebaseCatalogRepository(),
-                follows: createFirebaseFollowRepository(),
-                uid: widget.uid,
-              )
-          ..add(const CatalogRequested());
+    // Widget tests mount the shell without Firebase: stay on a static
+    // page instead of throwing, like ProfileView and CreateView.
+    try {
+      _bloc =
+          widget.bloc ??
+                ExploreBloc(
+                  catalog: createFirebaseCatalogRepository(),
+                  follows: createFirebaseFollowRepository(),
+                  uid: widget.uid,
+                )
+            ..add(const CatalogRequested());
+    } catch (_) {
+      _bloc = null;
+    }
   }
 
   @override
