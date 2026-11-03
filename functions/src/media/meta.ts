@@ -143,6 +143,7 @@ export const completeChatMeta = async (args: {
   system: string;
   user: string;
   maxTokens?: number;
+  reasoningEffort?: string;
   fetchFn?: MetaFetch;
 }): Promise<string> => {
   const payload = await metaPostJson(metaConfig().chatUrl, {
@@ -151,13 +152,30 @@ export const completeChatMeta = async (args: {
     body: {
       model: args.model,
       ...(args.maxTokens === undefined ? {} : {max_tokens: args.maxTokens}),
+      ...(args.reasoningEffort === undefined ?
+        {} :
+        {reasoning_effort: args.reasoningEffort}),
       messages: [
         {role: "system", content: args.system},
         {role: "user", content: args.user},
       ],
     },
   });
-  return firstChoiceContent(payload);
+  const text = firstChoiceContent(payload);
+  if (text === "") {
+    // Shape-only diagnostics: keys reveal truncation vs. error
+    // payloads without logging prompt or completion content.
+    const record = asRecord(payload);
+    const choices = record === null ? undefined : record.choices;
+    const first = Array.isArray(choices) ? asRecord(choices[0]) : null;
+    console.warn(
+      "completeChatMeta: blank answer. top=" +
+        JSON.stringify(record === null ? [] : Object.keys(record)) +
+        " choice=" +
+        JSON.stringify(first === null ? [] : Object.keys(first))
+    );
+  }
+  return text;
 };
 
 /**

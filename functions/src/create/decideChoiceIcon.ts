@@ -17,6 +17,7 @@ import {
   knownChoiceIconColors,
   knownChoiceIcons,
 } from "./generateNodeText";
+import {choiceIconCategories} from "./choiceIconCategories";
 import {OpenRouterFetch, postDecisions} from "../media/openrouter";
 
 /** Decided hotspot styling. Nulls mean the model offered nothing usable. */
@@ -139,17 +140,23 @@ export const decideChoiceIconWith = async (
   }
 
   const config = openRouterConfig();
-  const payload = await postDecisions({
+  const callArgs = {
     apiKey: deps.apiKey ?? config.apiKey,
     model: deps.model ?? config.decisionModel,
     state,
+    fetchFn: deps.fetchFn,
+  };
+  // Stage 1: the catalog holds more icons than one `choice` question
+  // accepts (256), so the model first picks a category and the color.
+  const first = await postDecisions({
+    ...callArgs,
     questions: {
-      icon: {
+      iconCategory: {
         type: "choice",
         instructions:
-          `Which icon best represents the choice "${label}" ` +
-          "in this story? Prefer one the siblings do not use.",
-        criteria: criteriaFrom(knownChoiceIcons),
+          `Which icon category best represents the choice "${label}" ` +
+          "in this story?",
+        criteria: criteriaFrom(Object.keys(choiceIconCategories)),
       },
       iconColor: {
         type: "choice",
@@ -158,25 +165,53 @@ export const decideChoiceIconWith = async (
         criteria: criteriaFrom(knownChoiceIconColors),
       },
     },
-    fetchFn: deps.fetchFn,
   });
-  const answers = asRecord(asRecord(payload)?.answers);
-  const pick = (name: string): string | null => {
-    const choice = asRecord(answers?.[name])?.choice;
-    return typeof choice === "string" ? choice : null;
-  };
-  const icon = pick("icon");
-  const iconColor = pick("iconColor");
+  const firstAnswers = asRecord(asRecord(first)?.answers);
+  const category = pickAnswer(firstAnswers, "iconCategory");
+  const color = pickAnswer(firstAnswers, "iconColor");
+  const iconColor =
+    color !== null &&
+    (knownChoiceIconColors as readonly string[]).includes(color) ?
+      color :
+      null;
+  const names =
+    category === null ? undefined : choiceIconCategories[category];
+  if (names === undefined) return {icon: null, iconColor};
+  // Stage 2: the icon inside the chosen category.
+  const second = await postDecisions({
+    ...callArgs,
+    questions: {
+      icon: {
+        type: "choice",
+        instructions:
+          `Which icon best represents the choice "${label}" ` +
+          "in this story? Prefer one the siblings do not use.",
+        criteria: criteriaFrom(names),
+      },
+    },
+  });
+  const icon = pickAnswer(asRecord(asRecord(second)?.answers), "icon");
   return {
     icon:
       icon !== null &&
+      (names as readonly string[]).includes(icon) &&
       (knownChoiceIcons as readonly string[]).includes(icon) ?
         icon :
         null,
-    iconColor:
-      iconColor !== null &&
-      (knownChoiceIconColors as readonly string[]).includes(iconColor) ?
-        iconColor :
-        null,
+    iconColor,
   };
+};
+
+/**
+ * Reads one typed answer from a Decisions payload.
+ * @param {Record<string, unknown> | null} answers The `answers` map.
+ * @param {string} name The question name.
+ * @return {string | null} The choice, or null when off-shape.
+ */
+const pickAnswer = (
+  answers: Record<string, unknown> | null,
+  name: string
+): string | null => {
+  const choice = asRecord(answers?.[name])?.choice;
+  return typeof choice === "string" ? choice : null;
 };

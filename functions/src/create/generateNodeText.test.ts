@@ -294,7 +294,7 @@ test("scene purpose includes the narrator line", async () => {
   );
   assert.equal(result.ttsText, "You must choose.");
   assert.equal(result.title, "The gate");
-  assert.equal(result.choices.length, 2);
+  assert.equal(result.choices?.length, 2);
 });
 
 test("scene purpose strips volunteered choice icons", async () => {
@@ -336,12 +336,105 @@ test("narration uses the options without changing the scene",
     );
     assert.match(request, /Enter \/ Wait/);
     assert.match(request, /just before/);
-    assert.deepEqual(result, {
-      title: null, ttsText: "Do you enter the gate or wait?", choices: [],
-      endingName: null, startImagePrompt: null,
-      videoPrompt: null,
-    });
+    assert.match(request, /second person/);
+    assert.match(request, /mirrors those options/);
+    const body = JSON.parse(request);
+    assert.equal(body.reasoning_effort, "minimal");
+    assert.equal(body.max_tokens, 1024);
+    assert.deepEqual(result, {ttsText: "Do you enter the gate or wait?"});
     assert.equal(snapshot(db), before);
+  });
+
+test("section purposes return only their fields, fast", async () => {
+  const cases: Array<{
+    purpose: string;
+    prompt: string;
+    answer: unknown;
+    maxTokens: number;
+    want: unknown;
+  }> = [
+    {
+      purpose: "info",
+      prompt: "A storm arrives.",
+      answer: {
+        title: "The gate", ttsText: "You must choose.",
+        endingName: null, videoPrompt: "Unasked",
+        choices: [{label: "Unasked"}],
+      },
+      maxTokens: 1024,
+      want: {title: "The gate", ttsText: "You must choose."},
+    },
+    {
+      purpose: "startframe",
+      prompt: "A misty gate.",
+      answer: {startImagePrompt: "mist", title: "Unasked"},
+      maxTokens: 2048,
+      want: {startImagePrompt: "mist"},
+    },
+    {
+      purpose: "clip",
+      prompt: "A slow push.",
+      answer: {videoPrompt: "push", ttsText: "Unasked"},
+      maxTokens: 2048,
+      want: {videoPrompt: "push"},
+    },
+    {
+      purpose: "options",
+      prompt: "Two ways out.",
+      answer: {
+        choices: [
+          {label: "Enter", icon: "door", iconColor: "cyan"},
+          {label: "Climb"},
+        ],
+        title: "Unasked",
+      },
+      maxTokens: 1024,
+      want: {choices: [{label: "Enter"}, {label: "Climb"}]},
+    },
+  ];
+  for (const item of cases) {
+    const db = new MemDb();
+    await seedDraft(db);
+    let request = "";
+    const fetchFn: TextFetch = async (url, init) => {
+      request = String(init.body);
+      return stubFetch(JSON.stringify(item.answer))(url, init);
+    };
+    const result = await generateNodeTextWith(
+      db, "u1",
+      {
+        storyId: "story_draft", nodeId: "node_001",
+        prompt: item.prompt, purpose: item.purpose,
+      },
+      {apiKey: "test", fetchFn}
+    );
+    const body = JSON.parse(request);
+    assert.equal(body.reasoning_effort, "minimal", item.purpose);
+    assert.equal(body.max_tokens, item.maxTokens, item.purpose);
+    assert.deepEqual(result, item.want);
+  }
+});
+
+test("scene keeps the default reasoning and no token cap",
+  async () => {
+    const db = new MemDb();
+    await seedDraft(db);
+    let request = "";
+    const fetchFn: TextFetch = async (url, init) => {
+      request = String(init.body);
+      return stubFetch(JSON.stringify({
+        title: "The gate", ttsText: "You must choose.",
+        choices: ["Enter", "Wait"],
+      }))(url, init);
+    };
+    await generateNodeTextWith(
+      db, "u1",
+      {storyId: "story_draft", nodeId: "node_001", purpose: "scene"},
+      {apiKey: "test", fetchFn}
+    );
+    const body = JSON.parse(request);
+    assert.ok(!("reasoning_effort" in body));
+    assert.ok(!("max_tokens" in body));
   });
 
 test("rejects unknown text purposes", async () => {

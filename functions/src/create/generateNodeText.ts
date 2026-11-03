@@ -27,14 +27,18 @@ export interface GeneratedChoice {
   iconColor: string | null;
 }
 
-/** Proposed node text. Nulls mean the provider offered nothing usable. */
+/**
+ * Proposed node text. Whole-scene answers fill every key; section scopes
+ * return only their own keys with nulls dropped. Missing keys read as
+ * null (empty choices) on the client.
+ */
 export interface GenerateNodeTextResult {
-  title: string | null;
-  ttsText: string | null;
-  choices: GeneratedChoice[];
-  endingName: string | null;
-  startImagePrompt: string | null;
-  videoPrompt: string | null;
+  title?: string | null;
+  ttsText?: string | null;
+  choices?: GeneratedChoice[];
+  endingName?: string | null;
+  startImagePrompt?: string | null;
+  videoPrompt?: string | null;
 }
 
 /** Minimal POST surface the text provider needs; keeps tests offline. */
@@ -58,6 +62,21 @@ const maxPromptChars = 2000;
 
 /** Narrator lines past this are clipped; the player reads them verbatim. */
 const maxTtsChars = 280;
+
+/**
+ * Per-scope output caps. Meta counts reasoning plus visible tokens
+ * against `max_tokens`, so these stay generous: a tight cap lets the
+ * reasoning eat the budget and yields an empty answer. Speed comes
+ * from minimal reasoning, not from the cap. Only the whole-scene
+ * scope keeps the model default.
+ */
+const scopeMaxTokens: Record<string, number> = {
+  narration: 1024,
+  info: 1024,
+  options: 1024,
+  startframe: 2048,
+  clip: 2048,
+};
 
 /** Media prompts past this are clipped; mirrors generateNodeMedia builds. */
 const maxMediaPromptChars = 2000;
@@ -167,20 +186,65 @@ const systemPrompt = [
   "\"startImagePrompt\": string|null, \"videoPrompt\": string|null}.",
 ].join(" ");
 
+/** Info opens a node: title, narrator line, and ending name. */
+const infoPrompt = [
+  "Propose the opening text for one story node: a title of 1-40",
+  "characters, one narrator line of at most 280 characters, and for",
+  "ending nodes an ending name of 1-40 characters. The narrator line",
+  "presents the scene in one short sentence, then closes with the",
+  "question that mirrors the current options, addressing the player",
+  "in the second person. For an ending, close it in the second",
+  "person without inventing a choice or question.",
+  "Match the story's language; default to Spanish.",
+  "Return only JSON: {\"title\": string|null, \"ttsText\": string,",
+  "\"endingName\": string|null}.",
+].join(" ");
+
+/** The start frame is the first still the player sees. */
+const startFramePrompt = [
+  "Propose the opening establishing-frame image prompt for one story",
+  "node: one photorealistic prompt under 2000 characters describing",
+  "the first frame the player sees.",
+  "Match the story's language; default to Spanish.",
+  "Return only JSON: {\"startImagePrompt\": string}.",
+].join(" ");
+
+/** The clip prompt drives the slow vertical morph. */
+const clipPrompt = [
+  "Propose the vertical 9:16 video prompt for one story node: one",
+  "photorealistic prompt under 2000 characters describing a slow",
+  "continuous morph with no on-screen text.",
+  "Match the story's language; default to Spanish.",
+  "Return only JSON: {\"videoPrompt\": string}.",
+].join(" ");
+
+/** Options name the moment of choosing, unstyled. */
+const optionsPrompt = [
+  "Propose one or two choices for one decision node: each a label of",
+  "1-24 characters naming the moment of choosing. Do not propose",
+  "icons: a later decision step styles each choice.",
+  "Match the story's language; default to Spanish.",
+  "Return only JSON: {\"choices\": [{\"label\": string}]}.",
+].join(" ");
+
 /** Narration is heard after the clip, at the decision point. */
 const narrationPrompt = [
   "Write the narrator line for an interactive story's decision point.",
   "The clip has already ended. The player hears this line just before",
-  "choosing one of the current options. Ground it in the closing frame",
-  "and those options. Invite a choice without making it for the player",
-  "or revealing its outcome. Do not narrate the whole clip or premise.",
-  "For an ending, close the ending without inventing a choice.",
-  "Use one or two short sentences, at most 280 characters.",
+  "choosing one of the current options. Present the scene in one short",
+  "sentence, then close with the question that mirrors those options.",
+  "Address the player in the second person. Invite a choice without",
+  "making it for the player or revealing its outcome. Do not narrate",
+  "the whole clip or premise.",
+  "For an ending, close the ending in the second person without",
+  "inventing a choice or question.",
+  "Use at most 280 characters.",
   "Match the story's language; default to Spanish.",
   "Return only JSON: {\"ttsText\": string}.",
 ].join(" ");
 
-type TextPurpose = "scene" | "narration" | null;
+type TextPurpose =
+  "scene" | "narration" | "info" | "startframe" | "clip" | "options" | null;
 
 /**
  * Spark proposes node text: title, narrator line, choice labels, and (for
@@ -226,7 +290,15 @@ export const generateNodeTextWith = async (
   const storyId = cleanId(fields.storyId, "storyId");
   const nodeId = optionalId(fields.nodeId);
   const purpose = optString(fields.purpose);
-  if (purpose !== null && purpose !== "scene" && purpose !== "narration") {
+  if (
+    purpose !== null &&
+    purpose !== "scene" &&
+    purpose !== "narration" &&
+    purpose !== "info" &&
+    purpose !== "startframe" &&
+    purpose !== "clip" &&
+    purpose !== "options"
+  ) {
     throw new HttpsError("invalid-argument", "Unknown text purpose.");
   }
   const authorText = [optString(fields.prompt), optString(fields.context)]
@@ -277,18 +349,59 @@ export const generateNodeTextWith = async (
     // Icons are decided separately per choice; the scene carries labels.
     return {
       ...proposal,
-      choices: proposal.choices.map((choice) => ({
+      choices: (proposal.choices ?? []).map((choice) => ({
         ...choice, icon: null, iconColor: null,
       })),
     };
   }
   if (purpose === "narration") {
-    return {
-      title: null, ttsText: proposal.ttsText, choices: [], endingName: null,
-      startImagePrompt: null, videoPrompt: null,
-    };
+    return compactSection({ttsText: proposal.ttsText});
+  }
+  if (purpose === "info") {
+    return compactSection({
+      title: proposal.title,
+      ttsText: proposal.ttsText,
+      endingName: proposal.endingName,
+    });
+  }
+  if (purpose === "startframe") {
+    return compactSection({startImagePrompt: proposal.startImagePrompt});
+  }
+  if (purpose === "clip") {
+    return compactSection({videoPrompt: proposal.videoPrompt});
+  }
+  if (purpose === "options") {
+    // Icons are decided separately per choice; options carry labels.
+    return compactSection({
+      choices: (proposal.choices ?? []).map((choice) => ({
+        label: choice.label,
+      })),
+    });
   }
   return proposal;
+};
+
+/**
+ * Minimal JSON for one section scope: only the scope's keys, dropping
+ * nulls and empty lists so scoped answers stay small on the wire.
+ * @param {Object} fields The scope's raw fields.
+ * @return {GenerateNodeTextResult} The compact answer.
+ */
+const compactSection = (fields: {
+  title?: string | null;
+  ttsText?: string | null;
+  choices?: Array<{label: string}>;
+  endingName?: string | null;
+  startImagePrompt?: string | null;
+  videoPrompt?: string | null;
+}): GenerateNodeTextResult => {
+  const out: {[key: string]: unknown} = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === null || value === undefined) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[key] = value;
+  }
+  return out as GenerateNodeTextResult;
 };
 
 /**
@@ -306,12 +419,37 @@ export const asFields = (value: unknown): {[field: string]: unknown} | null => {
   return fields;
 };
 /**
+ * System prompt for one text scope: whole-scene, one section, or legacy.
+ * @param {TextPurpose} purpose Requested text scope.
+ * @return {string} The system message.
+ */
+const scopeSystemPrompt = (purpose: TextPurpose): string => {
+  switch (purpose) {
+  case "narration":
+    return narrationPrompt;
+  case "info":
+    return infoPrompt;
+  case "startframe":
+    return startFramePrompt;
+  case "clip":
+    return clipPrompt;
+  case "options":
+    return optionsPrompt;
+  case "scene":
+    return systemPrompt +
+        " This request covers the whole scene, narrator line included.";
+  default:
+    return systemPrompt;
+  }
+};
+
+/**
  * Asks Meta for the node text and returns the raw answer string.
  * @param {Object} story Draft story fields for context.
  * @param {Object} node Node fields for context, or null without a node.
  * @param {string} authorText Author prompt plus context, already capped.
  * @param {TextGenDeps} deps Provider overrides for tests.
- * @param {TextPurpose} purpose Scene, decision narration, or legacy full text.
+ * @param {TextPurpose} purpose Scene, one section, or legacy full text.
  * @return {Promise<string>} The raw provider answer.
  */
 const completeText = async (
@@ -335,11 +473,13 @@ const completeText = async (
     content = await completeChatMeta({
       apiKey,
       model,
-      system: purpose === "narration" ? narrationPrompt :
-        purpose === "scene" ? systemPrompt +
-          " This request covers the whole scene, narrator line included." :
-          systemPrompt,
+      system: scopeSystemPrompt(purpose),
       user: userPrompt(story, node, authorText, purpose),
+      // Scoped calls answer small shaped JSON: minimal reasoning (Spark
+      // has no off switch) and a tight token cap keep them fast.
+      ...(purpose !== null && purpose in scopeMaxTokens ?
+        {maxTokens: scopeMaxTokens[purpose], reasoningEffort: "minimal"} :
+        {}),
       fetchFn: deps.fetchFn,
     });
   } catch (error) {
@@ -410,9 +550,11 @@ const userPrompt = (
     lines.push(
       node.isEnding === true ?
         "This node is an ending: close its final beat, no choices." :
-        purpose === "narration" ?
+        purpose === "narration" || purpose === "info" ?
           "This node is a decision: speak just before the player chooses." :
-          "This node is a decision: propose one or two choice labels."
+          purpose === "clip" || purpose === "startframe" ?
+            "This node is a decision: describe its visuals only." :
+            "This node is a decision: propose one or two choice labels."
     );
   } else {
     lines.push("No node is open: propose text for a new node.");
