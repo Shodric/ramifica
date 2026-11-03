@@ -52,27 +52,15 @@ void main() {
     }
   });
 
-  test('the service worker caches the shell and leaves video alone', () {
+  test('the service worker installs the media handler after shell routes', () {
     final worker = File('web/sw.js').readAsStringSync();
-    expect(worker.contains('respondWith'), isFalse);
-    expect(worker, contains('stopImmediatePropagation'));
-    expect(worker, contains('.endsWith(".mp4")'));
-    expect(worker, contains('headers.has("range")'));
-
-    final bypass = worker.indexOf('stopImmediatePropagation');
     final precache = worker.indexOf('precacheAndRoute');
-    expect(bypass, greaterThanOrEqualTo(0));
-    expect(precache, greaterThan(bypass));
+    final media = worker.indexOf('importScripts("media_cache.js")');
+    expect(precache, greaterThanOrEqualTo(0));
+    expect(media, greaterThan(precache));
 
     expect(worker, contains('NetworkFirst'));
     expect(worker, contains('request.mode === "navigate"'));
-    expect(worker, contains('CacheFirst'));
-    expect(worker, contains('maxEntries: 300'));
-    expect(worker, contains('maxEntries: 100'));
-    expect(worker, contains('30 * 24 * 60 * 60'));
-    expect(worker, contains('.endsWith(".webp")'));
-    expect(worker, contains('.endsWith(".m4a")'));
-    expect(worker, contains('statuses: [200]'));
     expect(worker, contains('NetworkOnly'));
     expect(worker, contains('cloudfunctions.net'));
     expect(worker, contains('cloudfunctions.googleapis.com'));
@@ -94,15 +82,12 @@ void main() {
     expect(worker, contains('/canvaskit/chromium/canvaskit.wasm'));
   });
 
-  test('release builds register sw.js and dev builds do not', () {
+  test('release uses the shell worker and dev uses media-only mode', () {
     final bootstrap = File('web/flutter_bootstrap.js').readAsStringSync();
     expect(bootstrap, contains('{{flutter_service_worker_version}}'));
     expect(bootstrap, contains('ramificaServiceWorkerVersion == null'));
     expect(bootstrap, contains('sw.js?v='));
+    expect(bootstrap, contains('sw.js?media-only=1'));
     expect(bootstrap.contains('flutter_service_worker.js'), isFalse);
-    expect(
-      bootstrap.indexOf('_flutter.loader.load()'),
-      lessThan(bootstrap.indexOf('serviceWorkerUrl')),
-    );
   });
 }

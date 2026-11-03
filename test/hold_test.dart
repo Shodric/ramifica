@@ -83,6 +83,33 @@ void main() {
     expect(bloc.prefetcher.urls, contains('https://example.com/ridge.mp4'));
   });
 
+  test('tapping the video toggles the pause while playing', () async {
+    final bloc = _bloc(_Clock());
+    addTearDown(bloc.close);
+    await _open(bloc);
+
+    bloc.add(const VideoTapped());
+    await bloc.stream.firstWhere((state) => state.userPaused);
+    expect(bloc.state.phase, FeedPhase.playing);
+
+    bloc.add(const VideoTapped());
+    await bloc.stream.firstWhere((state) => !state.userPaused);
+    expect(bloc.state.phase, FeedPhase.playing);
+  });
+
+  test('tapping outside playing never pauses', () async {
+    final clock = _Clock();
+    final bloc = _bloc(clock);
+    addTearDown(bloc.close);
+    await _window(bloc, clock);
+
+    bloc.add(const VideoTapped());
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.userPaused, isFalse);
+  });
+
   test('a finished hold ignores the release', () async {
     final clock = _Clock();
     final bloc = _bloc(clock);
@@ -120,6 +147,179 @@ void main() {
             .dy,
       ),
     );
+  });
+
+  testWidgets('the engagement rail hides while the zones are up', (
+    tester,
+  ) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider.value(
+          value: bloc,
+          child: FeedView(clipPlayer: _Clip()),
+        ),
+      ),
+    );
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.playing);
+
+    AnimatedOpacity rail() => tester.widget<AnimatedOpacity>(
+      find.byKey(const ValueKey('action-rail')),
+    );
+    expect(rail().opacity, 1);
+    expect(find.byKey(const ValueKey('rail-like')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rail-comment')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rail-save')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('rail-comment')));
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byType(FeedView),
+        matching: find.text('Comments are coming soon.'),
+      ),
+      findsOneWidget,
+    );
+
+    bloc.add(const PauseReached());
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.window);
+    expect(find.byType(ChoiceZone), findsNWidgets(2));
+    expect(rail().opacity, 0);
+  });
+
+  testWidgets('tapping the video pauses and resumes the clip', (tester) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider.value(
+          value: bloc,
+          child: FeedView(clipPlayer: _Clip()),
+        ),
+      ),
+    );
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.playing);
+
+    AnimatedOpacity mark(String key) =>
+        tester.widget<AnimatedOpacity>(find.byKey(ValueKey(key)));
+    bool playing() => tester.widget<NodeVideo>(find.byType(NodeVideo)).play;
+    expect(mark('pause-mark').opacity, 0);
+    expect(playing(), isTrue);
+
+    await tester.tapAt(const Offset(400, 300));
+    await _pumpUntil(tester, () => bloc.state.userPaused);
+    expect(mark('pause-mark').opacity, 1);
+    expect(playing(), isFalse);
+
+    await tester.tapAt(const Offset(400, 300));
+    await _pumpUntil(tester, () => !bloc.state.userPaused);
+    expect(mark('play-flash').opacity, 1);
+    expect(mark('pause-mark').opacity, 0);
+    expect(playing(), isTrue);
+
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    expect(mark('play-flash').opacity, 0);
+  });
+
+  testWidgets('tapping the video during the window does not pause', (
+    tester,
+  ) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider.value(
+          value: bloc,
+          child: FeedView(clipPlayer: _Clip()),
+        ),
+      ),
+    );
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.playing);
+    bloc.add(const PauseReached());
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.window);
+    expect(find.byType(ChoiceZone), findsNWidgets(2));
+
+    // Above both zones: an empty stretch of video.
+    await tester.tapAt(const Offset(400, 100));
+    await tester.pump();
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.userPaused, isFalse);
+    expect(
+      tester
+          .widget<AnimatedOpacity>(find.byKey(const ValueKey('pause-mark')))
+          .opacity,
+      0,
+    );
+  });
+
+  testWidgets('the tap that wakes a hidden clip does not pause', (
+    tester,
+  ) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock, voice: false);
+    addTearDown(bloc.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider.value(
+          value: bloc,
+          child: FeedView(clipPlayer: _Clip()),
+        ),
+      ),
+    );
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.playing);
+    bloc.add(const AppHidden());
+    await _pumpUntil(tester, () => bloc.state.hiddenPaused);
+
+    await tester.tapAt(const Offset(400, 300));
+    await tester.pump();
+    await tester.pump();
+    expect(bloc.state.hiddenPaused, isFalse);
+    expect(bloc.state.userPaused, isFalse);
+  });
+
+  testWidgets('long hotspot labels wrap to a second line', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 844,
+            child: Stack(
+              children: [
+                ChoiceZone(
+                  choiceId: 'meal',
+                  label: 'Desbloquear computadora',
+                  x: 0.5,
+                  y: 0.5,
+                  radius: 0.15,
+                  video: VideoFrame.fitWidth(
+                    const Size(390, 844),
+                    sourceSize: const Size(480, 854),
+                  ),
+                  enabled: true,
+                  compact: true,
+                  onHoldStart: (_) {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final label = tester.widget<Text>(find.text('Desbloquear computadora'));
+    expect(label.maxLines, 2);
+    expect(label.textAlign, TextAlign.center);
   });
 
   testWidgets('a short press does not choose', (tester) async {
@@ -258,6 +458,15 @@ Future<void> _showWindow(WidgetTester tester, FeedBloc bloc) async {
   await tester.pumpAndSettle();
   bloc.add(const PauseReached());
   await tester.pumpAndSettle();
+}
+
+/// Pumps until [done] with a bounded loop instead of settling, so the
+/// test never waits on unrelated timers or animations.
+Future<void> _pumpUntil(WidgetTester tester, bool Function() done) async {
+  for (var i = 0; i < 50 && !done(); i++) {
+    await tester.pump();
+  }
+  expect(done(), isTrue);
 }
 
 Offset _ring(WidgetTester tester, String choiceId) {

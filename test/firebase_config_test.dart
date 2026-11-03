@@ -21,6 +21,7 @@ void main() {
     };
     expect(headers['/index.html'], 'no-cache');
     expect(headers['/sw.js'], 'no-cache');
+    expect(headers['/media_cache.js'], 'no-cache');
     expect(headers['/manifest.json'], 'no-cache');
     expect(headers['/manifest.webmanifest'], 'no-cache');
     expect(

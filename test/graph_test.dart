@@ -7,6 +7,7 @@ import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/functions_client.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/graph_stub.dart';
+import 'package:ramifica/data/models/playback.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
@@ -76,6 +77,36 @@ void main() {
   });
 
   group('GraphBloc', () {
+    test('resumes a run when the map opens without a run id', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'startRun') {
+            return {
+              'runId': 'run_resumed',
+              'storyId': 'story_temple',
+              'status': 'active',
+            };
+          }
+          return _stubs();
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: ''));
+      await bloc.stream.firstWhere((state) => state.phase != .loading);
+
+      expect(bloc.state.phase, GraphPhase.loaded);
+      expect(bloc.state.runId, 'run_resumed');
+      expect(bloc.state.failure, isNull);
+      expect(calls.map((call) => call.name), ['startRun', 'graphStubs']);
+      expect(calls.first.data, {'storyId': 'story_temple'});
+      expect(calls.last.data, {
+        'storyId': 'story_temple',
+        'runId': 'run_resumed',
+      });
+    });
+
     test('loads stubs and selects the current node', () async {
       final bloc = GraphBloc(repository: _stubRepo());
       addTearDown(bloc.close);
@@ -119,6 +150,20 @@ void main() {
       await bloc.stream.firstWhere((state) => state.phase == .failed);
 
       expect(bloc.state.failure, 'No connection');
+    });
+
+    test('a load failure preserves the specific diagnostic', () async {
+      final bloc = GraphBloc(
+        repository: _graphs([], (name, data) async {
+          throw const AppFailure(.invalid, detail: 'Story not found.');
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'missing', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .failed);
+
+      expect(bloc.state.failure, 'Story not found.');
     });
 
     test('selects known nodes and ignores unknown ones', () async {
@@ -340,6 +385,147 @@ void main() {
   });
 
   group('GraphView', () {
+    testWidgets('a direct map retries with its resumed run', (tester) async {
+      final calls = <_Call>[];
+      var loads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GraphView(
+            storyId: 'story_temple',
+            repository: _graphs(calls, (name, data) async {
+              if (name == 'startRun') {
+                return {
+                  'runId': 'run_saved',
+                  'storyId': 'story_temple',
+                  'status': 'active',
+                };
+              }
+              if (loads++ == 0) throw const AppFailure(.offline);
+              return _stubs();
+            }),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('No connection'), findsOneWidget);
+
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GraphCanvas), findsOneWidget);
+      expect(calls.map((call) => call.name), [
+        'startRun',
+        'graphStubs',
+        'graphStubs',
+      ]);
+      expect(calls.last.data, {
+        'storyId': 'story_temple',
+        'runId': 'run_saved',
+      });
+    });
+
+    testWidgets('follows the feed story and progress after mounting', (
+      tester,
+    ) async {
+      final feed = _StubFeedBloc();
+      addTearDown(feed.close);
+      final calls = <_Call>[];
+      final repository = _graphs(calls, (name, data) async {
+        return _stubs(current: feed.state.playback?.node.nodeId ?? 'node_001');
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BlocProvider<FeedBloc>.value(
+            value: feed,
+            child: GraphView(storyId: '', repository: repository),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(calls, isEmpty);
+
+      feed.show(
+        FeedState(
+          phase: .playing,
+          storyId: 'story_temple',
+          runId: 'run_1',
+          playback: Playback.fromJson(_playback()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GraphCanvas), findsOneWidget);
+      expect(calls.single.data, {'storyId': 'story_temple', 'runId': 'run_1'});
+
+      feed.show(feed.state.copy(muted: false));
+      await tester.pumpAndSettle();
+      expect(calls, hasLength(1));
+
+      feed.show(
+        FeedState(
+          phase: .playing,
+          storyId: 'story_temple',
+          runId: 'run_1',
+          playback: Playback.fromJson(_playback(nodeId: 'node_002')),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(calls, hasLength(2));
+      final graph = tester.element(find.byType(GraphCanvas)).read<GraphBloc>();
+      expect(graph.state.currentNodeId, 'node_002');
+    });
+
+    testWidgets('changing story never reuses the previous feed run', (
+      tester,
+    ) async {
+      final feed = _StubFeedBloc()
+        ..show(
+          const FeedState(
+            phase: .playing,
+            storyId: 'story_temple',
+            runId: 'run_1',
+          ),
+        );
+      addTearDown(feed.close);
+      final calls = <_Call>[];
+      final repository = _graphs(calls, (name, data) async {
+        if (name == 'startRun') {
+          return {
+            'runId': 'run_other',
+            'storyId': 'story_other',
+            'status': 'active',
+          };
+        }
+        return _stubs();
+      });
+      Future<void> show(String storyId) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: BlocProvider<FeedBloc>.value(
+              value: feed,
+              child: GraphView(storyId: storyId, repository: repository),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await show('story_temple');
+      expect(calls.single.data, {'storyId': 'story_temple', 'runId': 'run_1'});
+      await show('story_other');
+
+      expect(calls.map((call) => call.name), [
+        'graphStubs',
+        'startRun',
+        'graphStubs',
+      ]);
+      expect(calls.last.data, {'storyId': 'story_other', 'runId': 'run_other'});
+      final graph = tester.element(find.byType(GraphCanvas)).read<GraphBloc>();
+      expect(graph.state.storyId, 'story_other');
+      expect(graph.state.failure, isNull);
+    });
+
     testWidgets('shows the sheet with share bars', (tester) async {
       await _pumpGraph(tester);
 
@@ -347,7 +533,7 @@ void main() {
       expect(find.text('Enter the room'), findsOneWidget);
       expect(find.text('Climb the ridge'), findsOneWidget);
       expect(find.text('Continue'), findsOneWidget);
-      expect(find.text('Rewind'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Rewind'), findsOneWidget);
       expect(find.text('6/10 (60%)'), findsOneWidget);
       expect(find.text('4/10 (40%)'), findsOneWidget);
     });
@@ -378,7 +564,7 @@ void main() {
       await _pumpGraph(tester, calls: calls, current: 'node_002');
       expect(find.text('The inner room'), findsOneWidget);
 
-      await tester.tap(find.text('Rewind'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Rewind'));
       await tester.pumpAndSettle();
 
       expect(calls.map((call) => call.name), contains('rewindRun'));
@@ -426,7 +612,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Rewind'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Rewind'));
       await tester.pumpAndSettle();
 
       expect(find.text('That action is not valid'), findsOneWidget);
@@ -679,6 +865,15 @@ class _StillClock implements CueClock {
 
   @override
   void cancel() {}
+}
+
+class _StubFeedBloc extends Cubit<FeedState> implements FeedBloc {
+  _StubFeedBloc() : super(const FeedState());
+
+  void show(FeedState next) => emit(next);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakeClip implements ClipPlayer {

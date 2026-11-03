@@ -80,4 +80,53 @@ void main() {
     await tester.tap(find.text('Retry'));
     expect(taps, 1);
   });
+
+  testWidgets('FailureText fits a one-pixel viewport', (tester) async {
+    for (final retry in <VoidCallback?>[null, () {}]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox.square(
+                dimension: 1,
+                child: FailureText(
+                  message: 'That action is not valid',
+                  onRetry: retry,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('FailureText can scroll to Retry in a short viewport', (
+    tester,
+  ) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 200,
+              height: 60,
+              child: FailureText(
+                message: 'A long error message. ' * 10,
+                onRetry: () => taps++,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Retry'));
+    await tester.tap(find.text('Retry'));
+    expect(taps, 1);
+  });
 }

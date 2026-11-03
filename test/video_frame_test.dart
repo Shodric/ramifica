@@ -54,5 +54,35 @@ void main() {
         expect(video.top, lessThanOrEqualTo(0));
       }
     });
+
+    test('width-fit maps the editor crop onto a wider source', () {
+      const video = VideoFrame.fitWidth(
+        Size(390, 844),
+        sourceSize: Size(480, 832),
+      );
+      expect(video.width, 390);
+      expect(video.height, closeTo(676, 1e-9));
+      expect(video.top, closeTo(84, 1e-9));
+      expect(
+        video.point(0.25, 0.65),
+        offsetMoreOrLessEquals(const Offset(99.9375, 523.4)),
+      );
+      expect(video.radius(0.12), closeTo(45.63, 1e-9));
+    });
+
+    test('width-fit maps the editor crop onto a taller source', () {
+      const video = VideoFrame.fitWidth(
+        Size(390, 844),
+        sourceSize: Size(480, 960),
+      );
+      expect(video.width, 390);
+      expect(video.height, 780);
+      expect(video.top, 32);
+      expect(
+        video.point(0.75, 0.65),
+        offsetMoreOrLessEquals(const Offset(292.5, 526)),
+      );
+      expect(video.radius(0.12), closeTo(46.8, 1e-9));
+    });
   });
 }

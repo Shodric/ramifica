@@ -200,7 +200,7 @@ void main() {
     );
   }
 
-  testWidgets('S1 shows a proposing indicator mid-flight', (tester) async {
+  testWidgets('S1 proposes with no mid-flight indicator', (tester) async {
     final gate = Completer<void>();
     await mount(
       tester,
@@ -223,12 +223,12 @@ void main() {
     final state = tester.state<StepScriptState>(find.byType(StepScript));
     final pending = state.proposeDirection();
     await tester.pump();
-    expect(find.byKey(const ValueKey('script-proposing-root')), findsOneWidget);
+    expect(find.byKey(const ValueKey('script-proposing-root')), findsNothing);
+    expect(find.text('Proposing scene…'), findsNothing);
     gate.complete();
     final proposal = await pending;
     await tester.pump();
     expect(proposal?.title, 'AI title');
-    expect(find.byKey(const ValueKey('script-proposing-root')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
