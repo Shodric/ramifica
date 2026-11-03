@@ -16,6 +16,16 @@ abstract interface class DraftPersistence {
   Future<(DraftStory, DraftNode)> createDraft(String authorId, String title);
   Future<void> save(String storyId, DraftNode node);
   Future<void> updateStory(String storyId, {String? title, String? synopsis});
+
+  /// Flips a published story back to `draft`: players lose access
+  /// because every read rule requires `status: 'published'`. Guarded:
+  /// author-owned and currently published.
+  Future<void> unpublishStory(String storyId);
+
+  /// Deletes the draft story doc. Node and publication docs become
+  /// unreachable orphans (every rule path reads the story doc) and
+  /// Storage bytes stay, matching node deletes.
+  Future<void> deleteStory(String storyId);
   Future<DraftChange> createAndLink(
     String storyId,
     String parentId, {
@@ -120,6 +130,35 @@ class ClientDraftPersistence implements DraftPersistence {
         }, merge: true);
         advanceRevision(tx, storyId, story);
       });
+
+  @override
+  Future<void> unpublishStory(String storyId) => store.transaction((tx) async {
+    final path = 'stories/${documentId(storyId)}';
+    final story = await tx.get(path);
+    if (story == null) invalid('Story not found.');
+    if (story['authorId'] != _uid()) throw const AppFailure(.denied);
+    if (story['status'] != 'published') {
+      invalid('Only published stories can be hidden.');
+    }
+    // The rules' unpublish branch allows exactly these three keys.
+    tx.set(path, {
+      'status': 'draft',
+      'revision': revisionOf(story) + 1,
+      'updatedAt': commitTime,
+    }, merge: true);
+  });
+
+  @override
+  Future<void> deleteStory(String storyId) => store.transaction((tx) async {
+    final path = 'stories/${documentId(storyId)}';
+    final story = await tx.get(path);
+    if (story == null) invalid('Story not found.');
+    if (story['authorId'] != _uid()) throw const AppFailure(.denied);
+    if (story['status'] != 'draft') {
+      invalid('Hide the story before deleting it.');
+    }
+    tx.delete(path);
+  });
 
   @override
   Future<void> save(String storyId, DraftNode node) =>
@@ -448,8 +487,7 @@ void validateAuthorNode(Json node) {
     invalid('Invalid Options.');
   }
   final cut = node['cutSlots'];
-  if (cut != null &&
-      (cut is! List || cut.any((s) => s != 'A' && s != 'B'))) {
+  if (cut != null && (cut is! List || cut.any((s) => s != 'A' && s != 'B'))) {
     invalid('Invalid cut paths.');
   }
   final ids = <String>{};

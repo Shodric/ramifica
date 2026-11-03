@@ -124,7 +124,7 @@ service cloud.firestore {
         && request.resource.data.title is string && request.resource.data.title.size() <= 40
         && request.resource.data.rootNodeId is string
         && existsAfter(/databases/$(database)/documents/stories/$(storyId)/nodes/$(request.resource.data.rootNodeId));
-      allow update: if authorOwnsDraft(storyId)
+      allow update: if (authorOwnsDraft(storyId)
         && request.resource.data.authorId == resource.data.authorId
         && request.resource.data.rootNodeId == resource.data.rootNodeId
         && request.resource.data.revision == resource.data.get('revision', 0) + 1
@@ -135,7 +135,15 @@ service cloud.firestore {
           || (request.resource.data.status == 'published'
             && request.resource.data.activePublicationId is string
             && getAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)).data.sourceRevision == resource.data.get('revision', 0)
-            && existsAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)/nodes/$(resource.data.rootNodeId))));
+            && existsAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)/nodes/$(resource.data.rootNodeId))))
+      ) || (author(storyId)
+        && request.resource.data.authorId == resource.data.authorId
+        && request.resource.data.rootNodeId == resource.data.rootNodeId
+        && resource.data.status == 'published'
+        && request.resource.data.status == 'draft'
+        && request.resource.data.revision == resource.data.get('revision', 0) + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'revision', 'updatedAt']));
       allow delete: if authorOwnsDraft(storyId);
 
       match /nodes/{nodeId} {

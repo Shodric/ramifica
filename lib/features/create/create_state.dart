@@ -22,6 +22,7 @@ class CreateState {
     this.uploadProgress,
     this.failure,
     this.publishedStoryId,
+    this.deletedStoryId,
     this.focusChoiceId,
   });
 
@@ -67,6 +68,10 @@ class CreateState {
   /// The story id once `publishStory` succeeds, or null while a draft.
   /// The view navigates to Explore exactly once per value.
   final String? publishedStoryId;
+
+  /// The story id once `deleteStory` succeeds, or null. The dialog pops
+  /// and the view returns to the creations list exactly once per value.
+  final String? deletedStoryId;
 
   /// The choice id that just gained focus — set by HotspotAdded so the
   /// hotspots step can focus the new label field. Cleared on the next
@@ -208,6 +213,7 @@ class CreateState {
     double? Function()? uploadProgress,
     String? Function()? failure,
     String? Function()? publishedStoryId,
+    String? Function()? deletedStoryId,
     String? Function()? focusChoiceId,
   }) {
     return CreateState(
@@ -230,6 +236,9 @@ class CreateState {
       publishedStoryId: publishedStoryId == null
           ? this.publishedStoryId
           : publishedStoryId(),
+      deletedStoryId: deletedStoryId == null
+          ? this.deletedStoryId
+          : deletedStoryId(),
       focusChoiceId: focusChoiceId == null
           ? this.focusChoiceId
           : focusChoiceId(),
@@ -250,6 +259,7 @@ class CreateState {
         other.uploadProgress == uploadProgress &&
         other.failure == failure &&
         other.publishedStoryId == publishedStoryId &&
+        other.deletedStoryId == deletedStoryId &&
         other.focusChoiceId == focusChoiceId;
   }
 
@@ -266,6 +276,7 @@ class CreateState {
     uploadProgress,
     failure,
     publishedStoryId,
+    deletedStoryId,
     focusChoiceId,
   );
 

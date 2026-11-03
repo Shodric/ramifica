@@ -266,52 +266,65 @@ class _CreateViewState extends State<CreateView> {
         },
         child: BlocListener<CreateBloc, CreateState>(
           listenWhen: (previous, next) =>
-              _pendingPush &&
-              previous.job != CreateJob.none &&
-              next.job == CreateJob.none,
+              previous.deletedStoryId != next.deletedStoryId &&
+              next.deletedStoryId != null,
           listener: (context, state) {
-            _pendingPush = false;
-            if (state.failure != null) return;
-            final openId = state.openNodeId;
-            if (openId == null) return;
-            final bloc = context.read<CreateBloc>();
-            _pushNode(context, bloc, openId);
+            if (state.deletedStoryId == null) return;
+            try {
+              AppNavigation.read(context).go(AppRoutes.create);
+            } on FlutterError {
+              // Widget tests mount CreateView without the router.
+            }
           },
           child: BlocListener<CreateBloc, CreateState>(
             listenWhen: (previous, next) =>
-                _pendingOpenStory != null &&
-                next.story?.storyId == _pendingOpenStory &&
+                _pendingPush &&
+                previous.job != CreateJob.none &&
                 next.job == CreateJob.none,
             listener: (context, state) {
-              final opened = _pendingOpenStory;
-              _pendingOpenStory = null;
-              if (state.failure != null || opened == null) return;
-              _go(context, AppRoutes.createFor(opened));
+              _pendingPush = false;
+              if (state.failure != null) return;
+              final openId = state.openNodeId;
+              if (openId == null) return;
+              final bloc = context.read<CreateBloc>();
+              _pushNode(context, bloc, openId);
             },
-            child: Scaffold(
-              appBar: list
-                  ? AppBar(
-                      backgroundColor: RamificaColors.surface,
-                      surfaceTintColor: Colors.transparent,
-                      elevation: 0,
-                      title: Text('Create', style: RamificaText.headlineSM),
-                      actions: [
-                        IconButton(
-                          key: const ValueKey('create-new'),
-                          tooltip: 'New creation',
-                          icon: const Icon(Icons.add, size: 24),
-                          color: RamificaColors.nodeActive,
-                          onPressed: () {
-                            bloc.add(const DraftRequested());
-                            _go(context, AppRoutes.createNew);
-                          },
-                        ),
-                      ],
-                    )
-                  : null,
-              body: SafeArea(
-                child: BlocBuilder<CreateBloc, CreateState>(
-                  builder: (context, state) => _body(context, state),
+            child: BlocListener<CreateBloc, CreateState>(
+              listenWhen: (previous, next) =>
+                  _pendingOpenStory != null &&
+                  next.story?.storyId == _pendingOpenStory &&
+                  next.job == CreateJob.none,
+              listener: (context, state) {
+                final opened = _pendingOpenStory;
+                _pendingOpenStory = null;
+                if (state.failure != null || opened == null) return;
+                _go(context, AppRoutes.createFor(opened));
+              },
+              child: Scaffold(
+                appBar: list
+                    ? AppBar(
+                        backgroundColor: RamificaColors.surface,
+                        surfaceTintColor: Colors.transparent,
+                        elevation: 0,
+                        title: Text('Create', style: RamificaText.headlineSM),
+                        actions: [
+                          IconButton(
+                            key: const ValueKey('create-new'),
+                            tooltip: 'New creation',
+                            icon: const Icon(Icons.add, size: 24),
+                            color: RamificaColors.nodeActive,
+                            onPressed: () {
+                              bloc.add(const DraftRequested());
+                              _go(context, AppRoutes.createNew);
+                            },
+                          ),
+                        ],
+                      )
+                    : null,
+                body: SafeArea(
+                  child: BlocBuilder<CreateBloc, CreateState>(
+                    builder: (context, state) => _body(context, state),
+                  ),
                 ),
               ),
             ),

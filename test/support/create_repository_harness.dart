@@ -122,6 +122,16 @@ class _DraftHarness implements DraftPersistence {
   }
 
   @override
+  Future<void> unpublishStory(String storyId) async {
+    await call('unpublishStory', {'storyId': storyId});
+  }
+
+  @override
+  Future<void> deleteStory(String storyId) async {
+    await call('deleteStory', {'storyId': storyId});
+  }
+
+  @override
   Future<void> delete(String storyId, String nodeId) async {
     await call('deleteNode', {'storyId': storyId, 'nodeId': nodeId});
     _overrides.remove(nodeId);

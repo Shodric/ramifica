@@ -390,4 +390,48 @@ void main() {
       'root',
     ]);
   });
+  test('unpublishStory flips a published story back to draft', () async {
+    seedReady(store);
+    store.documents['stories/s']!['status'] = 'published';
+    await writer.unpublishStory('s');
+    final story = store.documents['stories/s']!;
+    expect(story['status'], 'draft');
+    expect(story['revision'], 5);
+    expect(story['updatedAt'], isNotNull);
+  });
+  test('unpublishStory rejects a draft story', () async {
+    seedReady(store);
+    await expectLater(writer.unpublishStory('s'), throwsA(isA<AppFailure>()));
+    expect(store.documents['stories/s']!['revision'], 4);
+  });
+  test('unpublishStory rejects another author', () async {
+    seedReady(store);
+    store.documents['stories/s']!['status'] = 'published';
+    await expectLater(
+      ClientDraftPersistence(store, () => 'other').unpublishStory('s'),
+      throwsA(isA<AppFailure>()),
+    );
+    expect(store.documents['stories/s']!['status'], 'published');
+  });
+  test('deleteStory removes the draft story doc', () async {
+    seedReady(store);
+    await writer.deleteStory('s');
+    expect(store.documents['stories/s'], isNull);
+    // Nodes stay but nothing can read them without the story doc.
+    expect(store.documents['stories/s/nodes/root'], isNotNull);
+  });
+  test('deleteStory rejects a published story', () async {
+    seedReady(store);
+    store.documents['stories/s']!['status'] = 'published';
+    await expectLater(writer.deleteStory('s'), throwsA(isA<AppFailure>()));
+    expect(store.documents['stories/s'], isNotNull);
+  });
+  test('deleteStory rejects another author', () async {
+    seedReady(store);
+    await expectLater(
+      ClientDraftPersistence(store, () => 'other').deleteStory('s'),
+      throwsA(isA<AppFailure>()),
+    );
+    expect(store.documents['stories/s'], isNotNull);
+  });
 }

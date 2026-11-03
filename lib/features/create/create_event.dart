@@ -540,3 +540,18 @@ final class CoverGenerateRequested extends CreateEvent {
   /// Revised cover prompt override, or null to use the fallback.
   final String? prompt;
 }
+
+/// Hides the open published story: an author-guarded client transaction
+/// flips `status` back to `draft`, so every player read rule stops
+/// matching and the story leaves the catalog. Publishing again creates
+/// a fresh publication.
+final class StoryUnpublished extends CreateEvent {
+  const StoryUnpublished();
+}
+
+/// Deletes the open draft story doc. GUARDED by firestore.rules: only
+/// the author of a draft may delete. Node and publication docs turn
+/// into unreachable orphans, like the Storage bytes node deletes leave.
+final class StoryDeleted extends CreateEvent {
+  const StoryDeleted();
+}
