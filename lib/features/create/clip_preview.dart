@@ -6,6 +6,11 @@ import 'package:video_player/video_player.dart';
 
 import 'voice_preview.dart' show mediaTime;
 
+/// Shared corner radius for the video and its surface states (loading,
+/// generating, error). The rounding lives on each surface, never on the
+/// box, so no black is painted around the aspect-fitted video.
+const _videoRadius = BorderRadius.all(Radius.circular(16));
+
 /// Embedded player, also used by the general preview. Playback is explicit.
 /// With [expand], the video box fills the leftover height instead of the
 /// fixed 280px (the parent must bound the height and the column).
@@ -130,9 +135,20 @@ class _ClipPreviewState extends State<ClipPreview> {
       alignment: Alignment.center,
       children: [
         if (ready)
-          AspectRatio(aspectRatio: v!.aspectRatio, child: VideoPlayer(c!))
+          ClipRRect(
+            clipBehavior: .hardEdge,
+            borderRadius: _videoRadius,
+            child: AspectRatio(
+              aspectRatio: v!.aspectRatio,
+              child: VideoPlayer(c!),
+            ),
+          )
         else
-          const ColoredBox(color: Colors.black, child: SizedBox.expand()),
+          const ClipRRect(
+            clipBehavior: .hardEdge,
+            borderRadius: _videoRadius,
+            child: ColoredBox(color: Colors.black, child: SizedBox.expand()),
+          ),
         if (error == null &&
             ((!ready && widget.active) || v?.isBuffering == true))
           const Column(
@@ -140,40 +156,48 @@ class _ClipPreviewState extends State<ClipPreview> {
             children: [CircularProgressIndicator(), Text('Loading video…')],
           ),
         if (widget.generating)
-          ColoredBox(
-            color: Colors.black54,
-            child: SizedBox.expand(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(),
-                  Text(
-                    widget.phase == 'processing'
-                        ? 'Processing video…'
-                        : widget.phase == 'saving'
-                        ? 'Saving changes…'
-                        : 'Generating video…',
-                  ),
-                ],
+          ClipRRect(
+            clipBehavior: .hardEdge,
+            borderRadius: _videoRadius,
+            child: ColoredBox(
+              color: Colors.black54,
+              child: SizedBox.expand(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    Text(
+                      widget.phase == 'processing'
+                          ? 'Processing video…'
+                          : widget.phase == 'saving'
+                          ? 'Saving changes…'
+                          : 'Generating video…',
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         if (error != null)
-          ColoredBox(
-            color: Colors.black87,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Center(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(error),
-                      TextButton(
-                        onPressed: widget.active ? _load : null,
-                        child: const Text('Retry video'),
-                      ),
-                    ],
+          ClipRRect(
+            clipBehavior: .hardEdge,
+            borderRadius: _videoRadius,
+            child: ColoredBox(
+              color: Colors.black87,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Center(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(error),
+                        TextButton(
+                          onPressed: widget.active ? _load : null,
+                          child: const Text('Retry video'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

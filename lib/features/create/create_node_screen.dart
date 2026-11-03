@@ -10,6 +10,7 @@ import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/app_failure.dart';
+import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/features/create/asr_socket.dart';
 import 'package:ramifica/features/create/create_bloc.dart';
@@ -118,11 +119,25 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   /// Persists pending edits, if any. False keeps the step: the failure
   /// surfaces through the shared failure text.
   Future<bool> _flushEdits(String nodeId) async {
-    if (!widget.bloc.hasUnsavedNodeEdits(nodeId) &&
-        !widget.bloc.hasUnsavedStoryEdits) {
-      return true;
+    while (widget.bloc.hasUnsavedNodeEdits(nodeId) ||
+        widget.bloc.hasUnsavedStoryEdits) {
+      if (!mounted ||
+          widget.bloc.state.story == null ||
+          !widget.bloc.state.nodes.any((node) => node.nodeId == nodeId)) {
+        return false;
+      }
+      if (!await widget.bloc.flushNode(nodeId)) return false;
     }
-    return widget.bloc.flushNode(nodeId);
+    return true;
+  }
+
+  /// Called only after edits are saved, discarded, or already clean.
+  /// PopScope can still have the previous dirty value until the next frame;
+  /// maybePop would invoke the guard again and loop before that frame runs.
+  void _popEditor() {
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop();
   }
 
   /// Leaves to the canvas, confirming when edits are unsaved.
@@ -131,7 +146,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     final dirty =
         bloc.hasUnsavedStoryEdits || bloc.hasUnsavedNodeEdits(widget.nodeId);
     if (!dirty) {
-      if (mounted) Navigator.of(context).maybePop();
+      _popEditor();
       return;
     }
     final choice = await showDialog<_LeaveChoice>(
@@ -168,11 +183,11 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
         return;
       case _LeaveChoice.discard:
         bloc.add(EditsDiscarded(nodeId: widget.nodeId));
-        Navigator.of(context).maybePop();
+        _popEditor();
       case _LeaveChoice.save:
         _stopScriptDictation();
-        if (await bloc.flushNode(widget.nodeId) && mounted) {
-          Navigator.of(context).maybePop();
+        if (await _flushEdits(widget.nodeId) && mounted) {
+          _popEditor();
         }
     }
   }
@@ -250,7 +265,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       });
     } else {
       // Last step complete: back to the canvas.
-      Navigator.of(context).maybePop();
+      _popEditor();
     }
   }
 
@@ -432,6 +447,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                 backgroundColor: RamificaColors.surface,
                 surfaceTintColor: Colors.transparent,
                 elevation: 0,
+                centerTitle: false,
                 leading: IconButton(
                   key: const ValueKey('wizard-leave'),
                   tooltip: 'Back to scenes',
@@ -515,10 +531,65 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                       onPressed: busy
                           ? null
                           : () async {
+                              _stopScriptDictation();
                               setState(() => _previewOpen = true);
-                              await showCreatePreview(context, node: node);
-                              if (mounted) {
-                                setState(() => _previewOpen = false);
+                              try {
+                                final current = widget.bloc.state;
+                                final previewNode = current.nodes.firstWhere(
+                                  (item) => item.nodeId == widget.nodeId,
+                                  orElse: () => node,
+                                );
+                                final auth = widget.bloc.auth;
+                                final story = current.story;
+                                await showCreatePreview(
+                                  context,
+                                  node: previewNode,
+                                  story: story,
+                                  authorName:
+                                      auth?.auth.currentIdentity?.displayName,
+                                  nodes: current.nodes,
+                                  rootNodeId: story?.rootNodeId,
+                                  authorNameLookup:
+                                      auth == null || story == null
+                                      ? null
+                                      : _previewAuthorName(
+                                          auth,
+                                          story.authorId,
+                                        ),
+                                  // The notice chevron on an unfinished
+                                  // target: close the preview and open that
+                                  // node for editing. Editors below the hub
+                                  // are dropped, so back returns to the
+                                  // scene hub instead of stacking editors.
+                                  onOpenNode: (targetId) async {
+                                    widget.bloc.add(NodeSelected(targetId));
+                                    _stopScriptDictation();
+                                    setState(() => _childOpen = true);
+                                    Navigator.of(
+                                      context,
+                                      rootNavigator: true,
+                                    ).pop();
+                                    await Navigator.of(context)
+                                        .pushAndRemoveUntil(
+                                          MaterialPageRoute(
+                                            builder: (_) => CreateNodeScreen(
+                                              bloc: widget.bloc,
+                                              nodeId: targetId,
+                                              pickVideo: widget.pickVideo,
+                                              newTakeId: widget.newTakeId,
+                                            ),
+                                          ),
+                                          (route) => route.isFirst,
+                                        );
+                                    if (mounted) {
+                                      setState(() => _childOpen = false);
+                                    }
+                                  },
+                                );
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _previewOpen = false);
+                                }
                               }
                             },
                     ),
@@ -1064,4 +1135,14 @@ bool _ideaFilled(CreateState state, DraftNode node) {
   final synopsis = state.story?.synopsis.trim() ?? '';
   if (synopsis.isNotEmpty) return true;
   return node.ttsText.trim().isNotEmpty;
+}
+
+Future<String> _previewAuthorName(AuthRepository auth, String authorId) async {
+  try {
+    final name = (await auth.users.read(authorId))?.displayName?.trim() ?? '';
+    return name.isEmpty ? 'Unknown' : name;
+  } catch (_) {
+    final name = auth.auth.currentIdentity?.displayName?.trim() ?? '';
+    return name.isEmpty ? 'Unknown' : name;
+  }
 }

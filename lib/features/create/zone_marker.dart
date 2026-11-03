@@ -287,6 +287,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     final shortest = width < height ? width : height;
     final ring = choice.radius * shortest;
     final diameter = ring * 2;
+    final markerDiameter = diameter.clamp(0.0, 40.0);
     return Positioned(
       left: at.dx * width - ring,
       top: at.dy * height - ring,
@@ -338,45 +339,60 @@ class _ZoneMarkerState extends State<ZoneMarker> {
                 _selectedId = choice.choiceId;
                 _dragging = null;
               }),
-        child: Column(
-          mainAxisAlignment: .center,
-          mainAxisSize: .min,
+        child: Stack(
+          clipBehavior: .none,
           children: [
-            Container(
-              key: ValueKey('zone-ring-$nodeId-${choice.choiceId}'),
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                shape: .circle,
-                color: RamificaColors.containerLowest.withValues(alpha: 0.9),
-                border: Border.all(color: accent, width: selected ? 2 : 1),
-                boxShadow: [
-                  BoxShadow(
-                    color: accent.withValues(alpha: 0.45),
-                    blurRadius: selected ? 16 : 10,
-                  ),
-                ],
-              ),
-              child: Icon(
-                choiceIconData(choice.icon, index),
-                size: 20,
-                color: choiceIconColor(choice.iconColor, accent),
+            Align(
+              alignment: .center,
+              child: Container(
+                key: ValueKey('zone-ring-$nodeId-${choice.choiceId}'),
+                width: markerDiameter,
+                height: markerDiameter,
+                decoration: BoxDecoration(
+                  shape: .circle,
+                  color: RamificaColors.containerLowest.withValues(alpha: 0.9),
+                  border: Border.all(color: accent, width: selected ? 2 : 1),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.45),
+                      blurRadius: selected ? 16 : 10,
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  choiceIconData(choice.icon, index),
+                  size: 20,
+                  color: choiceIconColor(choice.iconColor, accent),
+                ),
               ),
             ),
-            const SizedBox(height: 4),
-            Container(
-              constraints: const BoxConstraints(maxWidth: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: RamificaColors.containerLowest.withValues(alpha: 0.9),
-                borderRadius: BorderRadius.circular(4),
-                border: selected ? Border.all(color: accent) : null,
-              ),
-              child: Text(
-                choice.label,
-                maxLines: 1,
-                overflow: .ellipsis,
-                style: RamificaText.labelSM.copyWith(fontSize: 10),
+            Positioned(
+              left: (diameter - 120) / 2,
+              top: diameter / 2 + markerDiameter / 2 + 4,
+              width: 120,
+              child: IgnorePointer(
+                child: Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: RamificaColors.containerLowest.withValues(
+                        alpha: 0.9,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                      border: selected ? Border.all(color: accent) : null,
+                    ),
+                    child: Text(
+                      choice.label,
+                      maxLines: 1,
+                      overflow: .ellipsis,
+                      style: RamificaText.labelSM.copyWith(fontSize: 10),
+                    ),
+                  ),
+                ),
               ),
             ),
           ],

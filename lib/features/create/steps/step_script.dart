@@ -417,21 +417,6 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
                 style: RamificaText.meta.copyWith(color: RamificaColors.error),
               ),
             ],
-            if (_proposing) ...[
-              const SizedBox(height: 8),
-              Row(
-                key: ValueKey('script-proposing-$nodeId'),
-                children: const [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 8),
-                  Text('Proposing scene…', style: RamificaText.meta),
-                ],
-              ),
-            ],
             if (node.isEnding) ...[
               const SizedBox(height: 8),
               TextField(
