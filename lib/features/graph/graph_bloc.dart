@@ -21,7 +21,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
     Emitter<GraphState> emit,
   ) async {
     final story = event.storyId.trim();
-    final run = event.runId.trim();
+    var run = event.runId.trim();
     if (story.isEmpty) {
       emit(const GraphState(phase: .loaded));
       return;
@@ -34,6 +34,10 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
       ),
     );
     try {
+      if (run.isEmpty) {
+        run = await repository.resumeRun(story);
+        if (emit.isDone) return;
+      }
       final result = await repository.fetchStubs(storyId: story, runId: run);
       if (emit.isDone) return;
       emit(
@@ -54,7 +58,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
           phase: .failed,
           storyId: story,
           runId: run.isEmpty ? null : run,
-          failure: error.phrase,
+          failure: error.hint,
         ),
       );
     }

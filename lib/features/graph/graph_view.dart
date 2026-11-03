@@ -38,15 +38,44 @@ class GraphView extends StatefulWidget {
 
 class _GraphViewState extends State<GraphView> {
   GraphBloc? _bloc;
+  FeedBloc? _feed;
+  (String, String, String?)? _lastRequest;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_bloc != null) return;
-    final runId = widget.runId ?? _feedRunId(context);
-    _bloc = GraphBloc(
+    _feed = _feedOf(context);
+    _bloc ??= GraphBloc(
       repository: widget.repository ?? createFirebaseGraphRepository(),
-    )..add(GraphRequested(storyId: widget.storyId, runId: runId ?? ''));
+    );
+    _requestGraph();
+  }
+
+  @override
+  void didUpdateWidget(GraphView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _requestGraph();
+  }
+
+  void _requestGraph({bool force = false}) {
+    final bloc = _bloc;
+    if (bloc == null) return;
+    final feed = _feed?.state;
+    final requestedStory = widget.storyId.trim();
+    final story = requestedStory.isEmpty
+        ? feed?.storyId?.trim() ?? ''
+        : requestedStory;
+    final followsFeed = widget.runId == null && feed?.storyId == story;
+    final run = (widget.runId ?? (followsFeed ? feed?.runId : null) ?? '')
+        .trim();
+    final node = followsFeed ? feed?.playback?.node.nodeId : null;
+    final request = (story, run, node);
+    if (!force && request == _lastRequest) return;
+    _lastRequest = request;
+    final savedRun = bloc.state.storyId == story ? bloc.state.runId : null;
+    bloc.add(
+      GraphRequested(storyId: story, runId: run.isEmpty ? savedRun ?? '' : run),
+    );
   }
 
   @override
@@ -68,7 +97,7 @@ class _GraphViewState extends State<GraphView> {
           builder: (context, state) {
             return Scaffold(
               body: Semantics(
-                label: 'Map ${widget.storyId}',
+                label: 'Map ${state.storyId ?? widget.storyId}',
                 child: SafeArea(child: _body(context, state)),
               ),
             );
@@ -95,7 +124,7 @@ class _GraphViewState extends State<GraphView> {
       return Center(
         child: FailureText(
           message: state.failure ?? 'Something failed',
-          onRetry: () => _reload(context, state),
+          onRetry: () => _requestGraph(force: true),
         ),
       );
     }
@@ -148,7 +177,7 @@ class _GraphViewState extends State<GraphView> {
                 onApproach: () => context.read<GraphBloc>().add(
                   ApproachRequested(selected.nodeId),
                 ),
-                onRetry: () => _reload(context, state),
+                onRetry: () => _requestGraph(force: true),
                 onSelectChild: (id) {
                   final bloc = context.read<GraphBloc>();
                   var locked = false;
@@ -164,13 +193,6 @@ class _GraphViewState extends State<GraphView> {
     );
   }
 
-  void _reload(BuildContext context, GraphState state) {
-    final runId = widget.runId ?? _feedRunId(context) ?? state.runId ?? '';
-    context.read<GraphBloc>().add(
-      GraphRequested(storyId: widget.storyId, runId: runId),
-    );
-  }
-
   void _continue(BuildContext context) {
     context.read<GraphBloc>().add(const ContinueRequested());
     try {
@@ -179,7 +201,7 @@ class _GraphViewState extends State<GraphView> {
     } on Exception {
       // Widget tests mount GraphView without the shell.
     }
-    final story = widget.storyId.trim();
+    final story = context.read<GraphBloc>().state.storyId ?? '';
     try {
       AppNavigation.read(context).go(
         story.isEmpty
@@ -205,9 +227,9 @@ class _GraphViewState extends State<GraphView> {
   }
 }
 
-String? _feedRunId(BuildContext context) {
+FeedBloc? _feedOf(BuildContext context) {
   try {
-    return BlocProvider.of<FeedBloc>(context, listen: false).state.runId;
+    return BlocProvider.of<FeedBloc>(context, listen: true);
   } on FlutterError {
     return null;
   }

@@ -10,6 +10,15 @@ class GraphRepository {
   final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)
   execute;
 
+  /// Resumes the story's saved run, or creates its first run. Opening a
+  /// map directly does not require Feed to have loaded playback first.
+  Future<String> resumeRun(String storyId) async {
+    final story = storyId.trim();
+    if (story.isEmpty) throw const AppFailure(.invalid);
+    final payload = await execute('startRun', {'storyId': story});
+    return RunStart.fromJson(payload).runId;
+  }
+
   /// Every node of the story. Visited nodes carry title and counts;
   /// unvisited secret nodes carry only an id.
   Future<GraphStubsResult> fetchStubs({
@@ -52,8 +61,7 @@ class GraphRepository {
   }
 }
 
-/// Production source: the `graphStubs`, `playApproach`, and `rewindRun`
-/// callables in `us-central1`.
+/// Production source: direct, account-scoped persistence.
 GraphRepository createFirebaseGraphRepository() {
   return GraphRepository(execute: ClientGameService.shared.execute);
 }

@@ -2,7 +2,7 @@ sealed class GraphEvent {
   const GraphEvent();
 }
 
-/// Opens the map: fetches every stub of [storyId] for [runId].
+/// Opens the map for [runId], or resumes the story's run when it is blank.
 final class GraphRequested extends GraphEvent {
   const GraphRequested({required this.storyId, required this.runId});
 

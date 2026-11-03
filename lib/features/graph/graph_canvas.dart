@@ -541,14 +541,18 @@ class _BranchCard extends StatelessWidget {
                   semanticLabel: 'Chosen',
                 ),
                 SizedBox(width: 4),
-                Text(
-                  'Chosen branch',
-                  style: TextStyle(
-                    fontFamily: RamificaText.sans,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                    height: 16 / 12,
-                    color: RamificaColors.nodeActive,
+                Flexible(
+                  child: Text(
+                    'Chosen branch',
+                    maxLines: 1,
+                    overflow: .ellipsis,
+                    style: TextStyle(
+                      fontFamily: RamificaText.sans,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      height: 16 / 12,
+                      color: RamificaColors.nodeActive,
+                    ),
                   ),
                 ),
               ],
@@ -573,7 +577,14 @@ class _BranchCard extends StatelessWidget {
                       color: RamificaColors.onPrimaryContainer,
                     ),
                     SizedBox(width: 4),
-                    Text('Play branch', style: RamificaText.labelSM),
+                    Flexible(
+                      child: Text(
+                        'Play branch',
+                        maxLines: 1,
+                        overflow: .ellipsis,
+                        style: RamificaText.labelSM,
+                      ),
+                    ),
                   ],
                 ),
               ),
