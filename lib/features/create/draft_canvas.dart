@@ -135,7 +135,13 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
     for (final kid in kids) {
       if (!left.containsKey(kid)) place(kid);
     }
-    left[id] = (left[kids.first]! + left[kids.last]!) / 2;
+    // Pivot over real children only: `+` minis keep their leaf slots (so
+    // a tapped mini is replaced by its child on the same spot) but never
+    // drag the parent sideways. Single-child runs stack vertically and
+    // every connector keeps the same length.
+    final real = [for (final kid in kids) if (!kid.startsWith('mini:')) kid];
+    final span = real.isEmpty ? kids : real;
+    left[id] = (left[span.first]! + left[span.last]!) / 2;
   }
 
   place(root);

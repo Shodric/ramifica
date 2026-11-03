@@ -170,20 +170,29 @@ class _StepHotspotsState extends State<StepHotspots> {
   /// options present asks first: making the node final deletes them.
   Widget _endingToggle(DraftNode node) {
     final setEnding = widget.onEndingToggled;
-    return SwitchListTile(
-      key: ValueKey('ending-toggle-${node.nodeId}'),
-      title: const Text('Final scene'),
-      subtitle: const Text('No options: the story ends here.'),
-      value: node.isEnding,
-      onChanged: setEnding == null
-          ? null
-          : (value) {
-              if (value && node.choices.isNotEmpty) {
-                _confirmMakeFinal(node, setEnding);
-              } else {
-                setEnding(value);
-              }
-            },
+    // Same gray container as the Add Option buttons above: containerBase
+    // fill with a 12px radius. Material (not DecoratedBox): ListTile
+    // paints on its nearest Material ancestor, so a DecoratedBox would
+    // hide its ink effects and trip a framework assertion.
+    return Material(
+      color: RamificaColors.containerBase,
+      borderRadius: BorderRadius.circular(12),
+      child: SwitchListTile(
+        key: ValueKey('ending-toggle-${node.nodeId}'),
+        title: const Text('Final scene'),
+        subtitle: const Text('No options: the story ends here.'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        value: node.isEnding,
+        onChanged: setEnding == null
+            ? null
+            : (value) {
+                if (value && node.choices.isNotEmpty) {
+                  _confirmMakeFinal(node, setEnding);
+                } else {
+                  setEnding(value);
+                }
+              },
+      ),
     );
   }
 

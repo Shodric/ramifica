@@ -3058,6 +3058,47 @@ void main() {
         'orphan': '',
       });
     });
+
+    test('single-child runs stack vertically over the real child', () {
+      // Chain root -A-> node_2 -A-> node_3 with free B slots: `+` minis
+      // keep their leaf spots but must not drag parents sideways, so
+      // every connector is vertical and shares the same length.
+      DraftChoice choice(String id, String target) {
+        return DraftChoice(
+          choiceId: id,
+          label: '',
+          targetNodeId: target,
+          isDefault: true,
+          slot: 'A',
+        );
+      }
+
+      final nodes = [
+        DraftNode(
+          nodeId: 'node_1',
+          title: 'Root',
+          choices: [choice('c1', 'node_2')],
+        ),
+        DraftNode(
+          nodeId: 'node_2',
+          title: 'Mid',
+          choices: [choice('c2', 'node_3')],
+        ),
+        const DraftNode(nodeId: 'node_3', title: 'Leaf'),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'node_1');
+      final root = layout.positions['node_1']!;
+      final mid = layout.positions['node_2']!;
+      final leaf = layout.positions['node_3']!;
+      expect(mid.dx, root.dx);
+      expect(leaf.dx, root.dx);
+      expect(mid.dy - root.dy, leaf.dy - mid.dy);
+      // Minis still hang on the free B slot, right of the run.
+      final mini = layout.positions['mini:node_1:B']!;
+      expect(mini.dx, greaterThan(root.dx));
+      expect(mini.dy, root.dy + (mid.dy - root.dy));
+    });
   });
 }
 
