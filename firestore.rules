@@ -52,6 +52,11 @@ service cloud.firestore {
         && optionalText(n, 'videoPrompt', 2000)
         && optionalText(n, 'sceneDirection', 2000)
         && n.choices is list && n.choices.size() <= 2
+        && (n.get('cutSlots', null) == null || (n.cutSlots is list
+          && n.cutSlots.size() <= 2
+          && (n.cutSlots.size() == 0 || n.cutSlots[0] in ['A', 'B'])
+          && (n.cutSlots.size() < 2 || (n.cutSlots[1] in ['A', 'B']
+            && n.cutSlots[0] != n.cutSlots[1]))))
         && (!n.isEnding || n.choices.size() == 0)
         && (n.choices.size() == 0 || validChoice(n.choices[0]))
         && (n.choices.size() < 2 || (validChoice(n.choices[1])
@@ -61,7 +66,7 @@ service cloud.firestore {
     }
     function authorNodeKeys() {
       return ['title', 'visibility', 'isEnding', 'endingName', 'endingType',
-        'ttsText', 'lineApproved', 'ttsApproved', 'choices',
+        'ttsText', 'lineApproved', 'ttsApproved', 'choices', 'cutSlots',
         'startImagePrompt', 'videoPrompt', 'sceneDirection',
         'startImageApproved'];
     }
