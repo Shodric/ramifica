@@ -1355,6 +1355,7 @@ void main() {
           MapEntry('node_1', {
             ..._nodeDoc(),
             'uploadError': 'encode-failed',
+            'uploadErrorDetail': 'ffmpeg exit 1: Invalid data.',
             'uploadTakeId': 'take_9',
           }),
           MapEntry('node_2', _nodeDoc()),
@@ -1366,6 +1367,7 @@ void main() {
         nodeId: 'node_1',
       );
       expect(failed.error, 'encode-failed');
+      expect(failed.detail, 'ffmpeg exit 1: Invalid data.');
       expect(failed.takeId, 'take_9');
 
       final echoed = await repository.fetchUploadMarker(
@@ -1373,6 +1375,7 @@ void main() {
         nodeId: 'node_2',
       );
       expect(echoed.error, isNull);
+      expect(echoed.detail, isNull);
       expect(echoed.takeId, 'take1');
 
       final missing = await repository.fetchUploadMarker(

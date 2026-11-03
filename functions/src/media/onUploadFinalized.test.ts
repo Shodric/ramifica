@@ -495,6 +495,7 @@ test("encode failure fails the node with a reason", async () => {
   const node = await nodeOf(s.db);
   assert.equal(node.videoStatus, "failed");
   assert.equal(node.uploadError, "encode-failed");
+  assert.equal(node.uploadErrorDetail, "codec blew up.");
   assert.equal(node.mediaError, "Video processing failed. Try another clip.");
   assert.equal(node.generationKind, null);
   assert.equal(node.generationPhase, null);
