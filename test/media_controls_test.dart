@@ -158,7 +158,7 @@ void main() {
       await tester.tap(find.byTooltip('Play video'));
       await tester.pump();
       await show(active: false, url: 'https://fixture/two.mp4');
-      await tester.pump();
+      await settlePlayer(tester);
       expect(platform.playing[2], false);
       await tester.pumpWidget(const SizedBox.shrink());
       await settlePlayer(tester);
