@@ -267,7 +267,7 @@ String? validateVideoUpload({
 /// The bloc polls the marker until the echo matches its own take before
 /// trusting the error — a pre-trigger read carries the previous take's
 /// echo (or none) and never resolves the upload.
-typedef UploadMarker = ({String? error, String? takeId});
+typedef UploadMarker = ({String? error, String? detail, String? takeId});
 
 /// Story-doc merge transport: `stories/{id}` patched client-direct.
 /// Tests inject a fake; production uses the Firestore merge in
@@ -937,16 +937,26 @@ class CreateRepository {
     for (final doc in docs) {
       if (doc.key == node) {
         final error = doc.value['uploadError'];
+        final detail = doc.value['uploadErrorDetail'];
         final take = doc.value['uploadTakeId'];
-        return (
+        final marker = (
           error: error is String && error.trim().isNotEmpty
               ? error.trim()
               : null,
+          detail: detail is String && detail.trim().isNotEmpty
+              ? detail.trim()
+              : null,
           takeId: take is String && take.trim().isNotEmpty ? take.trim() : null,
         );
+        debugPrint(
+          'fetchUploadMarker: $story/$node error=${marker.error} '
+          'detail=${marker.detail} takeId=${marker.takeId}',
+        );
+        return marker;
       }
     }
-    return (error: null, takeId: null);
+    debugPrint('fetchUploadMarker: $story/$node no doc (miss)');
+    return (error: null, detail: null, takeId: null);
   }
 
   /// Reads the trigger-recorded upload error for one node (`uploadError`

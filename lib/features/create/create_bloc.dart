@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/draft_story.dart';
@@ -1756,10 +1757,19 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           storyId: story.storyId,
           nodeId: event.nodeId,
         );
+        debugPrint(
+          'upload poll: $polls/$maxUploadPolls take=$takeId '
+          'marker=${marker.takeId} error=${marker.error} '
+          'detail=${marker.detail}',
+        );
         // Live nodes while waiting: a trigger-written `pending` shows
         // through the running pill once the echo is close.
         emit(state.copy(nodes: _mergeReload(nodes)));
       }
+      debugPrint(
+        'upload poll: resolved take=$takeId marker=${marker.takeId} '
+        'error=${marker.error} detail=${marker.detail} polls=$polls',
+      );
       if (marker.takeId != takeId) {
         emit(
           state.copy(
