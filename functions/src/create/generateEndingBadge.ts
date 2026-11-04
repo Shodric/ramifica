@@ -154,6 +154,14 @@ export const generateEndingBadgeWith = async (
     storyId, nodeId, bytes: normalized.bytes,
   });
   await writeMedia(db, storyId, nodeId, {endingBadgeUrl: badgeUrl});
+  // A badge minted after publish never reaches players through the draft
+  // copy: mirror it into the live publication node of the same id.
+  const publicationId = optString(loaded.story.activePublicationId);
+  if (publicationId !== null) {
+    await db
+      .doc(`stories/${storyId}/publications/${publicationId}/nodes/${nodeId}`)
+      .set({endingBadgeUrl: badgeUrl}, {merge: true});
+  }
   return {badgeUrl, width: normalized.width, height: normalized.height};
 };
 

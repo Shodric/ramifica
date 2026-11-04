@@ -172,6 +172,7 @@ Playback _draftPlayback(DraftNode node, DraftStory? story, String? authorName) {
       ttsDurationSeconds: node.ttsDurationSeconds,
       endingName: node.endingName,
       endingType: node.endingType,
+      endingBadgeUrl: node.endingBadgeUrl,
     ),
     choices: [
       for (final choice in node.choices)
