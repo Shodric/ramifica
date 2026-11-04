@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/features/create/create_event.dart';
+import 'package:ramifica/features/create/premise_sheet.dart';
 import 'package:ramifica/features/create/steps/fill_preview_dialog.dart';
 
 const _full = SceneProposal(
@@ -140,6 +141,79 @@ void main() {
       expect(called, isTrue);
       expect(result, isFalse);
       expect(find.text('Proposed options'), findsNothing);
+    });
+  });
+
+  group('showPremisePreview', () {
+    const proposal = PremiseProposal(
+      title: 'Rain door',
+      idea: 'You stand before the rain door.',
+      options: [OutlineOption(label: 'Enter', icon: 'door')],
+    );
+
+    Future<void> pumpOpener(
+      WidgetTester tester,
+      void Function(bool?) onResult,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  onResult(
+                    await showPremisePreview(
+                      context: context,
+                      proposal: proposal,
+                    ),
+                  );
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('lists the premise values with Accept and Discard', (
+      tester,
+    ) async {
+      bool? result;
+      await pumpOpener(tester, (value) => result = value);
+
+      expect(find.text('Proposed idea'), findsOneWidget);
+      expect(find.text('Title'), findsOneWidget);
+      expect(find.text('Rain door'), findsOneWidget);
+      expect(find.text('Idea'), findsOneWidget);
+      expect(find.text('You stand before the rain door.'), findsOneWidget);
+      expect(find.text('Option A'), findsOneWidget);
+      expect(find.text('Enter · door'), findsOneWidget);
+      expect(find.text('Option B'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
+      await tester.pumpAndSettle();
+
+      expect(result, isTrue);
+      expect(find.text('Proposed idea'), findsNothing);
+    });
+
+    testWidgets('Discard closes without accepting', (tester) async {
+      var called = false;
+      bool? result;
+      await pumpOpener(tester, (value) {
+        called = true;
+        result = value;
+      });
+
+      await tester.tap(find.byKey(const ValueKey('fill-discard')));
+      await tester.pumpAndSettle();
+
+      expect(called, isTrue);
+      expect(result, isFalse);
+      expect(find.text('Proposed idea'), findsNothing);
     });
   });
 }

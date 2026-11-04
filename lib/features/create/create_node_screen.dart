@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,8 +19,11 @@ import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_preview.dart';
 import 'package:ramifica/features/create/create_state.dart';
+import 'package:ramifica/features/create/crop_image.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
+import 'package:ramifica/features/create/premise_sheet.dart';
 import 'package:ramifica/features/create/steps/fill_preview_dialog.dart';
+import 'package:ramifica/features/create/steps/reference_cropper.dart';
 import 'package:ramifica/features/create/steps/step_clip.dart';
 import 'package:ramifica/features/create/steps/step_frames.dart';
 import 'package:ramifica/features/create/steps/step_hotspots.dart';
@@ -50,12 +54,18 @@ class CreateNodeScreen extends StatefulWidget {
     required this.nodeId,
     required this.pickVideo,
     required this.newTakeId,
+    this.pickImage,
   });
 
   final CreateBloc bloc;
   final String nodeId;
   final PickVideoFile? pickVideo;
   final String Function() newTakeId;
+
+  /// Picks a reference still for the Scenes step. Injected for tests;
+  /// production wires the browser picker. Null hides the reference
+  /// upload button.
+  final PickImageFile? pickImage;
 
   @override
   State<CreateNodeScreen> createState() => _CreateNodeScreenState();
@@ -91,6 +101,10 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
   /// An Info Continue is mid propose+apply. Disables the footer while
   /// the proposal round-trips.
   var _scriptProposing = false;
+
+  /// An Idea spark is mid propose. Disables the fill button while the
+  /// proposal round-trips.
+  var _premiseProposing = false;
 
   @override
   void dispose() {
@@ -359,6 +373,39 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
     }
   }
 
+  /// AppBar spark on Idea: proposes from the idea text and previews
+  /// it for Accept/Discard. Never leaves the step. An empty idea and
+  /// other failures surface once, as an error snackbar.
+  Future<void> _onProposeForPremise() async {
+    if (_premiseProposing) return;
+    final premise = _premiseKey.currentState;
+    if (premise == null) return;
+    setState(() => _premiseProposing = true);
+    late final PremiseProposal proposal;
+    try {
+      final answer = await premise.proposePremise();
+      if (!mounted || !_premise) return;
+      if (answer == null) {
+        final reason = premise.takePremiseError();
+        showErrorSnackBar(
+          context,
+          reason ?? 'Could not propose for this section. Try again.',
+        );
+        return;
+      }
+      proposal = answer;
+    } finally {
+      // The spinner stops while the preview is reviewed.
+      if (mounted) setState(() => _premiseProposing = false);
+    }
+    final accepted = await showPremisePreview(
+      context: context,
+      proposal: proposal,
+    );
+    if (!mounted || !_premise || accepted != true) return;
+    premise.applyPremise(proposal);
+  }
+
   /// Dispatches the reviewed proposal and waits for persistence.
   Future<bool> _applyProposal(String nodeId, SceneProposal proposal) async {
     final completion = Completer<bool>();
@@ -373,6 +420,49 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
       return await completion.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
       return false;
+    }
+  }
+
+  /// Scenes reference flow, fully client-side: pick an image, frame it
+  /// 9:16 in the cropper, crop on a canvas, then dispatch the cropped
+  /// JPEG for direct Storage upload. Cancels at any point leave the
+  /// step untouched; picker and crop rejections surface once as a snack.
+  Future<void> _uploadReference() async {
+    final pick = widget.pickImage;
+    if (pick == null) return;
+    try {
+      final picked = await pick();
+      if (!mounted || picked == null) return;
+      final region = await showReferenceCropper(
+        context: context,
+        image: MemoryImage(Uint8List.fromList(picked.bytes)),
+        imageSize: Size(picked.width.toDouble(), picked.height.toDouble()),
+      );
+      if (!mounted || region == null) return;
+      final cropped = await cropImageToJpeg(
+        bytes: picked.bytes,
+        region: region,
+      );
+      if (!mounted) return;
+      _runMedia(() {
+        _uploadSnackArmed = true;
+        widget.bloc.add(
+          ReferenceUploadRequested(
+            nodeId: widget.nodeId,
+            contentType: 'image/jpeg',
+            bytes: cropped,
+          ),
+        );
+      });
+    } on AppFailure catch (error) {
+      if (mounted) showErrorSnackBar(context, error.hint);
+    } catch (_) {
+      if (mounted) {
+        showErrorSnackBar(
+          context,
+          'Could not read the selected image. Try again.',
+        );
+      }
     }
   }
 
@@ -535,29 +625,31 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                   ],
                 ),
                 actions: [
-                  // Section fill: proposes from the direction for the
-                  // active step only, then previews for Accept/Discard.
-                  if (!showPremise)
-                    IconButton(
-                      key: const ValueKey('wizard-fill-section'),
-                      tooltip: 'Propose for this section',
-                      icon: _scriptProposing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.auto_awesome, size: 22),
-                      color: RamificaColors.textPrimary,
-                      onPressed:
-                          busy ||
-                              _scriptProposing ||
-                              !(_scriptKey.currentState?.directionReady ??
-                                  false) ||
+                  // Section fill: proposes for the active section only,
+                  // then previews for Accept/Discard. On Idea the source
+                  // is the idea text (an empty idea reports back instead
+                  // of proposing); on the steps, the direction.
+                  IconButton(
+                    key: const ValueKey('wizard-fill-section'),
+                    tooltip: 'Propose for this section',
+                    icon: _scriptProposing || _premiseProposing
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.auto_awesome, size: 22),
+                    color: RamificaColors.textPrimary,
+                    onPressed:
+                        busy || _scriptProposing || _premiseProposing
+                        ? null
+                        : showPremise
+                        ? _onProposeForPremise
+                        : !(_scriptKey.currentState?.directionReady ?? false) ||
                               (stepIndex == 4 && node.isEnding)
-                          ? null
-                          : () => _onProposeForStep(node, isRoot),
-                    ),
+                        ? null
+                        : () => _onProposeForStep(node, isRoot),
+                  ),
                   if (node.videoStatus == 'ready' &&
                       (node.videoUrl ?? '').isNotEmpty)
                     IconButton(
@@ -614,6 +706,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                               nodeId: targetId,
                                               pickVideo: widget.pickVideo,
                                               newTakeId: widget.newTakeId,
+                                              pickImage: widget.pickImage,
                                             ),
                                           ),
                                           (route) => route.isFirst,
@@ -773,6 +866,23 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                                 ),
                                               ),
                                             ),
+                                        uploadProgress:
+                                            state.job == CreateJob.uploading &&
+                                                state.jobNodeId == widget.nodeId
+                                            ? state.uploadProgress
+                                            : null,
+                                        onUploadReference:
+                                            widget.pickImage == null
+                                            ? null
+                                            : _uploadReference,
+                                        onReferenceRemoved: () => _edited(
+                                          () => widget.bloc.add(
+                                            NodeFieldChanged(
+                                              nodeId: widget.nodeId,
+                                              startImageReferenceUrl: '',
+                                            ),
+                                          ),
+                                        ),
                                         onImageGenerate: (which, prompt) =>
                                             _runMedia(
                                               () => widget.bloc.add(
@@ -1007,6 +1117,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                               nodeId: targetId,
                                               pickVideo: widget.pickVideo,
                                               newTakeId: widget.newTakeId,
+                                              pickImage: widget.pickImage,
                                             ),
                                           ),
                                         );

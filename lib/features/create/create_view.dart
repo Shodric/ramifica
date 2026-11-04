@@ -31,6 +31,7 @@ class CreateView extends StatefulWidget {
     this.repository,
     this.authRepository,
     this.pickVideo,
+    this.pickImage,
     this.newTakeId = _defaultTakeId,
     this.onPublished,
   });
@@ -47,6 +48,11 @@ class CreateView extends StatefulWidget {
   /// Picks a video file for upload. Injected for tests; production wires a
   /// picker plugin. Null hides the upload button (see [NodeInspector]).
   final PickVideoFile? pickVideo;
+
+  /// Picks a reference still for the Scenes step. Injected for tests;
+  /// production wires the browser picker. Null hides the reference
+  /// upload button.
+  final PickImageFile? pickImage;
 
   /// Mints the take nonce echoed by the trigger as `uploadTakeId`, so the
   /// bloc can tell its own trigger write apart from pre-trigger state.
@@ -217,6 +223,7 @@ class _CreateViewState extends State<CreateView> {
           nodeId: nodeId,
           pickVideo: widget.pickVideo,
           newTakeId: widget.newTakeId,
+          pickImage: widget.pickImage,
         ),
       ),
     );

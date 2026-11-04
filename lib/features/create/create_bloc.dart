@@ -132,6 +132,11 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       transformer: droppable(),
     );
     on<VideoUploadProgressed>(_onVideoUploadProgressed);
+    on<ReferenceUploadRequested>(
+      _serialized(_onReferenceUpload),
+      transformer: droppable(),
+    );
+    on<ReferenceUploadProgressed>(_onReferenceUploadProgressed);
   }
   final CreateRepository repository;
 
@@ -2119,6 +2124,124 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     if (state.jobNodeId != event.nodeId) return;
     emit(state.copy(uploadProgress: () => event.progress.clamp(0, 1)));
   }
+
+  /// Uploads a cropped 9:16 reference still direct to Storage, then
+  /// stores the download URL on the node. Client-only path: no callable
+  /// mints anything and no trigger observes the object, so the URL lands
+  /// saved (force-persisted), not dirty — it is the upload's own
+  /// outcome, not an author edit awaiting review. Unknown nodes and
+  /// missing drafts are ignored, exactly like [_onVideoUpload].
+  Future<void> _onReferenceUpload(
+    ReferenceUploadRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    if (!state.nodes.any((node) => node.nodeId == event.nodeId)) return;
+    final uid = auth?.auth.currentIdentity?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      emit(state.copy(failure: () => const AppFailure(.invalid).phrase));
+      return;
+    }
+    final rejected = validateReferenceUpload(
+      contentType: event.contentType,
+      byteLength: event.bytes.length,
+    );
+    if (rejected != null) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          failure: () => rejected,
+        ),
+      );
+      return;
+    }
+    emit(
+      state.copy(
+        operationKind: 'reference',
+        operationPhase: 'saving',
+        job: CreateJob.saving,
+        jobNodeId: () => event.nodeId,
+      ),
+    );
+    final flushed = await _saveOpenNodeAwait(
+      emit,
+      nodeId: event.nodeId,
+      finishJob: false,
+      force: false,
+    );
+    if (!flushed || isClosed) return;
+    final refId = event.refId?.trim().isNotEmpty == true
+        ? event.refId!.trim()
+        : const Uuid().v4();
+    emit(
+      state.copy(
+        operationKind: 'reference',
+        operationPhase: 'uploading',
+        job: CreateJob.uploading,
+        jobNodeId: () => event.nodeId,
+        uploadProgress: () => 0,
+        failure: () => null,
+      ),
+    );
+    try {
+      final url = await repository.uploadNodeReferenceImage(
+        uid: uid,
+        storyId: story.storyId,
+        nodeId: event.nodeId,
+        refId: refId,
+        contentType: event.contentType,
+        bytes: event.bytes,
+        onProgress: (progress) => add(
+          ReferenceUploadProgressed(nodeId: event.nodeId, progress: progress),
+        ),
+      );
+      if (isClosed) return;
+      final current = _node(event.nodeId);
+      if (current == null) {
+        emit(
+          state.copy(
+            job: CreateJob.none,
+            jobNodeId: () => event.nodeId,
+            uploadProgress: () => null,
+            failure: () => const AppFailure(.failed).phrase,
+          ),
+        );
+        return;
+      }
+      _publishNode(current.copy(startImageReferenceUrl: () => url), emit);
+      await _persistNode(story.storyId, event.nodeId, force: true);
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          uploadProgress: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          uploadProgress: () => null,
+          failure: () => error.hint,
+        ),
+      );
+    }
+  }
+
+  /// Applies a reference-upload progress tick while that node's upload runs.
+  void _onReferenceUploadProgressed(
+    ReferenceUploadProgressed event,
+    Emitter<CreateState> emit,
+  ) {
+    if (state.job != CreateJob.uploading) return;
+    if (state.jobNodeId != event.nodeId) return;
+    emit(state.copy(uploadProgress: () => event.progress.clamp(0, 1)));
+  }
 }
 
 /// Manual edits win: the proposal fills a field only when it is empty,
@@ -2170,6 +2293,12 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.startImagePrompt != null) {
     final cleaned = event.startImagePrompt!.trim();
     next = next.copy(startImagePrompt: () => cleaned.isEmpty ? null : cleaned);
+  }
+  if (event.startImageReferenceUrl != null) {
+    final cleaned = event.startImageReferenceUrl!.trim();
+    next = next.copy(
+      startImageReferenceUrl: () => cleaned.isEmpty ? null : cleaned,
+    );
   }
   if (event.videoPrompt != null) {
     final cleaned = event.videoPrompt!.trim();

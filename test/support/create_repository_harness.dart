@@ -24,6 +24,7 @@ CreateRepository testCreateRepository({
   fetchAuthorStoryDocs,
   SaveNodeDoc? saveNodeDoc,
   UploadVideoFile? uploadVideoFile,
+  UploadReferenceImage? uploadReferenceImage,
 }) {
   final drafts = _DraftHarness(
     createDraftDoc,
@@ -42,6 +43,7 @@ CreateRepository testCreateRepository({
     callFunction: callFunction,
     saveNodeDoc: saveNodeDoc,
     uploadVideoFile: uploadVideoFile,
+    uploadReferenceImage: uploadReferenceImage,
     drafts: drafts,
     publisher: _PublisherHarness(callFunction),
   );

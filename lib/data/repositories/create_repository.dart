@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:ramifica/data/persistence/node_fields.dart';
@@ -256,6 +257,65 @@ String? validateVideoUpload({
   return null;
 }
 
+/// Max scene-reference upload: storage.rules allows 5 MB or smaller.
+const maxReferenceUploadBytes = 5 * 1024 * 1024;
+
+/// Content types the references rule accepts (storage.rules mirrors this).
+const referenceUploadContentTypes = {'image/jpeg', 'image/png', 'image/webp'};
+
+/// One picked reference image: bytes, the picker-reported content type,
+/// and the decoded pixel size the cropper frames against. Picking is
+/// view-side and injected; the repository never touches a picker
+/// plugin — it only validates and uploads what it gets.
+class PickedImageFile {
+  const PickedImageFile({
+    required this.contentType,
+    required this.bytes,
+    required this.width,
+    required this.height,
+  });
+
+  final String contentType;
+  final List<int> bytes;
+  final int width;
+  final int height;
+}
+
+/// Picks a reference image, or returns null when the author cancels.
+/// Wired by the view; tests inject a fake. Null hides the reference
+/// upload button.
+typedef PickImageFile = Future<PickedImageFile?> Function();
+
+/// Direct reference-still upload: cropped bytes to `references/{uid}/`,
+/// returning the token download URL the node stores. No callable, no
+/// trigger. Tests inject a fake; production uses [putReferenceImageBytes].
+typedef UploadReferenceImage = Future<String> Function({
+  required String uid,
+  required String storyId,
+  required String nodeId,
+  required String refId,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
+});
+
+/// Client-side reference pre-check. Returns the phrase to show, or null
+/// when the file may be sent. Runs before any network call, so rejections
+/// never touch Storage. Mirrors storage.rules (`image/(jpeg|png|webp)`,
+/// <=5MB).
+String? validateReferenceUpload({
+  required String contentType,
+  required int byteLength,
+}) {
+  if (!referenceUploadContentTypes.contains(contentType.trim())) {
+    return 'Only jpg, png or webp images can be uploaded.';
+  }
+  if (byteLength <= 0 || byteLength > maxReferenceUploadBytes) {
+    return 'Images must be 5 MB or smaller.';
+  }
+  return null;
+}
+
 /// Trigger-written upload outcome for one node: the `uploadError` code (if
 /// the take failed) and the `uploadTakeId` echo of the take that wrote it.
 /// The bloc polls the marker until the echo matches its own take before
@@ -291,6 +351,20 @@ Future<void> _unwiredUpdateStory({
   required String storyId,
   String? title,
   String? synopsis,
+}) async {
+  throw const AppFailure(.failed);
+}
+
+/// Fail-closed reference-upload default: used when no transport is
+/// wired. Throws instead of pretending to work.
+Future<String> _unwiredReferenceUpload({
+  required String uid,
+  required String storyId,
+  required String nodeId,
+  required String refId,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
 }) async {
   throw const AppFailure(.failed);
 }
@@ -333,8 +407,10 @@ class CreateRepository {
     this.publisher,
     this.fetchNodeDoc,
     UploadVideoFile? uploadVideoFile,
+    UploadReferenceImage? uploadReferenceImage,
   }) : updateStoryDoc = updateStoryDoc ?? _unwiredUpdateStory,
-       uploadVideoFile = uploadVideoFile ?? _unwiredUpload;
+       uploadVideoFile = uploadVideoFile ?? _unwiredUpload,
+       uploadReferenceImage = uploadReferenceImage ?? _unwiredReferenceUpload;
 
   /// Creates `stories/{id}` with `status: 'draft'` owned by [authorId].
   /// Returns the new story id.
@@ -444,6 +520,10 @@ class CreateRepository {
   /// re-encodes: it puts the picked bytes at the exact trigger path and
   /// the backend does the rest.
   final UploadVideoFile uploadVideoFile;
+
+  /// Direct reference-still transport (see [UploadReferenceImage]).
+  /// The client crops 9:16 first; Storage keeps the cropped bytes as-is.
+  final UploadReferenceImage uploadReferenceImage;
 
   /// Creates a draft plus its root node and returns the parsed pair.
   ///
@@ -933,6 +1013,59 @@ class CreateRepository {
     }
   }
 
+  /// Uploads a cropped 9:16 reference still for one node, direct to
+  /// `references/{uid}/{storyId}_{nodeId}_{refId}.jpg` — no callable, no
+  /// trigger (see storage.rules). Returns the token download URL the
+  /// node stores as `startImageReferenceUrl`.
+  ///
+  /// Blank ids, a blank ref id, an unsupported content type, or empty
+  /// bytes throw [AppFailure.invalid] without touching the network — the
+  /// bloc runs [validateReferenceUpload] first, so this is a second gate,
+  /// not the UX.
+  Future<String> uploadNodeReferenceImage({
+    required String uid,
+    required String storyId,
+    required String nodeId,
+    required String refId,
+    required String contentType,
+    required List<int> bytes,
+    void Function(double progress)? onProgress,
+  }) async {
+    final user = uid.trim();
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    final ref = refId.trim();
+    final type = contentType.trim();
+    if (user.isEmpty ||
+        story.isEmpty ||
+        node.isEmpty ||
+        ref.isEmpty ||
+        ref.contains('_') ||
+        !referenceUploadContentTypes.contains(type) ||
+        bytes.isEmpty) {
+      throw const AppFailure(.invalid);
+    }
+    debugPrint(
+      'uploadNodeReferenceImage: putting ${bytes.length} bytes '
+      'for $story/$node ref=$ref type=$type',
+    );
+    try {
+      return await uploadReferenceImage(
+        uid: user,
+        storyId: story,
+        nodeId: node,
+        refId: ref,
+        contentType: type,
+        bytes: bytes,
+        onProgress: onProgress,
+      );
+    } on AppFailure {
+      rethrow;
+    } catch (error) {
+      throw AppFailure(.failed, cause: error);
+    }
+  }
+
   /// Trigger-written upload outcome for one node, read from the raw doc —
   /// never the model — so upload-only fields never leak into [DraftNode].
   /// [UploadMarker.takeId] is the `uploadTakeId` echo of the take that
@@ -999,6 +1132,7 @@ CreateRepository createFirebaseCreateRepository([
   FirebaseFirestore? firestore,
   FunctionsClient? functions,
   UploadVideoFile? uploadVideoFile,
+  UploadReferenceImage? uploadReferenceImage,
 ]) {
   final store = FirestoreDocumentStore(firestore ?? FirebaseFirestore.instance);
   String? uid() => FirebaseAuth.instance.currentUser?.uid;
@@ -1025,7 +1159,58 @@ CreateRepository createFirebaseCreateRepository([
         store.list('stories', equals: {'authorId': authorId}),
     callFunction: (name, data) => calls(name, data),
     uploadVideoFile: uploadVideoFile ?? putVideoBytesToUrl,
+    uploadReferenceImage: uploadReferenceImage ?? putReferenceImageBytes,
   );
+}
+
+/// Puts the cropped reference bytes with the Storage SDK and returns the
+/// token download URL. Progress ticks come from the task snapshot stream;
+/// the bucket CORS config must allow PUT from the app origin (see
+/// cors.json). Storage rejections surface as [AppFailure.failed] with the
+/// platform error as cause.
+Future<String> putReferenceImageBytes({
+  required String uid,
+  required String storyId,
+  required String nodeId,
+  required String refId,
+  required String contentType,
+  required List<int> bytes,
+  void Function(double progress)? onProgress,
+}) async {
+  if (bytes.isEmpty) throw const AppFailure(.invalid);
+  final ref = FirebaseStorage.instance.ref(
+    'references/$uid/${storyId}_${nodeId}_$refId.jpg',
+  );
+  debugPrint(
+    'putReferenceImageBytes: ${bytes.length} bytes '
+    'to references/$uid as $contentType',
+  );
+  final task = ref.putData(
+    Uint8List.fromList(bytes),
+    SettableMetadata(contentType: contentType),
+  );
+  StreamSubscription<TaskSnapshot>? sub;
+  if (onProgress != null) {
+    sub = task.snapshotEvents.listen((snapshot) {
+      final total = snapshot.totalBytes;
+      if (total > 0) {
+        onProgress((snapshot.bytesTransferred / total).clamp(0, 1));
+      }
+    });
+  }
+  try {
+    final snapshot = await task;
+    if (snapshot.state != TaskState.success) {
+      throw const AppFailure(.failed);
+    }
+    return await ref.getDownloadURL();
+  } on AppFailure {
+    rethrow;
+  } on FirebaseException catch (error) {
+    throw AppFailure(.failed, cause: error);
+  } finally {
+    await sub?.cancel();
+  }
 }
 
 /// Sends the bytes to a minted upload URL. Resumable sessions take

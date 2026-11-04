@@ -14,5 +14,18 @@ service firebase.storage {
         && request.resource.contentType.matches('video/(mp4|quicktime)');
       allow read, update, delete: if false;
     }
+
+    // Scene reference stills, cropped 9:16 client-side. Outside uploads/
+    // so onUploadFinalized ignores them; nothing server-side runs here.
+    // The owner mints the token download URL (needs `get`) and reads the
+    // still back through it; listing stays closed.
+    match /references/{uid}/{fileName} {
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list, update, delete: if false;
+    }
   }
 }

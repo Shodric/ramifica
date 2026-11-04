@@ -70,6 +70,7 @@ final class NodeFieldChanged extends CreateEvent {
     this.choiceIconColors,
     this.visibility,
     this.startImagePrompt,
+    this.startImageReferenceUrl,
     this.videoPrompt,
     this.sceneDirection,
   });
@@ -97,6 +98,10 @@ final class NodeFieldChanged extends CreateEvent {
   /// S-frame prompt override (root only), or null to leave it. Blank
   /// clears to null so generation falls back to `buildImagePrompt`.
   final String? startImagePrompt;
+
+  /// S-frame reference still URL (root only), or null to leave it.
+  /// Blank clears to null.
+  final String? startImageReferenceUrl;
 
   /// Clip prompt override, or null to leave it. Blank clears to null so
   /// generation falls back to its default.
@@ -207,6 +212,46 @@ final class VideoUploadRequested extends CreateEvent {
 /// node's upload is in flight; stray ticks are ignored.
 final class VideoUploadProgressed extends CreateEvent {
   const VideoUploadProgressed({required this.nodeId, required this.progress});
+
+  final String nodeId;
+  final double progress;
+}
+
+/// Uploads a cropped 9:16 reference still for one node, direct to
+/// Storage — no callable, no trigger. The bloc validates type (jpg/png/
+/// webp) and size (<=5MB) before any network call, then streams
+/// [ReferenceUploadProgressed] ticks while the bytes go up. The returned
+/// download URL lands on the node saved, not dirty. `droppable`: picking
+/// again while one runs is ignored.
+final class ReferenceUploadRequested extends CreateEvent {
+  const ReferenceUploadRequested({
+    required this.nodeId,
+    required this.contentType,
+    required this.bytes,
+    this.refId,
+  });
+
+  final String nodeId;
+
+  /// The cropped content type (`image/jpeg` from the client cropper).
+  final String contentType;
+
+  /// The cropped file bytes. Carried through the event so the bloc stays
+  /// the only caller of the repository.
+  final List<int> bytes;
+
+  /// Client nonce for the Storage object name. Null lets the bloc mint
+  /// one (production); tests pass a fixed id.
+  final String? refId;
+}
+
+/// Reference-upload progress tick (0..1) for [nodeId]. Applied only
+/// while that node's upload is in flight; stray ticks are ignored.
+final class ReferenceUploadProgressed extends CreateEvent {
+  const ReferenceUploadProgressed({
+    required this.nodeId,
+    required this.progress,
+  });
 
   final String nodeId;
   final double progress;

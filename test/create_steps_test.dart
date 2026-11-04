@@ -22,6 +22,14 @@ Future<void> mount(WidgetTester tester, Widget child) => tester.pumpWidget(
   ),
 );
 
+/// The frame-slot image showing [url].
+Finder frameImage(String url) => find.byWidgetPredicate(
+  (widget) =>
+      widget is Image &&
+      widget.image is NetworkImage &&
+      (widget.image as NetworkImage).url == url,
+);
+
 class DeniedRecorder extends FakeVoiceRecorder {
   @override
   Future<void> start() async => throw StateError('permission denied');
@@ -447,6 +455,179 @@ void main() {
     await tester.ensureVisible(generate);
     await tester.tap(generate);
     expect(sent, 'start:Revised');
+  });
+
+  testWidgets('S2 reference upload button fires and hides without wiring', (
+    tester,
+  ) async {
+    var tapped = false;
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(nodeId: 'root'),
+        busy: false,
+        showErrors: false,
+        onUploadReference: () => tapped = true,
+      ),
+    );
+    final upload = find.byKey(const ValueKey('upload-reference-root'));
+    await tester.ensureVisible(upload);
+    await tester.tap(upload);
+    expect(tapped, isTrue);
+
+    await mount(
+      tester,
+      const StepFrames(
+        node: DraftNode(nodeId: 'root'),
+        busy: false,
+        showErrors: false,
+      ),
+    );
+    expect(find.byKey(const ValueKey('upload-reference-root')), findsNothing);
+    expect(find.text('Reference'), findsNothing);
+  });
+
+  testWidgets('S2 reference row shows progress while the still goes up', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(nodeId: 'root'),
+        busy: true,
+        showErrors: false,
+        uploadProgress: 0.5,
+        onUploadReference: () {},
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reference-upload-progress-root')),
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const ValueKey('reference-upload-progress-root')),
+          )
+          .value,
+      0.5,
+    );
+    expect(find.text('Uploading reference… 50%'), findsOneWidget);
+  });
+
+  testWidgets('S2 reference overwrites the generated frame slot', (
+    tester,
+  ) async {
+    // No settle: the URLs never resolve in tests; the slot mounts the
+    // reference (badged) instead of the generated still immediately.
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(
+          nodeId: 'root',
+          startImageSourceUrl: 'https://cdn.invalid/generated.png',
+          startImageStatus: 'ready',
+          startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+        ),
+        busy: false,
+        showErrors: false,
+        onUploadReference: () {},
+        onReferenceRemoved: () {},
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reference-badge-root')),
+    );
+    expect(frameImage('https://storage.invalid/r.jpg'), findsOneWidget);
+    expect(frameImage('https://cdn.invalid/generated.png'), findsNothing);
+    // The generated frame is still one regen away.
+    expect(find.text('Another take'), findsOneWidget);
+  });
+
+  testWidgets('S2 reference without a frame keeps Generate below', (
+    tester,
+  ) async {
+    String? sent;
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(
+          nodeId: 'root',
+          startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+        ),
+        busy: false,
+        showErrors: false,
+        onImageGenerate: (which, prompt) => sent = '$which:$prompt',
+        onUploadReference: () {},
+        onReferenceRemoved: () {},
+      ),
+    );
+    final generate = find.byKey(const ValueKey('gen-image-start-root'));
+    await tester.ensureVisible(generate);
+    // The slot shows the reference; the gate still needs its S.
+    expect(frameImage('https://storage.invalid/r.jpg'), findsOneWidget);
+    await tester.tap(generate);
+    expect(sent, 'start:');
+  });
+
+  testWidgets('S2 reference row offers change and remove', (tester) async {
+    var changed = false;
+    var removed = false;
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(
+          nodeId: 'root',
+          startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+        ),
+        busy: false,
+        showErrors: false,
+        onUploadReference: () => changed = true,
+        onReferenceRemoved: () => removed = true,
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reference-badge-root')),
+    );
+    expect(find.text('Change'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('upload-reference-root')));
+    expect(changed, isTrue);
+    await tester.tap(find.byKey(const ValueKey('remove-reference-root')));
+    expect(removed, isTrue);
+  });
+
+  testWidgets('S2 busy blocks the reference controls', (tester) async {
+    await mount(
+      tester,
+      StepFrames(
+        node: const DraftNode(
+          nodeId: 'root',
+          startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+        ),
+        busy: true,
+        showErrors: false,
+        onUploadReference: () {},
+        onReferenceRemoved: () {},
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('reference-badge-root')),
+    );
+    expect(
+      tester
+          .widget<TextButton>(
+            find.byKey(const ValueKey('upload-reference-root')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const ValueKey('remove-reference-root')),
+          )
+          .onPressed,
+      isNull,
+    );
   });
 
   testWidgets(

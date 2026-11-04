@@ -721,34 +721,142 @@ void main() {
       );
     });
 
-    testWidgets(
-      'the fill button hides on Idea and disables without direction',
-      (tester) async {
-        final calls = <_Call>[];
-        await _pumpDraft(tester, calls);
+    testWidgets('the Idea fill previews premise-only values on Accept', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
 
-        // The root opens on the premise: no fill button there.
-        await tester.tap(find.byKey(const ValueKey('canvas-node-node_1')));
-        await tester.pumpAndSettle();
-        expect(find.byType(CreateNodeScreen), findsOneWidget);
-        expect(find.byKey(const ValueKey('wizard-fill-section')), findsNothing);
+      // The root opens on the premise: the spark shows enabled.
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_1')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CreateNodeScreen), findsOneWidget);
+      final fill = find.byKey(const ValueKey('wizard-fill-section'));
+      expect(fill, findsOneWidget);
+      expect(tester.widget<IconButton>(fill).onPressed, isNotNull);
 
-        await tester.tap(find.byKey(const ValueKey('wizard-continue')));
-        await tester.pumpAndSettle();
+      // An empty idea reports back instead of proposing.
+      await tester.tap(fill);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Describe your idea to format it.'), findsOneWidget);
+      expect(
+        calls.where((call) => call.name == 'proposeStoryOutline'),
+        isEmpty,
+      );
+      await tester.pumpAndSettle();
 
-        // On Info with no direction the button shows disabled.
-        final fill = find.byKey(const ValueKey('wizard-fill-section'));
-        expect(fill, findsOneWidget);
-        expect(tester.widget<IconButton>(fill).onPressed, isNull);
+      await tester.enterText(
+        find.byKey(const ValueKey('premise-transcript')),
+        'a door in the rain',
+      );
+      await tester.pump();
 
-        await tester.enterText(
-          find.byKey(const ValueKey('script-direction-node_1')),
-          'A haunted terminal',
-        );
-        await tester.pump();
-        expect(tester.widget<IconButton>(fill).onPressed, isNotNull);
-      },
-    );
+      await tester.tap(fill);
+      await tester.pumpAndSettle();
+
+      // The idea is proposed once through the outline callable...
+      final gen = calls.singleWhere(
+        (call) => call.name == 'proposeStoryOutline',
+      );
+      expect(gen.data['transcript'], 'a door in the rain');
+      // ...and previewed narrowed to the premise: title, idea, options.
+      expect(find.text('Proposed idea'), findsOneWidget);
+      expect(find.text('Spark premise'), findsOneWidget);
+      expect(find.text('You stand before the rain door.'), findsOneWidget);
+      expect(find.text('Enter'), findsOneWidget);
+      expect(find.text('Climb'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fill-accept')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Proposed idea'), findsNothing);
+      // Accept fills the premise fields; the step never advances.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('premise-title')))
+            .controller!
+            .text,
+        'Spark premise',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('premise-transcript')))
+            .controller!
+            .text,
+        'You stand before the rain door.',
+      );
+      expect(
+        find.byKey(const ValueKey('premise-transcript')).hitTestable(),
+        findsOneWidget,
+      );
+
+      // Continue commits the applied outline to the story.
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+      expect(bloc.state.story?.title, 'Spark premise');
+      expect(bloc.state.story?.synopsis, 'You stand before the rain door.');
+    });
+
+    testWidgets('the Idea title starts empty on the default placeholder', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(
+        tester,
+        calls,
+        null,
+        null,
+        'Untitled story',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('canvas-node-node_1')));
+      await tester.pumpAndSettle();
+
+      // The placeholder is not shown as a title...
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('premise-title')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+
+      // ...and leaving it blank never clears the stored one.
+      await tester.enterText(
+        find.byKey(const ValueKey('premise-transcript')),
+        'a door in the rain',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('wizard-continue')));
+      await tester.pumpAndSettle();
+
+      expect(bloc.state.story?.title, 'Untitled story');
+      expect(bloc.state.story?.synopsis, 'a door in the rain');
+      final updates = calls.where((call) => call.name == 'updateStory');
+      expect(updates, hasLength(1));
+      expect(updates.single.data['title'], isNull);
+      expect(updates.single.data['synopsis'], 'a door in the rain');
+    });
+
+    testWidgets('the fill button disables on Info without direction', (
+      tester,
+    ) async {
+      await _pumpDraft(tester, null);
+      await _openNode(tester, 'node_1');
+
+      // On Info with no direction the button shows disabled.
+      final fill = find.byKey(const ValueKey('wizard-fill-section'));
+      expect(fill, findsOneWidget);
+      expect(tester.widget<IconButton>(fill).onPressed, isNull);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('script-direction-node_1')),
+        'A haunted terminal',
+      );
+      await tester.pump();
+      expect(tester.widget<IconButton>(fill).onPressed, isNotNull);
+    });
 
     testWidgets('Continue on a complete script advances without proposing', (
       tester,
@@ -2331,7 +2439,7 @@ Future<void> _openNode(
   await tester.pumpAndSettle();
   expect(find.byType(CreateNodeScreen), findsOneWidget);
   // The root opens on step 0 (Tell your idea). Script tests continue.
-  if (find.byKey(const ValueKey('wizard-premise')).evaluate().isNotEmpty) {
+  if (find.byKey(const ValueKey('premise-transcript')).evaluate().isNotEmpty) {
     await tester.tap(find.byKey(const ValueKey('wizard-continue')));
     await tester.pumpAndSettle();
   }
@@ -2397,9 +2505,10 @@ Future<CreateBloc> _pumpDraft(
   List<_Call>? calls,
   List<MapEntry<String, Map<String, dynamic>>>? docs,
   Future<void> Function()? saveGate,
+  String storyTitle = 'Temple',
 ]) async {
   final bloc = CreateBloc(
-    repository: _repo(calls, docs: docs, saveGate: saveGate),
+    repository: _repo(calls, docs: docs, saveGate: saveGate, storyTitle: storyTitle),
   );
   addTearDown(() => _disposeBloc(tester, bloc));
   bloc.add(const DraftOpened('story_1'));
@@ -2634,6 +2743,7 @@ CreateRepository _repo(
   List<MapEntry<String, Map<String, dynamic>>>? docs,
   UploadVideoFile? upload,
   Future<void> Function()? saveGate,
+  String storyTitle = 'Temple',
 }) {
   final stored = {
     for (final doc in docs ?? _defaultDocs())
@@ -2647,7 +2757,7 @@ CreateRepository _repo(
     },
     fetchStoryDoc: (_) async => {
       'authorId': 'uid_1',
-      'title': 'Temple',
+      'title': storyTitle,
       'synopsis': '',
       'status': 'draft',
       'rootNodeId': 'node_1',
@@ -2711,6 +2821,15 @@ CreateRepository _repo(
         },
         'generateStoryCover' => {
           'coverUrl': 'https://cdn.invalid/cover-1.webp',
+        },
+        'proposeStoryOutline' => {
+          'title': 'Spark premise',
+          'synopsis': 'A door in the rain.',
+          'narratorLine': 'You stand before the rain door.',
+          'options': [
+            {'label': 'Enter'},
+            {'label': 'Climb'},
+          ],
         },
         _ => <String, dynamic>{},
       };

@@ -1764,6 +1764,411 @@ void main() {
     });
   });
 
+  group('CreateReference', () {
+    test('validateReferenceUpload phrases rejections', () {
+      expect(
+        validateReferenceUpload(contentType: 'image/gif', byteLength: 10),
+        'Only jpg, png or webp images can be uploaded.',
+      );
+      expect(
+        validateReferenceUpload(contentType: 'image/jpeg', byteLength: 0),
+        'Images must be 5 MB or smaller.',
+      );
+      expect(
+        validateReferenceUpload(
+          contentType: 'image/png',
+          byteLength: maxReferenceUploadBytes + 1,
+        ),
+        'Images must be 5 MB or smaller.',
+      );
+      expect(
+        validateReferenceUpload(contentType: 'image/jpeg', byteLength: 10),
+        isNull,
+      );
+      expect(
+        validateReferenceUpload(
+          contentType: 'image/webp',
+          byteLength: maxReferenceUploadBytes,
+        ),
+        isNull,
+      );
+    });
+
+    test('uploadNodeReferenceImage sends bytes and returns the URL', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+      final ticks = <double>[];
+
+      final url = await repository.uploadNodeReferenceImage(
+        uid: 'uid_1',
+        storyId: 'story_1',
+        nodeId: 'node_1',
+        refId: 'ref7',
+        contentType: 'image/jpeg',
+        bytes: const [1, 2, 3],
+        onProgress: ticks.add,
+      );
+
+      expect(url, 'https://storage.invalid/references/ref7.jpg');
+      expect(calls.single.name, 'uploadNodeReferenceImage');
+      expect(calls.single.data, {
+        'uid': 'uid_1',
+        'storyId': 'story_1',
+        'nodeId': 'node_1',
+        'refId': 'ref7',
+        'contentType': 'image/jpeg',
+        'byteLength': 3,
+      });
+      expect(ticks, [1]);
+    });
+
+    test('uploadNodeReferenceImage rejects blanks without network', () async {
+      final calls = <_Call>[];
+      final repository = _repo(calls);
+
+      await expectLater(
+        repository.uploadNodeReferenceImage(
+          uid: '  ',
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          refId: 'ref_1',
+          contentType: 'image/jpeg',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeReferenceImage(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          refId: 'ref_1',
+          contentType: 'image/gif',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeReferenceImage(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          refId: 'ref_1',
+          contentType: 'image/jpeg',
+          bytes: const [],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeReferenceImage(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          refId: '  ',
+          contentType: 'image/jpeg',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.uploadNodeReferenceImage(
+          uid: 'uid_1',
+          storyId: 'story_1',
+          nodeId: 'node_1',
+          refId: 'ref_1_bad',
+          contentType: 'image/jpeg',
+          bytes: const [1],
+        ),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('DraftNode round-trips the reference URL', () {
+      const node = DraftNode(
+        nodeId: 'node_1',
+        startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+      );
+
+      final revived = DraftNode.fromMap('node_1', node.toJson());
+      expect(revived.startImageReferenceUrl, 'https://storage.invalid/r.jpg');
+      expect(
+        node.copy(startImageReferenceUrl: () => null).startImageReferenceUrl,
+        isNull,
+      );
+      expect(
+        node.copy().startImageReferenceUrl,
+        'https://storage.invalid/r.jpg',
+      );
+      expect(
+        DraftNode.fromMap('node_1', const {
+          'title': 'Door',
+        }).startImageReferenceUrl,
+        isNull,
+      );
+    });
+
+    test('nodeSavePatch carries the cleaned reference URL', () {
+      const node = DraftNode(
+        nodeId: 'node_1',
+        ttsText: 'Line',
+        startImageReferenceUrl: '  https://storage.invalid/r.jpg  ',
+      );
+
+      final patch = nodeSavePatch(node, 'Line');
+      expect(patch['startImageReferenceUrl'], 'https://storage.invalid/r.jpg');
+
+      final cleared = nodeSavePatch(
+        node.copy(startImageReferenceUrl: () => '  '),
+        'Line',
+      );
+      expect(cleared['startImageReferenceUrl'], isNull);
+    });
+
+    test('reference upload stores the URL saved, without callables', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const ReferenceUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'image/jpeg',
+          bytes: [1, 2, 3],
+          refId: 'ref1',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+
+      final upload = calls.singleWhere(
+        (call) => call.name == 'uploadNodeReferenceImage',
+      );
+      expect(upload.data['refId'], 'ref1');
+      expect(upload.data['byteLength'], 3);
+      // Direct writes only: the transport plus node saves, no callable.
+      expect(
+        calls.every(
+          (call) =>
+              call.name == 'uploadNodeReferenceImage' ||
+              call.name == 'saveNode',
+        ),
+        isTrue,
+      );
+      final node = bloc.state.nodes.singleWhere((n) => n.nodeId == 'node_1');
+      expect(
+        node.startImageReferenceUrl,
+        'https://storage.invalid/references/ref1.jpg',
+      );
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isFalse);
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('reference progress ticks flow to the state', () async {
+      final gate = Completer<void>();
+      var progressed = 0.0;
+      final bloc = CreateBloc(
+        repository: _repo(
+          null,
+          uploadReference:
+              ({
+                required uid,
+                required storyId,
+                required nodeId,
+                required refId,
+                required contentType,
+                required bytes,
+                onProgress,
+              }) async {
+                onProgress?.call(0.5);
+                await gate.future;
+                onProgress?.call(1);
+                return 'https://storage.invalid/references/$refId.jpg';
+              },
+        ),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const ReferenceUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'image/jpeg',
+          bytes: [1, 2, 3],
+          refId: 'ref1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.job == CreateJob.uploading);
+      expect(bloc.state.statusOf('node_1'), StatusPillState.running);
+
+      await bloc.stream.firstWhere((state) => state.uploadProgress == 0.5);
+      progressed = bloc.state.uploadProgress!;
+
+      gate.complete();
+      await bloc.stream.firstWhere(
+        (state) => state.job == CreateJob.none && state.uploadProgress == null,
+      );
+      expect(progressed, 0.5);
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('a bad reference type is rejected before any network call', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc.add(
+        const ReferenceUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'image/gif',
+          bytes: [1, 2, 3],
+          refId: 'ref_1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      expect(calls, isEmpty);
+      expect(
+        bloc.state.failure,
+        'Only jpg, png or webp images can be uploaded.',
+      );
+      expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+
+    test('a reference transport failure keeps the old URL', () async {
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => _storyDoc(),
+          fetchNodeDocs: (_) async => [
+            MapEntry('node_1', {
+              ..._nodeDoc(),
+              'startImageReferenceUrl': 'https://storage.invalid/old.jpg',
+            }),
+          ],
+          callFunction: (name, data) async => <String, dynamic>{},
+          uploadReferenceImage:
+              ({
+                required uid,
+                required storyId,
+                required nodeId,
+                required refId,
+                required contentType,
+                required bytes,
+                onProgress,
+              }) async {
+                throw const AppFailure(.offline);
+              },
+        ),
+        auth: _auth('uid_1'),
+      );
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const ReferenceUploadRequested(
+          nodeId: 'node_1',
+          contentType: 'image/jpeg',
+          bytes: [1, 2, 3],
+          refId: 'ref1',
+        ),
+      );
+      await bloc.stream.firstWhere((state) => state.failure != null);
+
+      final node = bloc.state.nodes.singleWhere((n) => n.nodeId == 'node_1');
+      expect(node.startImageReferenceUrl, 'https://storage.invalid/old.jpg');
+      expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.uploadProgress, isNull);
+      expect(bloc.state.statusOf('node_1'), StatusPillState.failed);
+    });
+
+    test('reference events on unknown nodes touch nothing', () async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(repository: _repo(calls), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      calls.clear();
+
+      bloc
+        ..add(
+          const ReferenceUploadRequested(
+            nodeId: 'missing',
+            contentType: 'image/jpeg',
+            bytes: [1],
+            refId: 'ref_1',
+          ),
+        )
+        ..add(
+          const ReferenceUploadProgressed(nodeId: 'missing', progress: 0.5),
+        );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(calls, isEmpty);
+      expect(bloc.state.job, CreateJob.none);
+      expect(bloc.state.uploadProgress, isNull);
+    });
+
+    test('stray reference progress ticks are ignored', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const ReferenceUploadProgressed(nodeId: 'node_1', progress: 0.5),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(bloc.state.uploadProgress, isNull);
+    });
+
+    test('NodeFieldChanged sets and clears the reference URL', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(
+        const NodeFieldChanged(
+          nodeId: 'node_1',
+          startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.nodes
+                .singleWhere((n) => n.nodeId == 'node_1')
+                .startImageReferenceUrl ==
+            'https://storage.invalid/r.jpg',
+      );
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+
+      bloc.add(
+        const NodeFieldChanged(nodeId: 'node_1', startImageReferenceUrl: '  '),
+      );
+      await bloc.stream.firstWhere(
+        (state) =>
+            state.nodes
+                .singleWhere((n) => n.nodeId == 'node_1')
+                .startImageReferenceUrl ==
+            null,
+      );
+      expect(bloc.hasUnsavedNodeEdits('node_1'), isTrue);
+    });
+  });
+
   group('CreateState', () {
     test('missing lists the unmet publish conditions', () {
       const node = DraftNode(nodeId: 'node_1');
@@ -3198,6 +3603,7 @@ CreateRepository _repo(
   List<_Call>? calls, {
   List<MapEntry<String, Map<String, dynamic>>>? nodes,
   UploadVideoFile? upload,
+  UploadReferenceImage? uploadReference,
   Future<Map<String, dynamic>> Function(Map<String, dynamic>)? decideChoiceIcon,
 }) {
   return testCreateRepository(
@@ -3248,6 +3654,30 @@ CreateRepository _repo(
             }),
           );
           onProgress?.call(1);
+        },
+    uploadReferenceImage:
+        uploadReference ??
+        ({
+          required uid,
+          required storyId,
+          required nodeId,
+          required refId,
+          required contentType,
+          required bytes,
+          onProgress,
+        }) async {
+          calls?.add(
+            _Call('uploadNodeReferenceImage', {
+              'uid': uid,
+              'storyId': storyId,
+              'nodeId': nodeId,
+              'refId': refId,
+              'contentType': contentType,
+              'byteLength': bytes.length,
+            }),
+          );
+          onProgress?.call(1);
+          return 'https://storage.invalid/references/$refId.jpg';
         },
   );
 }

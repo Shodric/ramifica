@@ -14,6 +14,11 @@ import 'package:ramifica/data/models/draft_node.dart';
 /// keeps the last image: panels render whatever URL the node carries.
 /// Generated media is accepted as-is: regen replaces it. Approval fields
 /// are ignored (kept for compat until callers drop them).
+///
+/// The panel also hosts the optional reference still: the author picks
+/// an image, frames it 9:16, and the client uploads it direct to
+/// Storage, storing its URL on the node. The stored still overwrites
+/// the generated image in the frame slot, badged as Reference.
 class StepFrames extends StatefulWidget {
   const StepFrames({
     super.key,
@@ -25,6 +30,9 @@ class StepFrames extends StatefulWidget {
     this.onImageGenerate,
     this.onImageApprovalChanged,
     this.onStartPromptChanged,
+    this.uploadProgress,
+    this.onUploadReference,
+    this.onReferenceRemoved,
     this.active = true,
     this.continueAction,
   });
@@ -48,6 +56,15 @@ class StepFrames extends StatefulWidget {
 
   /// Local edits; Save or Generate persists these values.
   final ValueChanged<String>? onStartPromptChanged;
+
+  /// Reference-upload progress 0..1 while this node's still goes up.
+  final double? uploadProgress;
+
+  /// Opens the pick-and-frame flow. Null hides the upload button.
+  final VoidCallback? onUploadReference;
+
+  /// Clears the stored reference URL. Null hides the remove button.
+  final VoidCallback? onReferenceRemoved;
 
   @override
   State<StepFrames> createState() => _StepFramesState();
@@ -107,6 +124,10 @@ class _StepFramesState extends State<StepFrames> {
           onGenerate: widget.onImageGenerate,
           onApprovalChanged: widget.onImageApprovalChanged,
           onPromptChanged: widget.onStartPromptChanged,
+          referenceUrl: node.startImageReferenceUrl,
+          uploadProgress: widget.uploadProgress,
+          onUploadReference: widget.onUploadReference,
+          onReferenceRemoved: widget.onReferenceRemoved,
         ),
         if (widget.active && widget.continueAction != null) ...[
           const SizedBox(height: 16),
@@ -143,6 +164,10 @@ class _FramePanel extends StatelessWidget {
     required this.onGenerate,
     this.onApprovalChanged,
     required this.onPromptChanged,
+    this.referenceUrl,
+    this.uploadProgress,
+    this.onUploadReference,
+    this.onReferenceRemoved,
   });
 
   final String nodeId;
@@ -163,10 +188,19 @@ class _FramePanel extends StatelessWidget {
   // Legacy approval callback, ignored. Kept for compat until callers drop it.
   final void Function(String which, bool approved)? onApprovalChanged;
   final ValueChanged<String>? onPromptChanged;
+  final String? referenceUrl;
+  final double? uploadProgress;
+  final VoidCallback? onUploadReference;
+  final VoidCallback? onReferenceRemoved;
 
   @override
   Widget build(BuildContext context) {
     final url = imageUrl;
+    // The uploaded reference overwrites the generated still in the frame
+    // slot; generation controls still key off the generated image, which
+    // is what the step gate requires.
+    final displayUrl = referenceUrl ?? url;
+    final showingReference = referenceUrl != null;
     // Backend reports 'pending' while the still is rendering.
     final generating = locallyGenerating || status == 'pending';
     return Column(
@@ -223,7 +257,7 @@ class _FramePanel extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (url == null)
+                  if (displayUrl == null)
                     Container(
                       color: RamificaColors.inputFill,
                       child: Center(
@@ -244,7 +278,7 @@ class _FramePanel extends StatelessWidget {
                     )
                   else
                     Image.network(
-                      url,
+                      displayUrl,
                       fit: BoxFit.cover,
                       loadingBuilder: (context, child, progress) =>
                           progress == null
@@ -300,7 +334,27 @@ class _FramePanel extends StatelessWidget {
                         child: const Text('Another take'),
                       ),
                     ),
-                  if (generating && url != null)
+                  if (showingReference)
+                    Positioned(
+                      bottom: 8,
+                      left: 8,
+                      child: Container(
+                        key: ValueKey('reference-badge-$nodeId'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'Reference',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  if (generating && displayUrl != null)
                     // Re-render: dim the stale still with a centered spinner.
                     Positioned.fill(
                       child: ColoredBox(
@@ -317,6 +371,34 @@ class _FramePanel extends StatelessWidget {
             ),
           ),
         ),
+        // Reference set but no generated frame yet: the step still needs
+        // its S, so Generate stays a full-width CTA under the panel. It
+        // never coexists with the in-panel CTAs (same key, one mounts).
+        if (showingReference && url == null && !generating)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                key: ValueKey('gen-image-$which-$nodeId'),
+                onPressed: busy
+                    ? null
+                    : () => onGenerate?.call(which, prompt.text),
+                child: const Text('Generate'),
+              ),
+            ),
+          ),
+        if (onUploadReference != null ||
+            referenceUrl != null ||
+            uploadProgress != null)
+          _ReferenceRow(
+            nodeId: nodeId,
+            referenceUrl: referenceUrl,
+            uploadProgress: uploadProgress,
+            busy: busy,
+            onUpload: onUploadReference,
+            onRemove: onReferenceRemoved,
+          ),
         if (generating)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -345,6 +427,87 @@ class _FramePanel extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Optional reference still controls under the S frame: a progress bar
+/// while the still goes up; once stored, Change/Remove (the frame slot
+/// above shows the still itself); otherwise an upload button. Busy
+/// blocks every control.
+class _ReferenceRow extends StatelessWidget {
+  const _ReferenceRow({
+    required this.nodeId,
+    required this.referenceUrl,
+    required this.uploadProgress,
+    required this.busy,
+    required this.onUpload,
+    required this.onRemove,
+  });
+
+  final String nodeId;
+  final String? referenceUrl;
+  final double? uploadProgress;
+  final bool busy;
+  final VoidCallback? onUpload;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = uploadProgress;
+    final url = referenceUrl;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
+          Text('Reference', style: RamificaText.label),
+          const SizedBox(height: 8),
+          if (progress != null) ...[
+            LinearProgressIndicator(
+              key: ValueKey('reference-upload-progress-$nodeId'),
+              value: progress.clamp(0, 1),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Uploading reference… ${(progress.clamp(0, 1) * 100).round()}%',
+              style: RamificaText.meta,
+            ),
+          ] else if (url != null) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Showing in the frame above.',
+                    style: RamificaText.meta,
+                  ),
+                ),
+                if (onUpload != null)
+                  TextButton(
+                    key: ValueKey('upload-reference-$nodeId'),
+                    onPressed: busy ? null : onUpload,
+                    child: const Text('Change'),
+                  ),
+                if (onRemove != null)
+                  IconButton(
+                    key: ValueKey('remove-reference-$nodeId'),
+                    tooltip: 'Remove reference',
+                    onPressed: busy ? null : onRemove,
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                  ),
+              ],
+            ),
+          ] else ...[
+            OutlinedButton.icon(
+              key: ValueKey('upload-reference-$nodeId'),
+              onPressed: busy ? null : onUpload,
+              icon: const Icon(Icons.upload, size: 18),
+              label: const Text('Upload reference'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

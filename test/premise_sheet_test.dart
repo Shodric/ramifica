@@ -178,45 +178,117 @@ void main() {
     expect(mic.height, 56);
   });
 
-  testWidgets('format swaps the button for a chevron accordion', (
+  testWidgets('proposeIdea normalizes without writing, applyProposal fills', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    String? draftedTitle;
+    String? draftedIdea;
+    List<OutlineOption>? draftedOptions;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: PremiseSheet(
             embedded: true,
+            initialTitle: 'Typed title',
             initialIdea: 'a door in the rain',
             propose: (_) async => (
               title: 'Rain door',
               synopsis: 'The door opens.',
               narratorLine: 'You stand before the rain door.',
-              options: const <OutlineOption>[OutlineOption(label: 'Enter')],
+              options: const <OutlineOption>[
+                OutlineOption(label: 'Enter'),
+                OutlineOption(label: '  '),
+                OutlineOption(label: 'Climb'),
+              ],
             ),
+            onDraft: ({required title, required idea, required options}) {
+              draftedTitle = title;
+              draftedIdea = idea;
+              draftedOptions = options;
+            },
           ),
         ),
       ),
     );
 
-    expect(find.text('Format'), findsOneWidget);
-    expect(find.byKey(const ValueKey('premise-format-toggle')), findsNothing);
-    final format = tester.getSize(
-      find.byKey(const ValueKey('premise-format-bar')),
-    );
-    expect(format.width, tester.getSize(find.byType(PremiseSheet)).width);
-
-    await tester.tap(find.byKey(const ValueKey('premise-propose')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('premise-propose')), findsNothing);
+    // No inline review UI: the AppBar spark drives the proposal.
     expect(find.text('Format'), findsNothing);
-    expect(find.byKey(const ValueKey('premise-formatted')), findsNothing);
+    expect(find.text('Order text style'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('premise-format-toggle')));
-    await tester.pumpAndSettle();
+    final state = tester.state<PremiseSheetState>(find.byType(PremiseSheet));
+    expect(state.ideaReady, isTrue);
+    final proposal = await state.proposeIdea();
+    await tester.pump();
 
-    expect(find.text('You stand before the rain door.\nEnter'), findsOneWidget);
+    // The fields are untouched until the preview is accepted...
+    expect(proposal?.title, 'Rain door');
+    expect(proposal?.idea, 'You stand before the rain door.');
+    expect(proposal?.options.map((o) => o.label).toList(), [
+      'Enter',
+      'Climb',
+    ]);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('premise-title')))
+          .controller!
+          .text,
+      'Typed title',
+    );
+
+    state.applyProposal(proposal!);
+    await tester.pump();
+
+    // ...then the reviewed values land in the fields and publish.
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('premise-title')))
+          .controller!
+          .text,
+      'Rain door',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('premise-transcript')))
+          .controller!
+          .text,
+      'You stand before the rain door.',
+    );
+    expect(draftedTitle, 'Rain door');
+    expect(draftedIdea, 'You stand before the rain door.');
+    expect(draftedOptions?.map((o) => o.label).toList(), ['Enter', 'Climb']);
+  });
+
+  testWidgets('proposeIdea on an empty idea reports back for the snackbar', (
+    tester,
+  ) async {
+    var called = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PremiseSheet(
+            embedded: true,
+            propose: (_) async {
+              called = true;
+              return (
+                title: null,
+                synopsis: null,
+                narratorLine: null,
+                options: const <OutlineOption>[],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    final state = tester.state<PremiseSheetState>(find.byType(PremiseSheet));
+    expect(state.ideaReady, isFalse);
+    expect(await state.proposeIdea(), isNull);
+    await tester.pump();
+    expect(called, isFalse);
+    expect(state.takeProposalError(), 'Describe your idea to format it.');
+    expect(state.takeProposalError(), isNull);
   });
 }

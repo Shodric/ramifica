@@ -25,6 +25,7 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
         if (node.cutSlots.contains(slot)) slot,
     ],
     'startImagePrompt': clean(node.startImagePrompt),
+    'startImageReferenceUrl': clean(node.startImageReferenceUrl),
     'videoPrompt': clean(node.videoPrompt),
     'sceneDirection': clean(node.sceneDirection),
   };

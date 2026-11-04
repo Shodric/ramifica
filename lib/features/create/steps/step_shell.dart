@@ -238,6 +238,18 @@ class WizardContinueButton extends StatelessWidget {
   }
 }
 
+/// Fresh drafts carry this placeholder as their story title. The Idea
+/// title field starts empty instead of showing it, so the author (or
+/// the spark) gives the story a real title.
+const defaultStoryTitle = 'Untitled story';
+
+/// Idea title seed: the stored title, or empty when it is blank or the
+/// creation placeholder.
+String premiseTitleSeed(String title) {
+  final trimmed = title.trim();
+  return trimmed.isEmpty || trimmed == defaultStoryTitle ? '' : title;
+}
+
 /// Step 0, before Script. The root stepper leads with an Idea chip.
 /// The body is one title plus the idea field, in the same inputs as the
 /// other steps. Typing and Continue keep the premise local. Save or Apply persists it.
@@ -254,6 +266,7 @@ class WizardPremise extends StatefulWidget {
 
 class WizardPremiseState extends State<WizardPremise> {
   final _sessionId = const Uuid().v4();
+  final _sheetKey = GlobalKey<PremiseSheetState>();
   var _seeded = false;
   var _title = '';
   var _idea = '';
@@ -269,7 +282,7 @@ class WizardPremiseState extends State<WizardPremise> {
     final state = context.read<CreateBloc>().state;
     final story = state.story;
     if (story == null) return;
-    _title = story.title;
+    _title = premiseTitleSeed(story.title);
     var idea = story.synopsis.trim();
     if (idea.isEmpty) {
       for (final node in state.nodes) {
@@ -284,6 +297,22 @@ class WizardPremiseState extends State<WizardPremise> {
     _seedIdea = _idea;
   }
 
+  /// True when the idea field holds proposable text.
+  bool get premiseReady => _sheetKey.currentState?.ideaReady ?? false;
+
+  /// Proposes an outline for the current idea without writing the
+  /// fields. See [PremiseSheetState.proposeIdea].
+  Future<PremiseProposal?> proposePremise() =>
+      _sheetKey.currentState?.proposeIdea() ?? Future.value();
+
+  /// Takes the pending proposal failure for the wizard snackbar.
+  String? takePremiseError() =>
+      _sheetKey.currentState?.takeProposalError();
+
+  /// Writes a reviewed [proposal] into the premise fields.
+  void applyPremise(PremiseProposal proposal) =>
+      _sheetKey.currentState?.applyProposal(proposal);
+
   /// Saves the premise as the story synopsis; the decision narration
   /// belongs to S3. Skips unchanged drafts with no proposed options.
   void commit() {
@@ -296,7 +325,13 @@ class WizardPremiseState extends State<WizardPremise> {
         idea == _seedIdea.trim() &&
         _options.isEmpty;
     if (unchanged && !bloc.hasUnsavedStoryEdits) return;
-    bloc.add(OutlineApplied(title: title, synopsis: idea, options: _options));
+    bloc.add(
+      OutlineApplied(
+        title: title.isEmpty ? null : title,
+        synopsis: idea,
+        options: _options,
+      ),
+    );
   }
 
   Future<String?> _idToken() async {
@@ -323,8 +358,13 @@ class WizardPremiseState extends State<WizardPremise> {
     _title = title;
     _idea = idea;
     _options = options;
+    // A blank title never clears the stored one: the field starts empty
+    // on fresh drafts, and clearing a title is not this step's job.
     context.read<CreateBloc>().add(
-      StoryFieldChanged(title: title, synopsis: idea),
+      StoryFieldChanged(
+        title: title.trim().isEmpty ? null : title,
+        synopsis: idea,
+      ),
     );
   }
 
@@ -339,7 +379,7 @@ class WizardPremiseState extends State<WizardPremise> {
       children: [
         Expanded(
           child: PremiseSheet(
-            key: const ValueKey('wizard-premise'),
+            key: _sheetKey,
             embedded: true,
             onApply: null,
             initialTitle: _title,

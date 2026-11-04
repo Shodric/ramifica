@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/features/create/create_event.dart';
+import 'package:ramifica/features/create/premise_sheet.dart';
 
 /// Dialog title for a per-section fill proposal.
 String fillPreviewTitle(int step) {
@@ -94,8 +95,70 @@ Future<bool?> showFillPreview({
   );
 }
 
+/// Previews the values an Idea fill would assign. True applies them,
+/// false or null (dismiss) discards them.
+Future<bool?> showPremisePreview({
+  required BuildContext context,
+  required PremiseProposal proposal,
+}) {
+  return showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('fill-preview-dialog'),
+      title: const Text('Proposed idea'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: .min,
+          crossAxisAlignment: .stretch,
+          children: [
+            for (final row in _premiseRows(proposal)) ...[
+              Text(row.label, style: RamificaText.meta),
+              const SizedBox(height: 2),
+              Text(row.value, style: RamificaText.body),
+              const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('fill-discard'),
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Discard'),
+        ),
+        FilledButton(
+          key: const ValueKey('fill-accept'),
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Accept'),
+        ),
+      ],
+    ),
+  );
+}
+
 ({String label, String value}) _row(String label, String value) =>
     (label: label, value: value);
+
+List<({String label, String value})> _premiseRows(PremiseProposal proposal) {
+  final rows = <({String label, String value})>[];
+  if (proposal.title != null && proposal.title!.isNotEmpty) {
+    rows.add(_row('Title', proposal.title!));
+  }
+  if (proposal.idea != null && proposal.idea!.isNotEmpty) {
+    rows.add(_row('Idea', proposal.idea!));
+  }
+  for (var i = 0; i < proposal.options.length && i < 2; i++) {
+    final option = proposal.options[i];
+    final icon = option.icon?.trim() ?? '';
+    rows.add(
+      _row(
+        'Option ${i == 0 ? 'A' : 'B'}',
+        icon.isEmpty ? option.label : '${option.label} · $icon',
+      ),
+    );
+  }
+  return rows;
+}
 
 List<({String label, String value})> _rows(int step, SceneProposal proposal) {
   final rows = <({String label, String value})>[];

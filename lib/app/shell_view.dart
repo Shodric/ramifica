@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ramifica/features/create/image_picker.dart';
 import 'package:ramifica/features/create/video_picker.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/feed_graph_pager.dart';
@@ -166,7 +167,10 @@ class _ShellViewState extends State<ShellView> {
             },
             children: [
               FeedGraphPager(storyId: state.storyId),
-              const CreateView(pickVideo: pickBrowserVideo),
+              const CreateView(
+                pickVideo: pickBrowserVideo,
+                pickImage: pickBrowserImage,
+              ),
               const ExploreView(),
               ProfileView(
                 key: ValueKey(_profileAuthor(widget.location) ?? ''),

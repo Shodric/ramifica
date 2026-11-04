@@ -185,6 +185,7 @@ class DraftNode {
     this.startImageStatus = 'idle',
     this.startHash,
     this.startImagePrompt,
+    this.startImageReferenceUrl,
     this.startImageApproved = false,
     this.startFromNodeId,
     this.startParentFrameHash,
@@ -240,6 +241,7 @@ class DraftNode {
       startImageStatus: _optionalString(data['startImageStatus']) ?? 'idle',
       startHash: _optionalString(data['startHash']),
       startImagePrompt: _optionalString(data['startImagePrompt']),
+      startImageReferenceUrl: _optionalString(data['startImageReferenceUrl']),
       startImageApproved: data['startImageApproved'] == true,
       startFromNodeId: _optionalString(data['startFromNodeId']),
       startParentFrameHash: _optionalString(data['startParentFrameHash']),
@@ -324,6 +326,11 @@ class DraftNode {
   final String? startImageStatus;
   final String? startHash;
   final String? startImagePrompt;
+
+  /// Author-uploaded reference still for the S frame (root only),
+  /// cropped 9:16 client-side and uploaded direct to Storage. Null
+  /// until the author uploads one.
+  final String? startImageReferenceUrl;
 
   /// Ignored legacy: old docs carry this flag, but no gate reads it.
   /// Generated media is accepted as-is; regen replaces it.
@@ -422,6 +429,7 @@ class DraftNode {
       'startImageStatus': startImageStatus,
       'startHash': startHash,
       'startImagePrompt': startImagePrompt,
+      'startImageReferenceUrl': startImageReferenceUrl,
       'startImageApproved': startImageApproved,
       'startFromNodeId': startFromNodeId,
       'startParentFrameHash': startParentFrameHash,
@@ -472,6 +480,7 @@ class DraftNode {
     String? startImageStatus,
     String? Function()? startHash,
     String? Function()? startImagePrompt,
+    String? Function()? startImageReferenceUrl,
     bool? startImageApproved,
     String? Function()? startFromNodeId,
     String? Function()? startParentFrameHash,
@@ -550,6 +559,9 @@ class DraftNode {
       startImagePrompt: startImagePrompt == null
           ? this.startImagePrompt
           : startImagePrompt(),
+      startImageReferenceUrl: startImageReferenceUrl == null
+          ? this.startImageReferenceUrl
+          : startImageReferenceUrl(),
       startImageApproved: startImageApproved ?? this.startImageApproved,
       startFromNodeId: startFromNodeId == null
           ? this.startFromNodeId
@@ -605,6 +617,7 @@ class DraftNode {
         other.startImageStatus == startImageStatus &&
         other.startHash == startHash &&
         other.startImagePrompt == startImagePrompt &&
+        other.startImageReferenceUrl == startImageReferenceUrl &&
         other.startImageApproved == startImageApproved &&
         other.startFromNodeId == startFromNodeId &&
         other.startParentFrameHash == startParentFrameHash &&
@@ -652,6 +665,7 @@ class DraftNode {
     startImageStatus,
     startHash,
     startImagePrompt,
+    startImageReferenceUrl,
     startImageApproved,
     startFromNodeId,
     startParentFrameHash,

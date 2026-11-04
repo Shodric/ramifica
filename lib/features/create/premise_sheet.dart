@@ -13,7 +13,7 @@ export 'package:ramifica/features/create/dictation/dictation_controller.dart'
     show listeningPlaceholder, TranscribeAudio;
 
 /// One proposed outline from speech: editable fields plus ≤2 options.
-/// Wired to `proposeStoryOutline`; null hides the Format bar.
+/// Wired to `proposeStoryOutline`; null means section fill is unavailable.
 typedef ProposePremise =
     Future<
       ({
@@ -33,11 +33,32 @@ typedef PremiseDraftChanged = void Function({
   required List<OutlineOption> options,
 });
 
+/// A Spark premise proposal: title plus the polished idea plus up to
+/// two opening options. Proposal-only: [PremiseSheetState.proposeIdea]
+/// returns it without writing the fields; the section preview shows it
+/// for Accept/Discard and [PremiseSheetState.applyProposal] writes it.
+class PremiseProposal {
+  const PremiseProposal({this.title, this.idea, this.options = const []});
+
+  final String? title;
+  final String? idea;
+  final List<OutlineOption> options;
+
+  /// True when the proposal carries nothing usable.
+  bool get isEmpty =>
+      (title == null || title!.isEmpty) &&
+      (idea == null || idea!.isEmpty) &&
+      options.isEmpty;
+}
+
 /// Step 0 premise: a title plus one idea field. Dictation and typing
 /// write that same field. While recording it reads [listeningPlaceholder];
 /// stopping sends the audio to [transcribe] and the returned text
-/// replaces the field. Format reads the field and keeps the outline in
-/// an accordion. The field fills the height it is given.
+/// replaces the field. The section proposal runs from the AppBar spark:
+/// the wizard calls [PremiseSheetState.proposeIdea], previews the answer
+/// for Accept/Discard, and applies it through
+/// [PremiseSheetState.applyProposal]. The field fills the height it is
+/// given.
 class PremiseSheet extends StatefulWidget {
   const PremiseSheet({
     super.key,
@@ -93,10 +114,10 @@ class PremiseSheet extends StatefulWidget {
   final bool embedded;
 
   @override
-  State<PremiseSheet> createState() => _PremiseSheetState();
+  PremiseSheetState createState() => PremiseSheetState();
 }
 
-class _PremiseSheetState extends State<PremiseSheet>
+class PremiseSheetState extends State<PremiseSheet>
     with WidgetsBindingObserver {
   late final TextEditingController _title = TextEditingController(
     text: widget.initialTitle,
@@ -114,19 +135,12 @@ class _PremiseSheetState extends State<PremiseSheet>
   );
   String _beforeDictation = '';
   var _proposing = false;
-  var _formatOpen = false;
+  var _proposalGen = 0;
   var _options = const <OutlineOption>[];
 
-  /// Local Format errors. Dictation hints live on the controller; the
+  /// Local proposal errors. Dictation hints live on the controller; the
   /// hint line shows whichever is set.
   String? _hint;
-
-  /// Narration Spark returned. Null until Format succeeds. Editing the
-  /// idea clears it and brings the Format button back.
-  String? _formatted;
-
-  /// Accordion copy: narration, or the title, plus option labels.
-  String? _formatPreview;
 
   @override
   void initState() {
@@ -183,25 +197,17 @@ class _PremiseSheetState extends State<PremiseSheet>
   }
 
   void _publish() {
+    // Invalidates an in-flight proposal; the stale answer is discarded.
+    _proposalGen++;
     widget.onDraft?.call(
       title: _title.text,
-      idea: _draftIdea(),
+      idea: _ideaText(),
       options: _options,
     );
   }
 
-  /// Formatted narration when Format has a result; otherwise the field.
-  String _draftIdea() {
-    final formatted = _formatted?.trim() ?? '';
-    if (formatted.isNotEmpty) return formatted;
-    return _ideaText();
-  }
-
   void _writeIdea(String value) {
     if (_transcript.text != value) _transcript.text = value;
-    _formatted = null;
-    _formatPreview = null;
-    _formatOpen = false;
     _publish();
   }
 
@@ -211,55 +217,120 @@ class _PremiseSheetState extends State<PremiseSheet>
     return text;
   }
 
-  Future<void> _propose() async {
-    final propose = widget.propose;
+  /// Stops an open take, keeping it (transcribe-on-stop). Late
+  /// socket/transcribe events after the stop are ignored.
+  Future<void> stopDictation() {
+    if (!_dictation.recording) return Future<void>.value();
+    return _dictation.stop(send: true);
+  }
+
+  /// True when the idea field holds proposable text.
+  bool get ideaReady {
     final text = _transcript.text.trim();
-    if (propose == null ||
-        _proposing ||
-        text.isEmpty ||
-        text == listeningPlaceholder) {
-      return;
+    return text.isNotEmpty && text != listeningPlaceholder;
+  }
+
+  /// Takes the pending proposal failure for the wizard snackbar and
+  /// clears the inline hint, so the error shows once. Null when the
+  /// last proposal did not fail.
+  String? takeProposalError() {
+    final error = _hint;
+    if (error != null && mounted) setState(() => _hint = null);
+    return error;
+  }
+
+  /// Proposes an outline for the current idea without writing the
+  /// fields. Stops an open dictation take first so its words join the
+  /// idea. Returns null when the idea is empty, generation is
+  /// unavailable or fails, the idea changed mid-flight, or Spark
+  /// returned nothing usable; the reason waits in [takeProposalError]
+  /// for the wizard snackbar.
+  Future<PremiseProposal?> proposeIdea() async {
+    final propose = widget.propose;
+    if (_proposing) return null;
+    if (_dictation.recording) await stopDictation();
+    if (!mounted) return null;
+    if (_dictation.busy) {
+      setState(
+        () => _hint = 'Wait for transcription to finish, then try again.',
+      );
+      return null;
     }
+    final text = _transcript.text.trim();
+    if (text.isEmpty || text == listeningPlaceholder) {
+      setState(() => _hint = 'Describe your idea to format it.');
+      return null;
+    }
+    if (propose == null) {
+      setState(() => _hint = 'Idea generation is unavailable.');
+      return null;
+    }
+    final gen = ++_proposalGen;
     setState(() {
       _proposing = true;
       _hint = null;
     });
     try {
       final outline = await propose(text);
-      if (!mounted) return;
+      if (!mounted || gen != _proposalGen) return null;
       final spoken = (outline.narratorLine ?? '').trim();
       final summary = (outline.synopsis ?? '').trim();
       final idea = spoken.isNotEmpty ? spoken : summary;
-      final title = (outline.title ?? '').trim();
-      final lines = <String>[];
-      if (idea.isNotEmpty) {
-        lines.add(idea);
-      } else if (title.isNotEmpty) {
-        lines.add(title);
-      }
+      final options = <OutlineOption>[];
       for (final option in outline.options) {
+        if (options.length >= 2) break;
         final label = option.label.trim();
-        if (label.isNotEmpty) lines.add(label);
+        if (label.isEmpty) continue;
+        options.add(
+          OutlineOption(
+            label: label.length > 24 ? label.substring(0, 24) : label,
+            icon: option.icon,
+            iconColor: option.iconColor,
+          ),
+        );
       }
-      setState(() {
-        if (title.isNotEmpty) _title.text = title;
-        _formatted = idea.isNotEmpty ? idea : null;
-        _formatPreview = lines.isEmpty ? null : lines.join('\n');
-        _formatOpen = false;
-        _options = List<OutlineOption>.unmodifiable(outline.options);
-      });
-      _publish();
+      final proposal = PremiseProposal(
+        title: _clip(outline.title, 40),
+        idea: idea.isEmpty ? null : idea,
+        options: options,
+      );
+      if (proposal.isEmpty) {
+        if (mounted && gen == _proposalGen) {
+          setState(() => _hint = 'Spark returned nothing usable. Try again.');
+        }
+        return null;
+      }
+      return proposal;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || gen != _proposalGen) return null;
       setState(
         () => _hint = dictationHintFor(
           error,
           'Could not propose an outline. Try again.',
         ),
       );
+      return null;
     } finally {
-      if (mounted) setState(() => _proposing = false);
+      if (mounted && gen == _proposalGen) {
+        setState(() => _proposing = false);
+      }
     }
+  }
+
+  /// Writes a reviewed [proposal] into the fields: the title, the idea,
+  /// and the proposed options. The wizard footer commits them.
+  void applyProposal(PremiseProposal proposal) {
+    if (!mounted) return;
+    setState(() {
+      if (proposal.title != null && proposal.title!.isNotEmpty) {
+        _title.text = proposal.title!;
+      }
+      if (proposal.idea != null && proposal.idea!.isNotEmpty) {
+        _transcript.text = proposal.idea!;
+      }
+      _options = List<OutlineOption>.unmodifiable(proposal.options);
+    });
+    _publish();
   }
 
   @override
@@ -293,16 +364,7 @@ class _PremiseSheetState extends State<PremiseSheet>
               labelText: 'Tell your idea',
               hintText: 'Record your idea with the mic, or type it here…',
             ).copyWith(alignLabelWithHint: true),
-            onChanged: (_) {
-              if (_formatted != null || _formatPreview != null) {
-                setState(() {
-                  _formatted = null;
-                  _formatPreview = null;
-                  _formatOpen = false;
-                });
-              }
-              _publish();
-            },
+            onChanged: (_) => _publish(),
           ),
         ),
         if (hint != null) ...[
@@ -325,16 +387,6 @@ class _PremiseSheetState extends State<PremiseSheet>
                 elapsed: _dictation.elapsed,
                 onTap: _dictation.sending ? null : _dictation.toggle,
               ),
-              if (widget.propose != null) ...[
-                const SizedBox(height: 8),
-                _FormatBar(
-                  proposing: _proposing,
-                  preview: _formatPreview,
-                  open: _formatOpen,
-                  onFormat: _dictation.busy || _proposing ? null : _propose,
-                  onToggle: () => setState(() => _formatOpen = !_formatOpen),
-                ),
-              ],
               if (widget.onApply != null) ...[
                 const SizedBox(height: 8),
                 FilledButton(
@@ -342,7 +394,7 @@ class _PremiseSheetState extends State<PremiseSheet>
                   onPressed: _dictation.busy
                       ? null
                       : () {
-                          final idea = _draftIdea();
+                          final idea = _ideaText();
                           widget.onApply!(
                             title: _title.text.trim(),
                             synopsis: idea,
@@ -389,96 +441,10 @@ InputDecoration _wizardField({
   );
 }
 
-/// Full-width Format bar. Spark and the label sit on the left. The
-/// right control is Format until Spark answers, then a chevron that
-/// opens the formatted text.
-class _FormatBar extends StatelessWidget {
-  const _FormatBar({
-    required this.proposing,
-    required this.preview,
-    required this.open,
-    required this.onFormat,
-    required this.onToggle,
-  });
-
-  final bool proposing;
-  final String? preview;
-  final bool open;
-  final VoidCallback? onFormat;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final ready = preview != null;
-    return Container(
-      key: const ValueKey('premise-format-bar'),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: RamificaColors.containerBase,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RamificaColors.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: .stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-            child: Row(
-              children: [
-                const SizedBox(width: 12),
-                const Icon(
-                  Icons.auto_awesome,
-                  size: 20,
-                  color: RamificaColors.hotspot,
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('Order text style', style: RamificaText.label),
-                ),
-                if (ready)
-                  IconButton(
-                    key: const ValueKey('premise-format-toggle'),
-                    tooltip: open
-                        ? 'Hide formatted text'
-                        : 'Show formatted text',
-                    onPressed: onToggle,
-                    icon: Icon(
-                      open ? Icons.expand_less : Icons.expand_more,
-                      color: RamificaColors.textPrimary,
-                    ),
-                  )
-                else
-                  TextButton(
-                    key: const ValueKey('premise-propose'),
-                    onPressed: proposing ? null : onFormat,
-                    child: proposing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Format'),
-                  ),
-                const SizedBox(width: 4),
-              ],
-            ),
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            alignment: Alignment.topCenter,
-            child: open && preview != null
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Text(
-                      preview!,
-                      key: const ValueKey('premise-formatted'),
-                      style: RamificaText.bodySM,
-                    ),
-                  )
-                : const SizedBox(width: double.infinity),
-          ),
-        ],
-      ),
-    );
-  }
+String? _clip(String? value, int max) {
+  if (value == null) return null;
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.length <= max) return trimmed;
+  return trimmed.substring(0, max);
 }
