@@ -137,7 +137,7 @@ void main() {
       await show();
       await settlePlayer(tester);
       expect(platform.sequence, 1);
-      expect(find.text('480 × 854 · 10.0s'), findsOneWidget);
+      expect(find.text('0:10'), findsOneWidget);
       await tester.tap(find.byTooltip('Play video'));
       await tester.pump();
       expect(platform.playing[1], true);

@@ -78,13 +78,19 @@ class _ClipPreviewState extends State<ClipPreview> {
 
   /// Pauses and releases the controller. The next activation reloads it
   /// from scratch, so nothing keeps playing behind the new step.
+  /// Pause lands on this frame; dispose waits out the player future.
   void _release() {
     final c = _controller;
     _controller = null;
     _drag = null;
     if (c == null) return;
     c.removeListener(_changed);
-    unawaited(c.dispose());
+    unawaited(_pauseThenDispose(c));
+  }
+
+  Future<void> _pauseThenDispose(VideoPlayerController c) async {
+    await c.pause();
+    await c.dispose();
   }
 
   @override

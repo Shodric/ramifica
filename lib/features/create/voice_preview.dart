@@ -163,9 +163,10 @@ class _VoicePreviewState extends State<VoicePreview> {
       _drag = null;
       unawaited(_replace());
     } else if (!widget.active) {
-      // Leaving P3 (step change, preview, child node): pause and release
-      // the controller so narration never plays behind video or preview.
-      unawaited(_player.stop());
+      // Leaving P3 (step change, preview, child node). Pause on this
+      // frame: dispose waits out the player future, so stop() alone
+      // leaves the sound running until a later turn.
+      unawaited(_pauseThenStop());
     } else if (widget.busy) {
       unawaited(_player.pause());
     } else if (!old.active) {
@@ -176,6 +177,12 @@ class _VoicePreviewState extends State<VoicePreview> {
   Future<void> _replace() async {
     await _player.stop();
     if (mounted && widget.active) await _player.prepare(widget.audioUrl);
+  }
+
+  Future<void> _pauseThenStop() async {
+    await _player.pause();
+    if (!mounted || widget.active) return;
+    await _player.stop();
   }
 
   @override
