@@ -59,6 +59,23 @@ class GraphRepository {
     final payload = await execute('rewindRun', {'runId': run});
     return Playback.fromJson(payload);
   }
+
+  /// Moves the run pointer to a visited node and returns its playback.
+  /// Powers map play: rewatch from any visited scene. History is
+  /// untouched; unvisited targets fail server-side.
+  Future<Playback> jumpToNode({
+    required String runId,
+    required String nodeId,
+  }) async {
+    final run = runId.trim();
+    final node = nodeId.trim();
+    if (run.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    final payload = await execute('jumpToNode', {
+      'runId': run,
+      'nodeId': node,
+    });
+    return Playback.fromJson(payload);
+  }
 }
 
 /// Production source: direct, account-scoped persistence.

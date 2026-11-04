@@ -372,6 +372,76 @@ void main() {
       hasLength(1),
     );
   });
+  test('jumpToNode moves the pointer between visited scenes only', () async {
+    seedReady(store);
+    await ClientPublisher(store, () => 'author').publish('s');
+    final game = ClientGameService(store, () => 'player');
+    final start = await game.execute('startRun', {'storyId': 's'});
+    final runId = start['runId'] as String;
+    await game.execute('commitChoice', {
+      'runId': runId,
+      'fromNodeId': 'root',
+      'choiceId': 'c',
+      'requestId': 'decision',
+    });
+    expect(store.documents['users/player/runs/$runId']!['currentNodeId'], 'end');
+
+    final back = await game.execute('jumpToNode', {
+      'runId': runId,
+      'nodeId': 'root',
+    });
+    expect(jsonMap(back['node'])['nodeId'], 'root');
+    expect(
+      store.documents['users/player/runs/$runId']!['currentNodeId'],
+      'root',
+    );
+    expect(
+      store.documents['users/player/runs/$runId']!['choices'],
+      hasLength(1),
+    );
+
+    final same = await game.execute('jumpToNode', {
+      'runId': runId,
+      'nodeId': 'root',
+    });
+    expect(jsonMap(same['node'])['nodeId'], 'root');
+
+    await expectLater(
+      game.execute('jumpToNode', {'runId': runId, 'nodeId': 'missing'}),
+      throwsA(isA<AppFailure>()),
+    );
+    expect(
+      store.documents['users/player/runs/$runId']!['currentNodeId'],
+      'root',
+    );
+  });
+  test('graphStubs carries card images and choice icon colors for seen nodes', () async {
+    seedReady(store);
+    store.documents['stories/s']!['title'] = 'The temple secret';
+    store.documents['stories/s']!['coverUrl'] = 'https://cover/c.png';
+    store.documents['stories/s/nodes/root']!['videoFrameLastBlurData'] =
+        'data:image/png;base64,AAA';
+    await ClientPublisher(store, () => 'author').publish('s');
+    final game = ClientGameService(store, () => 'player');
+    final start = await game.execute('startRun', {'storyId': 's'});
+    final stubs = await game.execute(
+      'graphStubs',
+      {'storyId': 's', 'runId': start['runId']},
+    );
+    final nodes = stubs['nodes'] as List;
+    final root = nodes.firstWhere((n) => n['nodeId'] == 'root');
+    expect(root['imageBlurData'], 'data:image/png;base64,AAA');
+    expect(stubs['story'], {
+      'title': 'The temple secret',
+      'coverUrl': 'https://cover/c.png',
+    });
+    expect(root['choices'].single['icon'], 'key');
+    expect(root['choices'].single['iconColor'], 'gold');
+    final end = nodes.firstWhere((n) => n['nodeId'] == 'end');
+    expect(end['choices'], isNull);
+    expect(end['imageBlurData'], isNull);
+  });
+
   test('shared playback/map cache is cleared on account switch', () async {
     seedReady(store);
     await ClientPublisher(store, () => 'author').publish('s');

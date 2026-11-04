@@ -53,6 +53,7 @@ class ClientGameService {
         'graphStubs' => graph(data),
         'playApproach' => approach(data),
         'rewindRun' => rewind(documentId(data['runId'] as String? ?? '')),
+        'jumpToNode' => jump(data),
         _ => invalid('Unknown local operation.'),
       };
       if (uid != owner) throw const AppFailure(.denied);
@@ -514,6 +515,8 @@ class ClientGameService {
           'title': body?['title'] ?? doc.value['title'],
           'isEnding': body?['isEnding'] ?? doc.value['isEnding'] ?? false,
           'thumbnailUrl': body?['thumbnailUrl'] ?? doc.value['thumbnailUrl'],
+          // Seen nodes only (body is null otherwise): the hub card image.
+          'imageBlurData': body?['videoFrameLastBlurData'],
           'endingType': seen && body != null ? body['endingType'] : null,
           'visited': seen,
           'secret': secret,
@@ -530,6 +533,8 @@ class ClientGameService {
                 {
                   'choiceId': c['choiceId'],
                   'label': c['label'],
+                  'icon': c['icon'],
+                  'iconColor': c['iconColor'],
                   'count': counts[c['choiceId']] ?? 0,
                 },
             ],
@@ -539,7 +544,11 @@ class ClientGameService {
     results.sort(
       (a, b) => (a['nodeId'] as String).compareTo(b['nodeId'] as String),
     );
-    return {'nodes': results, 'currentNodeId': run['currentNodeId']};
+    return {
+      'nodes': results,
+      'currentNodeId': run['currentNodeId'],
+      'story': {'title': story['title'], 'coverUrl': story['coverUrl']},
+    };
   }
 
   String? _parent(Json run, String target) {
@@ -594,6 +603,42 @@ class ClientGameService {
       final now = _now();
       tx.set(runPath, {
         'currentNodeId': parent,
+        'status': 'active',
+        'endingOutcome': null,
+        'updatedAt': now,
+      }, merge: true);
+      tx.set(_statePath(storyId), {
+        'activeRunId': runId,
+        'activeRunStatus': 'active',
+        'updatedAt': now,
+      }, merge: true);
+    });
+    return loadPlayback(runId);
+  }
+
+  /// Moves the run pointer to a visited node without touching history.
+  /// Powers map play: rewatch from any visited scene. Already-there is
+  /// a no-op returning the current playback; unvisited targets fail.
+  Future<Json> jump(Json data) async {
+    final runId = documentId(data['runId'] as String? ?? '');
+    final target = documentId(data['nodeId'] as String? ?? '');
+    final run = await _run(runId);
+    final storyId = run['storyId'] as String;
+    await _story(storyId); // Fails when the story is gone.
+    if (target.isEmpty) invalid('Missing scene.');
+    final state = await store.get(_statePath(storyId)) ?? {};
+    final visited = {
+      ..._strings(state['visitedNodeIds']),
+      run['currentNodeId'],
+    };
+    if (!visited.contains(target)) invalid('Scene not visited yet.');
+    if (target == run['currentNodeId']) return loadPlayback(runId);
+    final now = _now();
+    await store.transaction((tx) async {
+      final fresh = await tx.get(_runPath(runId));
+      if (fresh == null) invalid('Run not found.');
+      tx.set(_runPath(runId), {
+        'currentNodeId': target,
         'status': 'active',
         'endingOutcome': null,
         'updatedAt': now,

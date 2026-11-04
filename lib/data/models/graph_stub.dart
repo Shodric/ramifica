@@ -8,6 +8,8 @@ class GraphChoice {
     required this.choiceId,
     required this.label,
     required this.count,
+    this.icon,
+    this.iconColor,
   });
 
   factory GraphChoice.fromJson(Map<String, dynamic> json) {
@@ -15,23 +17,29 @@ class GraphChoice {
       choiceId: _requiredString(json['choiceId']),
       label: _optionalString(json['label']) ?? '',
       count: _optionalCount(json['count']),
+      icon: _optionalString(json['icon']),
+      iconColor: _optionalString(json['iconColor']),
     );
   }
 
   final String choiceId;
   final String label;
   final int count;
+  final String? icon;
+  final String? iconColor;
 
   @override
   bool operator ==(Object other) {
     return other is GraphChoice &&
         other.choiceId == choiceId &&
         other.label == label &&
-        other.count == count;
+        other.count == count &&
+        other.icon == icon &&
+        other.iconColor == iconColor;
   }
 
   @override
-  int get hashCode => Object.hash(choiceId, label, count);
+  int get hashCode => Object.hash(choiceId, label, count, icon, iconColor);
 }
 
 /// One map stub from `graphStubs`. Unvisited secret nodes carry only an
@@ -47,6 +55,7 @@ class GraphStub {
     required this.visited,
     required this.secret,
     this.thumbnailUrl,
+    this.imageBlurData,
     this.endingType,
     this.choiceCount = 0,
     this.childIds = const [],
@@ -62,6 +71,7 @@ class GraphStub {
       visited: _requiredBool(json['visited']),
       secret: _optionalBool(json['secret']),
       thumbnailUrl: _optionalString(json['thumbnailUrl']),
+      imageBlurData: _optionalString(json['imageBlurData']),
       endingType: _optionalString(json['endingType']),
       choiceCount: _optionalCount(json['choiceCount']),
       childIds: childIds == null
@@ -77,6 +87,7 @@ class GraphStub {
   final bool visited;
   final bool secret;
   final String? thumbnailUrl;
+  final String? imageBlurData;
   final String? endingType;
   final int choiceCount;
   final List<String> childIds;
@@ -94,6 +105,7 @@ class GraphStub {
         other.visited == visited &&
         other.secret == secret &&
         other.thumbnailUrl == thumbnailUrl &&
+        other.imageBlurData == imageBlurData &&
         other.endingType == endingType &&
         other.choiceCount == choiceCount &&
         _sameStrings(other.childIds, childIds) &&
@@ -108,6 +120,7 @@ class GraphStub {
     visited,
     secret,
     thumbnailUrl,
+    imageBlurData,
     endingType,
     choiceCount,
     Object.hashAll(childIds),
@@ -118,31 +131,53 @@ class GraphStub {
 /// The `graphStubs` payload: every node of the story plus the run's
 /// current node.
 class GraphStubsResult {
-  const GraphStubsResult({required this.nodes, required this.currentNodeId});
+  const GraphStubsResult({
+    required this.nodes,
+    required this.currentNodeId,
+    this.storyTitle,
+    this.storyCoverUrl,
+  });
 
   factory GraphStubsResult.fromJson(Map<String, dynamic> json) {
     final rawNodes = json['nodes'];
     if (rawNodes is! List) throw const AppFailure(.invalid);
+    final story = json['story'];
+    final storyMap = story == null ? null : _objectMap(story);
     return GraphStubsResult(
       nodes: [
         for (final node in rawNodes) GraphStub.fromJson(_objectMap(node)),
       ],
       currentNodeId: _requiredString(json['currentNodeId']),
+      storyTitle: storyMap == null
+          ? null
+          : _optionalString(storyMap['title']),
+      storyCoverUrl: storyMap == null
+          ? null
+          : _optionalString(storyMap['coverUrl']),
     );
   }
 
   final List<GraphStub> nodes;
   final String currentNodeId;
+  final String? storyTitle;
+  final String? storyCoverUrl;
 
   @override
   bool operator ==(Object other) {
     return other is GraphStubsResult &&
         other.currentNodeId == currentNodeId &&
+        other.storyTitle == storyTitle &&
+        other.storyCoverUrl == storyCoverUrl &&
         _sameStubs(other.nodes, nodes);
   }
 
   @override
-  int get hashCode => Object.hash(Object.hashAll(nodes), currentNodeId);
+  int get hashCode => Object.hash(
+    Object.hashAll(nodes),
+    currentNodeId,
+    storyTitle,
+    storyCoverUrl,
+  );
 }
 
 Map<String, dynamic> _objectMap(Object? value) {
