@@ -60,6 +60,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<StoryOpened>(_onOpened, transformer: restartable());
     on<PlaybackReloadRequested>(_onReload, transformer: restartable());
     on<StorySwiped>(_onSwiped, transformer: restartable());
+    on<ReelReplayed>(_onReplayed, transformer: restartable());
+    on<NextPrecached>(_onPrecached);
     on<PauseReached>(_onPause);
     on<UserGestured>(_onUserGestured);
     on<AppHidden>(_onAppHidden);
@@ -109,6 +111,53 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   final PreviewNodeLabel? _previewNodeLabel;
   final bool _preview;
   var _holdSealed = false;
+
+  /// Ordered swipe queue: every other published story, shuffled. Rebuilt
+  /// on a fresh open and when a forward swipe lands on the last painted
+  /// page. Each id that is not already a page is loaded into [reelPages].
+  List<String>? _queue;
+
+  /// Monotonic rebuild generation: a stale rebuild never overwrites a
+  /// newer queue. It does not cancel a playback that is already loading.
+  var _queueEra = 0;
+
+  /// Bumped when a fresh story load replaces the reel. In-flight precaches
+  /// from the previous visit are dropped. A swipe does not bump it.
+  var _visit = 0;
+
+  /// Published stories loaded for this visit, open story first, then each
+  /// precache as it arrives. The view mirrors this on every build, so two
+  /// arrivals in the same frame cannot drop a page.
+  final List<Playback> _reelPages = [];
+
+  /// Story ids whose playback is already loading for this visit.
+  final Set<String> _loading = {};
+
+  /// Root playback of each story loaded this visit. A return plays this,
+  /// not the scene the story had reached.
+  final Map<String, Playback> _roots = {};
+
+  /// Stories the finger has already opened this visit. Landing on one
+  /// again starts a new run at the root.
+  final Set<String> _started = {};
+
+  /// Bumped on every open. A root reload that loses the race does not
+  /// replace the story the finger moved to.
+  var _openSerial = 0;
+
+  /// Published stories loaded for this visit. The view mirrors the list.
+  List<Playback> get reelPages => _reelPages;
+
+  /// The queue rebuild started by the last open or forward landing.
+  /// A swipe that arrives before it finishes waits for the prepared page
+  /// instead of drawing a different story.
+  Future<void>? _queueBuild;
+
+  /// Precached playback of the queue head's successor, plus its future
+  /// so a swipe landing mid-precache awaits it instead of firing a
+  /// duplicate load. Null when there is nothing worth precaching.
+  Future<Playback?>? _nextFuture;
+  String? _nextStoryId;
 
   /// Background commits in send order. Holds enqueue; the pump sends
   /// serially so chained from-nodes validate. An offline head parks the
@@ -186,34 +235,246 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     }
   }
 
-  /// Draws another published story at random, excluding the current one,
-  /// and opens it from its root. Only from `playing` or with
-  /// the card visible; without another story, or without a catalog, it is
-  /// ignored. Best-effort: a catalog failure keeps the current clip.
+  /// Lands on the next reel. The finger's page wins: [StorySwiped.playback]
+  /// mounts with no loading phase. With no page, the prepared successor
+  /// mounts the same way. A failed precache loads that successor without
+  /// blanking the current clip. Ignored outside `playing` and the ending
+  /// card, and when nothing follows.
   Future<void> _onSwiped(StorySwiped event, Emitter<FeedState> emit) async {
-    if (_preview) return;
-    final current = state;
-    final cardVisible = current.phase == .ending && !current.endingSpeaking;
-    if (current.phase != .playing && !cardVisible) return;
+    if (_preview || !_canSwipe(state)) return;
+    final requested = event.playback;
+    if (requested != null) {
+      await _openReel(requested, emit, queue: event.queue);
+      return;
+    }
     final catalog = this.catalog;
-    final storyId = current.storyId;
+    final storyId = state.storyId;
     if (catalog == null || storyId == null || storyId.isEmpty) return;
+    final pendingQueue = _queueBuild;
+    if (pendingQueue != null) await pendingQueue;
+    if (emit.isDone || !_canSwipe(state)) return;
+    final ready = state.nextPlayback;
+    final prepared = ready != null && ready.story.storyId == _nextStoryId
+        ? ready
+        : await _nextFuture;
+    if (prepared != null && !emit.isDone) {
+      _nextFuture = null;
+      await _openReel(prepared, emit);
+      return;
+    }
+    final head = _queue == null || _queue!.isEmpty ? null : _queue!.first;
+    if (head == null || emit.isDone) return;
+    await _loadStory(storyId: head, emit: emit, blank: false);
+  }
+
+  /// Lands on a story already in the session. Plays it again from the
+  /// root: a new run, the first scene, the whole story.
+  Future<void> _onReplayed(ReelReplayed event, Emitter<FeedState> emit) async {
+    if (_preview || !_canSwipe(state)) return;
+    await _replayFromRoot(event.playback.story.storyId, emit);
+  }
+
+  /// First landing plays the page that is already loaded. A later landing
+  /// starts that story over at the root.
+  Future<void> _openReel(
+    Playback playback,
+    Emitter<FeedState> emit, {
+    bool queue = true,
+  }) async {
+    final id = playback.story.storyId;
+    if (_started.contains(id)) {
+      await _replayFromRoot(id, emit, queue: queue);
+      return;
+    }
+    _openSerial++;
+    _keepRoot(playback);
+    _started.add(id);
+    _mountPlayback(playback, emit, queue: queue);
+  }
+
+  /// Plays [storyId] from its first scene without blanking the reel. The
+  /// cached root mounts immediately. A new run replaces it when it
+  /// arrives, so a choice commits on the fresh run.
+  Future<void> _replayFromRoot(
+    String storyId,
+    Emitter<FeedState> emit, {
+    bool queue = false,
+  }) async {
+    if (storyId.isEmpty) return;
+    final visit = _visit;
+    final serial = ++_openSerial;
+    _started.add(storyId);
+    final cached = _roots[storyId];
+    if (cached != null) _mountPlayback(cached, emit, queue: false);
+    try {
+      final started = await repository.startRun(
+        storyId: storyId,
+        restart: true,
+      );
+      if (emit.isDone || visit != _visit || serial != _openSerial) return;
+      final playback = await repository.loadPlayback(started.runId);
+      if (emit.isDone || visit != _visit || serial != _openSerial) return;
+      _roots[storyId] = playback;
+      _mountPlayback(playback, emit, queue: queue);
+    } on AppFailure {
+      // The cached root, when there is one, is already on screen.
+    }
+  }
+
+  void _keepRoot(Playback playback) {
+    _roots.putIfAbsent(playback.story.storyId, () => playback);
+  }
+
+  bool _canSwipe(FeedState current) {
+    final cardVisible = current.phase == .ending && !current.endingSpeaking;
+    return current.phase == .playing || cardVisible;
+  }
+
+  /// Mounts an already-loaded playback as the open story: same settle as
+  /// a fresh load, without the `loading` phase. The clip plays from the
+  /// start, including when the node is an ending; the card follows the
+  /// ended event. Warms media, prepares the voice, then (when [queue] is
+  /// set) rebuilds the swipe queue from this head.
+  void _mountPlayback(
+    Playback playback,
+    Emitter<FeedState> emit, {
+    bool queue = true,
+  }) {
+    _holdSealed = false;
+    _silence();
+    _pumpCommits(resume: true);
+    prefetcher.warm(playback);
+    final voice = playback.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(narrator.prepare(voice));
+    }
+    _remember(playback);
+    emit(
+      FeedState(
+        phase: .playing,
+        storyId: playback.story.storyId,
+        runId: playback.runId,
+        playback: playback,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
+    if (!queue) return;
+    _queueBuild = _rebuildQueue(playback.story.storyId);
+  }
+
+  /// One story in the published list finished loading. The page is already
+  /// in [reelPages]; this emit only wakes the view. A stale visit is
+  /// ignored. The open story's media cache is left alone: each page's
+  /// player is the preload.
+  void _onPrecached(NextPrecached event, Emitter<FeedState> emit) {
+    if (isClosed || event.era != _visit) return;
+    final playback = event.playback;
+    if (playback == null) return;
+    emit(state.copy(nextPlayback: () => playback));
+  }
+
+  /// Shuffles the swipe draw behind [head]: every other published story
+  /// in random order. Failures leave the queue empty so swipes fall back
+  /// to the prepared head; the era guard drops stale rebuilds.
+  Future<void> _rebuildQueue(String head) async {
+    final catalog = this.catalog;
+    if (_preview || catalog == null) {
+      _queue = const [];
+      return;
+    }
+    final era = ++_queueEra;
     late final List<String> ids;
     try {
       ids = await catalog.publishedStoryIds();
     } on AppFailure {
+      if (era == _queueEra) _queue = const [];
       return;
     }
-    final seen = <String>{};
-    final others = <String>[
+    final seen = <String>{head};
+    final rest = <String>[
       for (final id in ids)
-        if (id.trim().isNotEmpty && id != storyId && seen.add(id)) id,
+        if (id.trim().isNotEmpty && seen.add(id)) id,
     ];
-    if (others.isEmpty || emit.isDone) return;
-    await _loadStory(
-      storyId: others[_random.nextInt(others.length)],
-      emit: emit,
+    rest.shuffle(_random);
+    if (era != _queueEra) return;
+    _queue = rest;
+    unawaited(_precacheQueue());
+  }
+
+  /// Puts [playback] in [reelPages]. [reset] starts a new visit list with
+  /// only that story. Otherwise a new id is appended and a known id is
+  /// replaced, so pages already built stay put.
+  void _remember(Playback playback, {bool reset = false}) {
+    if (reset) {
+      _reelPages
+        ..clear()
+        ..add(playback);
+      return;
+    }
+    final index = _reelPages.indexWhere(
+      (reel) => reel.story.storyId == playback.story.storyId,
     );
+    if (index < 0) {
+      _reelPages.add(playback);
+    } else {
+      _reelPages[index] = playback;
+    }
+  }
+
+  bool _hasPage(String storyId) {
+    return _reelPages.any((reel) => reel.story.storyId == storyId);
+  }
+
+  /// Loads every published story still missing from [reelPages]. The loads
+  /// run together. The first one is [_nextFuture], so a swipe that lands
+  /// before that page is painted can still mount it. An id that is already
+  /// loading is left alone: landing on the last painted page must not
+  /// cancel a story that has not arrived yet.
+  Future<void> _precacheQueue() async {
+    final queue = List<String>.of(_queue ?? const []);
+    final visit = _visit;
+    if (queue.isEmpty || isClosed) return;
+    final pending = [
+      for (final id in queue)
+        if (id.isNotEmpty && !_hasPage(id) && _loading.add(id)) id,
+    ];
+    if (pending.isEmpty) return;
+    _nextStoryId = pending.first;
+    final loads = <Future<Playback?>>[
+      for (final id in pending) _deliverPrecache(id, visit),
+    ];
+    _nextFuture = loads.first;
+    await Future.wait(loads);
+  }
+
+  Future<Playback?> _deliverPrecache(String storyId, int visit) {
+    return _loadPrecached(storyId).then((playback) {
+      if (visit == _visit) _loading.remove(storyId);
+      if (isClosed || visit != _visit) return playback;
+      if (playback != null) {
+        _keepRoot(playback);
+        _remember(playback);
+      }
+      add(NextPrecached(playback, era: visit));
+      return playback;
+    });
+  }
+
+  /// The queue head's root playback, or null when it cannot load. Runs
+  /// are fresh (`restart`) like every feed entry; an orphaned precached
+  /// run is as inert as an abandoned load.
+  Future<Playback?> _loadPrecached(String storyId) async {
+    try {
+      final started = await repository.startRun(
+        storyId: storyId,
+        restart: true,
+      );
+      if (isClosed) return null;
+      return await repository.loadPlayback(started.runId);
+    } on AppFailure {
+      return null;
+    }
   }
 
   /// Opens [storyId] (or lets the server pick when null) with a fresh run
@@ -223,18 +484,29 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   Future<void> _loadStory({
     required String? storyId,
     required Emitter<FeedState> emit,
+    bool blank = true,
   }) async {
     _holdSealed = false;
     _silence();
     _pumpCommits(resume: true);
-    emit(
-      FeedState(
-        phase: .loading,
-        storyId: storyId,
-        muted: state.muted,
-        autoMuted: state.autoMuted,
-      ),
-    );
+    if (blank) {
+      // Drop precaches from the previous visit before the await, so they
+      // cannot append onto the story that is about to open.
+      _visit++;
+      _openSerial++;
+      _loading.clear();
+      _reelPages.clear();
+      _roots.clear();
+      _started.clear();
+      emit(
+        FeedState(
+          phase: .loading,
+          storyId: storyId,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
+        ),
+      );
+    }
     try {
       // Entering the feed always starts a fresh run at the root: a
       // finished story starts over instead of landing on its last
@@ -252,6 +524,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
       if (voice != null && voice.isNotEmpty) {
         unawaited(narrator.prepare(voice));
       }
+      _keepRoot(playback);
+      _started.add(playback.story.storyId);
+      _remember(playback, reset: blank);
       emit(
         FeedState(
           phase: playback.node.isEnding ? .ending : .playing,
@@ -262,8 +537,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           autoMuted: state.autoMuted,
         ),
       );
+      _queueBuild = _rebuildQueue(playback.story.storyId);
     } on AppFailure catch (error) {
-      if (emit.isDone) return;
+      if (emit.isDone || !blank) return;
       emit(
         FeedState(
           phase: .failed,
@@ -613,14 +889,15 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     required String requestId,
     bool events = true,
   }) {
-    for (final stale in _commitQueue
-        .where(
-          (item) =>
-              !item.active &&
-              item.runId == runId &&
-              item.fromNodeId == fromNodeId,
-        )
-        .toList()) {
+    for (final stale
+        in _commitQueue
+            .where(
+              (item) =>
+                  !item.active &&
+                  item.runId == runId &&
+                  item.fromNodeId == fromNodeId,
+            )
+            .toList()) {
       _commitQueue.remove(stale);
       stale.fail(const AppFailure(.invalid));
     }
@@ -640,9 +917,10 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   /// Drops parked commits for [runId] without reporting: the map moved the
   /// pointer, so their from-nodes are stale by definition.
   void _dropRunCommits(String runId) {
-    for (final item in _commitQueue
-        .where((item) => !item.active && item.runId == runId)
-        .toList()) {
+    for (final item
+        in _commitQueue
+            .where((item) => !item.active && item.runId == runId)
+            .toList()) {
       _commitQueue.remove(item);
       item.fail(const AppFailure(.invalid));
     }
@@ -719,7 +997,10 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   Future<void> _recover(String runId, Emitter<FeedState> emit) async {
     try {
       final playback = await repository.loadPlayback(runId);
-      if (emit.isDone) return;
+      // The finger may have moved on while this load was in flight. Parking
+      // the old run then would put the finished story back under a page
+      // that is already showing the next one.
+      if (emit.isDone || state.runId != runId) return;
       _park(playback, emit);
     } on AppFailure catch (error) {
       if (emit.isDone) return;

@@ -593,6 +593,44 @@ void main() {
     expect(ends, 0);
   });
 
+  testWidgets('a paused neighbor reports the end once it plays', (
+    tester,
+  ) async {
+    final player = _FakeClip();
+    addTearDown(player.dispose);
+    var ends = 0;
+
+    Future<void> host(bool play) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: NodeVideo(
+            url: 'https://example.com/video.mp4',
+            muted: true,
+            play: play,
+            player: player,
+            onFirstFrame: () {},
+            onEnded: () => ends++,
+          ),
+        ),
+      );
+    }
+
+    await host(false);
+    await tester.pump();
+    player.ended = true;
+    player.notify();
+    expect(ends, 0);
+
+    player.ended = false;
+    await host(true);
+    await tester.pump();
+    player.ended = true;
+    player.notify();
+    expect(ends, 1);
+    player.notify();
+    expect(ends, 1);
+  });
+
   testWidgets('leaving the feed pauses and coming back resumes', (
     tester,
   ) async {

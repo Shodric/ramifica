@@ -28,11 +28,7 @@ void main() {
     addTearDown(shell.close);
     await _pumpPager(tester, shell: shell);
 
-    await tester.fling(
-      find.byType(FeedView),
-      const Offset(-300, 0),
-      1000,
-    );
+    await tester.fling(find.byType(FeedView), const Offset(-300, 0), 1000);
     await tester.pumpAndSettle();
 
     expect(shell.state.tab, ShellTab.graph);
@@ -61,28 +57,16 @@ void main() {
     final shell = ShellBloc();
     addTearDown(shell.close);
     await _pumpPager(tester, shell: shell);
-    await tester.fling(
-      find.byType(FeedView),
-      const Offset(-300, 0),
-      1000,
-    );
+    await tester.fling(find.byType(FeedView), const Offset(-300, 0), 1000);
     await tester.pumpAndSettle();
     expect(shell.state.tab, ShellTab.graph);
 
-    await tester.fling(
-      find.byType(DraftCanvas),
-      const Offset(-300, 0),
-      1000,
-    );
+    await tester.fling(find.byType(DraftCanvas), const Offset(-300, 0), 1000);
     await tester.pumpAndSettle();
     expect(shell.state.tab, ShellTab.graph);
     expect(_page(tester), 1);
 
-    await tester.fling(
-      find.byType(DraftCanvas),
-      const Offset(300, 0),
-      1000,
-    );
+    await tester.fling(find.byType(DraftCanvas), const Offset(300, 0), 1000);
     await tester.pumpAndSettle();
     expect(shell.state.tab, ShellTab.graph);
     expect(_page(tester), 1);
@@ -137,11 +121,7 @@ void main() {
     final shell = ShellBloc();
     addTearDown(shell.close);
     await _pumpPager(tester, shell: shell);
-    await tester.fling(
-      find.byType(FeedView),
-      const Offset(-300, 0),
-      1000,
-    );
+    await tester.fling(find.byType(FeedView), const Offset(-300, 0), 1000);
     await tester.pumpAndSettle();
     expect(shell.state.tab, ShellTab.graph);
 
@@ -179,7 +159,10 @@ void main() {
 }
 
 double? _page(WidgetTester tester) {
-  return tester.widget<PageView>(find.byType(PageView)).controller!.page;
+  final finder = find.byWidgetPredicate(
+    (widget) => widget is PageView && widget.scrollDirection == Axis.horizontal,
+  );
+  return tester.widget<PageView>(finder).controller!.page;
 }
 
 Future<FeedBloc> _pumpPager(
@@ -202,10 +185,7 @@ Future<FeedBloc> _pumpPager(
         ],
         child: FeedGraphPager(
           storyId: 'story_temple',
-          graphRepository: _graphs(
-            graphCalls,
-            (name, data) async => _stubs(),
-          ),
+          graphRepository: _graphs(graphCalls, (name, data) async => _stubs()),
           clipPlayer: _Clip(),
         ),
       ),

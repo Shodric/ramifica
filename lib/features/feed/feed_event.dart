@@ -70,11 +70,40 @@ final class HoldCompleted extends FeedEvent {
   const HoldCompleted();
 }
 
-/// A vertical swipe. Draws another published story at random and opens it
-/// from its root. Ignored unless playing or the ending card is visible,
-/// and when there is no other story.
+/// A vertical swipe onto the next reel. Mounts [playback] when the finger
+/// landed on a page that is already built. With no playback, mounts the
+/// prepared successor. Ignored unless playing or the ending card is
+/// visible, and when there is no other story.
 final class StorySwiped extends FeedEvent {
-  const StorySwiped();
+  const StorySwiped({this.playback, this.queue = true});
+
+  /// The page the finger landed on. Null mounts the prepared next story,
+  /// which is how tests advance without a pager.
+  final Playback? playback;
+
+  /// When true, mounting draws the story that follows this one. A landing
+  /// in the middle of the session list leaves the pages that are already
+  /// built.
+  final bool queue;
+}
+
+/// The finger moved back to a reel that is already in the session. Starts
+/// that story over at its root, so the whole story plays from the first
+/// scene.
+final class ReelReplayed extends FeedEvent {
+  const ReelReplayed(this.playback);
+
+  final Playback playback;
+}
+
+/// One published story finished loading for the reel list. The bloc has
+/// already appended it to the visit list; the event wakes the view. [era]
+/// is that visit: a completion from a replaced visit is ignored.
+final class NextPrecached extends FeedEvent {
+  const NextPrecached(this.playback, {this.era = 0});
+
+  final Playback? playback;
+  final int era;
 }
 
 /// From the ending card. Starts a new run at the root and keeps endings.

@@ -32,11 +32,17 @@ class FeedState {
     this.previewNotice,
     this.previewNoticeSerial = 0,
     this.previewNoticeTarget,
+    this.nextPlayback,
   });
   final FeedPhase phase;
   final String? storyId;
   final String? runId;
   final Playback? playback;
+
+  /// The precached root playback of the swipe queue's head, painted on
+  /// page 1 while page 0 holds the open story. Mounting it is instant;
+  /// a swipe that draws another story falls back to a normal load.
+  final Playback? nextPlayback;
 
   /// The saga story this ending newly unlocked, if any. Set only on the
   /// fresh commit that unlocked it; reopens and re-earns pass null, so the
@@ -93,6 +99,7 @@ class FeedState {
   FeedState copy({
     FeedPhase? phase,
     Playback? playback,
+    Playback? Function()? nextPlayback,
     SagaUnlocked? sagaUnlocked,
     bool? muted,
     bool? autoMuted,
@@ -114,6 +121,7 @@ class FeedState {
       storyId: storyId,
       runId: runId,
       playback: playback ?? this.playback,
+      nextPlayback: nextPlayback == null ? this.nextPlayback : nextPlayback(),
       sagaUnlocked: sagaUnlocked ?? this.sagaUnlocked,
       failure: failure,
       muted: muted ?? this.muted,
@@ -140,6 +148,7 @@ class FeedState {
         other.storyId == storyId &&
         other.runId == runId &&
         other.playback == playback &&
+        other.nextPlayback == nextPlayback &&
         other.sagaUnlocked == sagaUnlocked &&
         other.failure == failure &&
         other.muted == muted &&
@@ -162,6 +171,7 @@ class FeedState {
     storyId,
     runId,
     playback,
+    nextPlayback,
     sagaUnlocked,
     failure,
     muted,

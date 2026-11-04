@@ -23,12 +23,17 @@ class NodeVideo extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.onVideoSizeChanged,
     this.poster,
+    this.restAtEnd = true,
   });
 
   /// Optional still shown until the first frame arrives, in the same
   /// `data:image/...;base64,…` encoding as `videoFrameLastBlurData`. Null
   /// keeps the plain surface underneath (a black frame until ready).
   final String? poster;
+
+  /// When [play] is false, park on the last frame. Neighbor reels pass
+  /// false so the opened clip stays on its first frame until it lands.
+  final bool restAtEnd;
 
   final String url;
   final bool muted;
@@ -76,6 +81,7 @@ class _NodeVideoState extends State<NodeVideo> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _owned?.restAtEnd = widget.restAtEnd;
     final enabled = TickerMode.valuesOf(context).enabled;
     final tickerChanged = enabled != _tickerEnabled;
     _tickerEnabled = enabled;
@@ -101,7 +107,22 @@ class _NodeVideoState extends State<NodeVideo> {
     if (oldWidget.muted != widget.muted) {
       unawaited(_player.setMuted(widget.muted));
     }
-    if (oldWidget.play != widget.play) _syncPlayback();
+    if (oldWidget.play == widget.play) return;
+    // A neighbor is opened paused, so the ended event was disarmed. Arm it
+    // when this page actually plays. A player already sitting on its last
+    // frame would otherwise resume as a no-op and never report the end.
+    if (!widget.play) {
+      _syncPlayback();
+      return;
+    }
+    _armEnded = true;
+    if (!_player.ended && !_sawEnded) {
+      _syncPlayback();
+      return;
+    }
+    _sawEnded = false;
+    _sawReady = false;
+    unawaited(_open());
   }
 
   @override
@@ -115,6 +136,8 @@ class _NodeVideoState extends State<NodeVideo> {
   Future<void> _open() async {
     final generation = ++_generation;
     _armEnded = widget.play;
+    _sawEnded = false;
+    _owned?.restAtEnd = widget.restAtEnd;
     // Yield so this does not run inside didChangeDependencies.
     await Future<void>.value();
     if (!mounted || generation != _generation) return;
@@ -256,6 +279,10 @@ class VideoClipPlayer implements ClipPlayer {
   var _reportEnded = false;
   var _disposed = false;
 
+  /// Neighbor reels set this false so a paused open stays on frame 0.
+  /// Ended runs leave it true and park on the last frame.
+  var restAtEnd = true;
+
   @override
   bool get ready => _ready;
 
@@ -293,7 +320,7 @@ class VideoClipPlayer implements ClipPlayer {
     await controller.initialize();
     if (_disposed || _controller != controller) return;
     await controller.setVolume(muted ? 0 : 1);
-    if (!play && controller.value.duration > Duration.zero) {
+    if (!play && restAtEnd && controller.value.duration > Duration.zero) {
       await controller.seekTo(controller.value.duration);
     }
     _forward();
@@ -312,8 +339,11 @@ class VideoClipPlayer implements ClipPlayer {
   @override
   void resume() {
     final controller = _controller;
-    if (controller == null || _ended || !_reportEnded) return;
+    if (controller == null || _ended) return;
     if (!controller.value.isInitialized) return;
+    // A neighbor opened paused. Arm the ended event and play from
+    // wherever it sits, which is frame 0 until this reel has played.
+    _reportEnded = true;
     unawaited(controller.play());
   }
 

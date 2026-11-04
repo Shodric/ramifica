@@ -78,7 +78,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(bloc.state.phase, FeedPhase.speaking);
-    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
+    // One open plus the background precache of story_b.
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(2));
   });
 
   test('swipe from the card opens another story', () async {
@@ -134,7 +135,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(bloc.state.phase, FeedPhase.ending);
     expect(bloc.state.endingSpeaking, isTrue);
-    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
+    // One open plus the background precache of story_b.
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(2));
 
     clock.fire();
     await bloc.stream.firstWhere(
@@ -182,6 +184,133 @@ void main() {
     expect(bloc.state.phase, FeedPhase.playing);
     expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
   });
+
+  test('swipe mounts the precached story with no loading phase', () async {
+    final calls = <_Call>[];
+    final bloc = _bloc(ids: ['story_a', 'story_b'], calls: calls);
+    addTearDown(bloc.close);
+    await _open(bloc, 'story_a');
+    // Let the background precache settle: open + precache startRuns.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final draws = [
+      for (final call in calls)
+        if (call.name == 'startRun') call.data?['storyId'],
+    ];
+    expect(draws, ['story_a', 'story_b']);
+
+    final phases = <FeedPhase>[];
+    final sub = bloc.stream.listen((state) => phases.add(state.phase));
+    bloc.add(const StorySwiped());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.story.storyId == 'story_b',
+    );
+    await sub.cancel();
+
+    // Two stories, no repeated ids: the draw must hit the precache, so
+    // no new startRun fires for story_b on swipe (a later precache may
+    // add a third call once the mounted story rebuilds the queue).
+    final swipeDraws = [
+      for (final call in calls)
+        if (call.name == 'startRun') call.data?['storyId'],
+    ];
+    expect(swipeDraws.where((id) => id == 'story_b'), hasLength(1));
+    expect(phases, isNot(contains(FeedPhase.loading)));
+    expect(bloc.state.playback!.story.storyId, 'story_b');
+  });
+
+  test('a failed precache falls back to a normal load', () async {
+    final calls = <_Call>[];
+    var precache = true;
+    final bloc = FeedBloc(
+      repository: RunRepository(
+        execute: FunctionsClient(
+          call: (name, data) async {
+            calls.add(_Call(name, data));
+            if (name == 'startRun') {
+              final story = (data?['storyId'] as String?) ?? 'story_a';
+              // The first background startRun fails; the swipe retry works.
+              if (precache && story == 'story_b') {
+                precache = false;
+                throw const AppFailure(.offline);
+              }
+              return {
+                'runId': 'run_$story',
+                'storyId': story,
+                'status': 'active',
+              };
+            }
+            if (name == 'loadPlayback') {
+              final run = (data?['runId'] as String?) ?? 'run_story_a';
+              final story = run.startsWith('run_') ? run.substring(4) : run;
+              return _playback(runId: run, storyId: story);
+            }
+            throw StateError('unexpected $name');
+          },
+        ).call,
+      ),
+      catalog: CatalogRepository(
+        fetchPublishedIds: () async => ['story_a', 'story_b'],
+      ),
+      prefetcher: Prefetcher(open: _Slot.new),
+      clock: _Clock(),
+    );
+    addTearDown(bloc.close);
+    await _open(bloc, 'story_a');
+
+    bloc.add(const StorySwiped());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.story.storyId == 'story_b',
+    );
+    expect(bloc.state.playback!.story.storyId, 'story_b');
+  });
+
+  test('swiping back restarts that story at the root', () async {
+    final calls = <_Call>[];
+    final bloc = _bloc(ids: ['story_a', 'story_b', 'story_c'], calls: calls);
+    addTearDown(bloc.close);
+    await _open(bloc, 'story_a');
+    final first = bloc.state.playback!;
+    await bloc.stream.firstWhere((state) => state.nextPlayback != null);
+    final next = bloc.state.nextPlayback!;
+
+    bloc.add(StorySwiped(playback: next, queue: false));
+    await bloc.stream.firstWhere(
+      (state) => state.playback!.story.storyId == next.story.storyId,
+    );
+    final before = _runsFor(calls, 'story_a');
+
+    bloc.add(ReelReplayed(first));
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.story.storyId == 'story_a' &&
+          _runsFor(calls, 'story_a') > before,
+    );
+
+    expect(bloc.state.playback!.node.nodeId, first.node.nodeId);
+    expect(_runsFor(calls, 'story_a'), before + 1);
+    expect(
+      calls
+          .lastWhere(
+            (call) =>
+                call.name == 'startRun' && call.data?['storyId'] == 'story_a',
+          )
+          .data?['restart'],
+      true,
+    );
+  });
+}
+
+int _runsFor(List<_Call> calls, String storyId) {
+  return calls
+      .where(
+        (call) => call.name == 'startRun' && call.data?['storyId'] == storyId,
+      )
+      .length;
 }
 
 Future<void> _open(FeedBloc bloc, String storyId) async {
