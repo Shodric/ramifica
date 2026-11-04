@@ -132,6 +132,52 @@ void main() {
     expect(bloc.state.holdChoiceId, isNull);
   });
 
+  testWidgets('feed zones render the small options puck', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 844,
+            child: Stack(
+              children: [
+                ChoiceZone(
+                  choiceId: 'choice_ridge',
+                  label: 'Climb the ridge',
+                  x: 0.5,
+                  y: 0.5,
+                  radius: 0.15,
+                  video: const VideoFrame(Size(390, 844)),
+                  enabled: true,
+                  onHoldStart: (_) {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Authored radius 0.15 on this frame spans ~142px, but the visible
+    // marker clamps to the 40px options puck with a 20px glyph while the
+    // tappable disc keeps the authored geometry.
+    expect(
+      tester.getSize(find.byKey(const ValueKey('visible-ring-choice_ridge'))),
+      const Size(40, 40),
+    );
+    final icon = tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(const ValueKey('visible-ring-choice_ridge')),
+        matching: find.byType(Icon),
+      ),
+    );
+    expect(icon.size, 20);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('ring-choice_ridge'))).width,
+      greaterThan(40),
+    );
+  });
+
   testWidgets('the window shows each label under its ring', (tester) async {
     final clock = _Clock();
     final bloc = _bloc(clock, voice: false);
@@ -145,7 +191,9 @@ void main() {
       tester.getTopLeft(find.text('Enter the temple')).dy,
       greaterThan(
         tester
-            .getBottomLeft(find.byKey(const ValueKey('ring-choice_temple')))
+            .getBottomLeft(
+              find.byKey(const ValueKey('visible-ring-choice_temple')),
+            )
             .dy,
       ),
     );

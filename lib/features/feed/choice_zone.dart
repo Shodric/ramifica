@@ -44,7 +44,7 @@ class ChoiceZone extends StatelessWidget {
   /// Choice order in the node, for the legacy icon fallback.
   final int index;
 
-  /// Draw a smaller marker while retaining the authored zone geometry.
+  /// Compact label styling for previews; the marker itself is always small.
   final bool compact;
 
   /// False while a hold is already running. A new press does not steal it.
@@ -62,7 +62,7 @@ class ChoiceZone extends StatelessWidget {
     final center = video.point(x, y);
     final ring = video.radius(radius);
     final diameter = ring * 2;
-    final visibleDiameter = compact ? diameter.clamp(0.0, 40.0) : diameter;
+    final visibleDiameter = diameter.clamp(0.0, 40.0);
     return Positioned.fill(
       child: AnimatedOpacity(
         key: ValueKey('zone-fade-$choiceId'),
@@ -187,9 +187,8 @@ class _ZoneRing extends StatelessWidget {
               child: IgnorePointer(
                 child: Icon(
                   icon,
-                  size: visibleDiameter < 16
-                      ? visibleDiameter
-                      : (visibleDiameter * 0.38).clamp(16, 32).toDouble(),
+                  size: visibleDiameter.clamp(0.0, 20.0),
+
                   color: color,
                 ),
               ),
