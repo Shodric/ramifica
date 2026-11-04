@@ -34,7 +34,6 @@ class ProfileHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = _titleOf(displayName, handle);
     final tag = handle?.trim() ?? '';
-    final area = locale.trim();
     final verified =
         (displayName?.trim().isNotEmpty ?? false) || tag.isNotEmpty;
     return Semantics(
@@ -59,31 +58,26 @@ class ProfileHeader extends StatelessWidget {
                   bottom: 0,
                   child: _AvatarRing(photoUrl: photoUrl, name: name),
                 ),
+                // Name + verified check ride beside the avatar (bottom
+                // aligned, in the empty strip below the banner) instead
+                // of below it, so they take no extra vertical space.
+                // Avatar spans x 12..108; 12px gap, 12px outer margin.
+                Positioned(
+                  left: 120,
+                  right: 12,
+                  bottom: 0,
+                  child: _NameRow(name: name, verified: verified),
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          _NameRow(name: name, verified: verified),
           if (tag.isNotEmpty) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: 12),
             Text(
               '@$tag',
               style: RamificaText.meta,
               maxLines: 1,
               overflow: .ellipsis,
-            ),
-          ],
-          if (area.isNotEmpty || followingCount != null) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: .center,
-              children: [
-                if (area.isNotEmpty) _LocaleBadge(locale: area),
-                if (followingCount != null)
-                  Text('$followingCount following', style: RamificaText.meta),
-              ],
             ),
           ],
           if (!isOwn) ...[
@@ -108,27 +102,6 @@ String _titleOf(String? displayName, String? handle) {
   final tag = handle?.trim() ?? '';
   if (tag.isNotEmpty) return '@$tag';
   return 'Unknown author';
-}
-
-class _LocaleBadge extends StatelessWidget {
-  const _LocaleBadge({required this.locale});
-
-  final String locale;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const .symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        border: .all(color: RamificaColors.glassBorder),
-        borderRadius: .circular(999),
-      ),
-      child: Text(
-        locale,
-        style: RamificaText.meta.copyWith(color: RamificaColors.textSecondary),
-      ),
-    );
-  }
 }
 
 class _NameRow extends StatelessWidget {

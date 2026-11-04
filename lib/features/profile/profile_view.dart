@@ -10,16 +10,15 @@ import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
-import 'package:ramifica/features/profile/install_guide.dart';
-import 'package:ramifica/features/profile/install_guide_banner.dart';
 import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
 import 'package:ramifica/features/profile/profile_state.dart';
 import 'package:ramifica/features/profile/saga_list.dart';
 
-/// Profile tab: screen title, install banner, then the header or editor
-/// drawn from [ProfileBloc]. Creates its own bloc like Explore; tests
+/// Profile tab: title AppBar with edit/sign-out icons, install banner,
+/// then the header or editor drawn from [ProfileBloc]. Creates its own
+/// bloc like Explore; tests
 /// inject [bloc] and read recorded events instead of touching Firebase.
 /// A foreign profile passes its id in [authorId]; null means the
 /// signed-in person's own profile. Edit mode and dismissal are local
@@ -117,15 +116,14 @@ class _ProfileViewState extends State<ProfileView> {
     // page instead of throwing. Production initializes Firebase in main
     // before this tab builds, like FeedView's missing-bloc fallback.
     try {
-      _bloc =
-          ProfileBloc(
-            auth: createFirebaseAuthRepository(),
-            users: FirestoreUserDirectory(),
-            follows: createFirebaseFollowRepository(),
-            fetchAuthorStories:
-                widget.fetchAuthorStories ??
-                createFirebaseCreateRepository().fetchAuthorStories,
-          )..add(ProfileRequested(authorId: widget.authorId));
+      _bloc = ProfileBloc(
+        auth: createFirebaseAuthRepository(),
+        users: FirestoreUserDirectory(),
+        follows: createFirebaseFollowRepository(),
+        fetchAuthorStories:
+            widget.fetchAuthorStories ??
+            createFirebaseCreateRepository().fetchAuthorStories,
+      )..add(ProfileRequested(authorId: widget.authorId));
       // Own profile only: foreign viewers never see these drafts.
       if (widget.authorId == null) {
         _bloc!.add(const ProfileDraftsRequested());
@@ -153,7 +151,35 @@ class _ProfileViewState extends State<ProfileView> {
         listener: _closeEditorOnSaved,
         child: BlocBuilder<ProfileBloc, ProfileState>(
           builder: (context, state) {
-            return Scaffold(body: SafeArea(child: _body(context, state)));
+            final showActions =
+                state.phase == ProfilePhase.loaded && state.isOwn && !_editing;
+            return Scaffold(
+              appBar: AppBar(
+                backgroundColor: RamificaColors.surface,
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                title: const Text('Profile', style: RamificaText.screenTitle),
+                actions: [
+                  if (showActions) ...[
+                    IconButton(
+                      key: const Key('profileEditButton'),
+                      tooltip: 'Edit profile',
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: () => setState(() => _editing = true),
+                    ),
+                    IconButton(
+                      key: const Key('profileSignOutButton'),
+                      tooltip: 'Sign out',
+                      icon: const Icon(Icons.logout),
+                      onPressed: () => context.read<ProfileBloc>().add(
+                        const SignOutRequested(),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              body: SafeArea(child: _body(context, state)),
+            );
           },
         ),
       ),
@@ -169,17 +195,9 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Widget _body(BuildContext context, ProfileState state) {
-    final showGuide =
-        widget.showInstallGuide?.call() ?? shouldShowInstallGuide();
     return ListView(
       padding: const .all(16),
       children: [
-        const Text('Profile', style: RamificaText.screenTitle),
-        const SizedBox(height: 16),
-        if (showGuide) ...[
-          InstallGuideBanner(shouldShow: () => showGuide),
-          const SizedBox(height: 16),
-        ],
         switch (state.phase) {
           .loading => const Center(child: CircularProgressIndicator()),
           .failed => Center(
@@ -246,25 +264,6 @@ class _ProfileViewState extends State<ProfileView> {
             style: RamificaText.body.copyWith(color: RamificaColors.error),
           ),
         ],
-        if (state.isOwn && !editing) ...[
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              OutlinedButton(
-                key: const Key('profileEditButton'),
-                onPressed: () => setState(() => _editing = true),
-                child: const Text('Edit profile'),
-              ),
-              const SizedBox(width: 12),
-              TextButton(
-                key: const Key('profileSignOutButton'),
-                onPressed: () =>
-                    context.read<ProfileBloc>().add(const SignOutRequested()),
-                child: const Text('Sign out'),
-              ),
-            ],
-          ),
-        ],
         const SizedBox(height: 16),
         _MetricsRow(
           sagas: sagas.length,
@@ -297,7 +296,11 @@ class _ProfileViewState extends State<ProfileView> {
             endings: widget.unlockedEndings,
             onOpen: (storyId) => _openEnding(context, storyId),
           ),
-        if (_tab == 2) _CreationsCard(drafts: state.drafts, onOpen: (id) => _openDraft(context, id)),
+        if (_tab == 2)
+          _CreationsCard(
+            drafts: state.drafts,
+            onOpen: (id) => _openDraft(context, id),
+          ),
       ],
     );
   }
@@ -764,7 +767,10 @@ class _CreationsCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.video_library_outlined, color: RamificaColors.hotspot),
+              const Icon(
+                Icons.video_library_outlined,
+                color: RamificaColors.hotspot,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -822,9 +828,7 @@ class _CreationRow extends StatelessWidget {
           padding: const .all(12),
           child: Row(
             children: [
-              Expanded(
-                child: Text(title, style: RamificaText.labelSM),
-              ),
+              Expanded(child: Text(title, style: RamificaText.labelSM)),
               Text(
                 draft.status == 'published' ? 'Published' : 'Draft',
                 style: RamificaText.meta,
@@ -842,4 +846,3 @@ class _CreationRow extends StatelessWidget {
     );
   }
 }
-
