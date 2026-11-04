@@ -189,20 +189,27 @@ export const migrateStory = async (
   const publicationId = `migration-v1-r${revision}`;
   const publication = ref.collection("publications").doc(publicationId);
   const author = await db.doc(`users/${story.authorId}`).get();
+  const projected = [...nodes].map(([id, node]) =>
+    [id, projectNode(id, node, nodes)] as const
+  );
+  // The scene table rides the publication doc: one cached read gives the
+  // player every destination body, so holds never wait for the commit.
   const writes: Array<[admin.firestore.DocumentReference, Fields]> = [
     [publication, {
       sourceRevision: revision,
       nodeCount: nodes.size,
       rootNodeId: story.rootNodeId,
+      nodes: Object.fromEntries(
+        projected.map(([id, entry]) => [id, entry.body])
+      ),
       migrationVersion: 1,
       createdAt: new Date().toISOString(),
     }],
   ];
-  for (const [id, node] of nodes) {
-    const projected = projectNode(id, node, nodes);
-    writes.push([publication.collection("nodes").doc(id), projected.body],
-      [publication.collection("map").doc(id), projected.map],
-      [publication.collection("stats").doc(id), projected.stats]);
+  for (const [id, entry] of projected) {
+    writes.push([publication.collection("nodes").doc(id), entry.body],
+      [publication.collection("map").doc(id), entry.map],
+      [publication.collection("stats").doc(id), entry.stats]);
   }
   if (!options.apply) return report;
   for (let start = 0; start < writes.length; start += 150) {

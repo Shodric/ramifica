@@ -5,8 +5,11 @@ import 'package:ramifica/data/models/playback.dart';
 
 /// Warms mp4 URLs in the browser's media cache. Not a bloc.
 ///
-/// The current clip and up to two non-secret destinations stay mounted.
-/// A secret target is skipped. Changing story drops the previous queue.
+/// The current clip and up to two destinations stay mounted. Destination
+/// URLs resolve through the scene table first, so secret targets warm too;
+/// without a table they fall back to the choice target, and a secret
+/// target without either is skipped. Changing story drops the previous
+/// queue.
 class Prefetcher {
   Prefetcher({WarmSlot Function()? open}) : _open = open ?? createWarmSlot;
 
@@ -27,8 +30,10 @@ class Prefetcher {
     if (current.isEmpty) return;
     final wanted = <String>[current];
     for (final choice in playback.choices) {
-      if (choice.targetSecret) continue;
-      final url = choice.target?.videoUrl.trim();
+      final url =
+          (playback.nodes[choice.targetNodeId]?.node.videoUrl ??
+                  choice.target?.videoUrl)
+              ?.trim();
       if (url == null || url.isEmpty || wanted.contains(url)) continue;
       wanted.add(url);
     }

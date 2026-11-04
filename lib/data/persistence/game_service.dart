@@ -18,6 +18,7 @@ class ClientGameService {
   final _stories = <String, Json>{};
   final _nodes = <String, Json>{};
   final _maps = <String, List<StoredDoc>>{};
+  final _tables = <String, Json>{};
 
   static ClientGameService? _shared;
   static ClientGameService get shared => _shared ??= ClientGameService(
@@ -35,6 +36,7 @@ class ClientGameService {
       _stories.clear();
       _nodes.clear();
       _maps.clear();
+      _tables.clear();
       _cacheUid = id;
     }
     if (id == null || id.isEmpty) throw const AppFailure(.denied);
@@ -110,6 +112,31 @@ class ClientGameService {
     final run = await store.get(_runPath(runId));
     if (run == null) invalid('Run not found.');
     return run;
+  }
+
+  /// The story's scene table: every scene body for local holds. Published
+  /// stories read it once from their publication doc and cache it (a
+  /// publication never changes); drafts project it live from the draft
+  /// nodes. Null for publications staged before the table existed, which
+  /// play through the legacy await-the-commit path.
+  Future<Json?> _table(String storyId, Json story) async {
+    if (story['status'] != 'published') {
+      final docs = await store.list('stories/$storyId/nodes');
+      final nodes = Map<String, Json>.fromEntries(docs);
+      return {
+        for (final entry in nodes.entries)
+          entry.key: playbackDocument(entry.key, entry.value, nodes),
+      };
+    }
+    final base = _base(storyId, story);
+    final cached = _tables[base];
+    if (cached != null) return cached;
+    final publication = await store.get(base);
+    final table = jsonMap(publication?['nodes']);
+    if (table.isEmpty) return null;
+    uid;
+    _tables[base] = table;
+    return table;
   }
 
   Future<Json> startRun(Json data) async {
@@ -189,7 +216,8 @@ class ClientGameService {
       await _finalize(runId, storyId, nodeId, node, story);
       run = await _run(runId);
     }
-    return _playback(runId, run, storyId, story, nodeId, node);
+    final table = await _table(storyId, story);
+    return _playback(runId, run, storyId, story, nodeId, node, table);
   }
 
   /// Legacy or interrupted runs may predate visitedNodeIds. Restore only this
@@ -228,6 +256,7 @@ class ClientGameService {
     Json story,
     String nodeId,
     Json node,
+    Json? table,
   ) async {
     Json? reward;
     if (run['status'] == 'ended') {
@@ -256,6 +285,7 @@ class ClientGameService {
             node['videoFrameLastBlurData'] ?? fallbackBlur,
       },
       'choices': node['choices'] ?? [],
+      'nodes': ?table,
       'reward': reward,
     };
   }
@@ -630,6 +660,7 @@ class ClientGameService {
       story,
       parent,
       node,
+      await _table(storyId, story),
     );
   }
 

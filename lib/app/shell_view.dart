@@ -97,7 +97,10 @@ class _ShellViewState extends State<ShellView> {
         current.phase == .window ||
         current.phase == .holding ||
         current.phase == .committing ||
-        current.phase == .ending;
+        current.phase == .ending ||
+        // A reload keeps its playback while loading; initial and story
+        // loads have none, so the playback check below still opens those.
+        current.phase == .loading;
     if (current.playback != null && sameStory && settled) return;
     feed.add(StoryOpened(storyId: id));
   }
@@ -165,8 +168,8 @@ class _ShellViewState extends State<ShellView> {
               ProfileView(initialTab: _profileTab(widget.location)),
             ],
           ),
-          // The feed is fullscreen: no navbar there, swipe right exits to
-          // the tree instead. Every other section keeps the navbar.
+          // The feed is fullscreen: no navbar there, a leftward drag
+          // reveals the tree instead. Every other section keeps the navbar.
           bottomNavigationBar:
               widget.location is CreateCanvasLocation || state.tab == .feed
               ? null

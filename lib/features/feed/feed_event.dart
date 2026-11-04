@@ -1,3 +1,5 @@
+import 'package:ramifica/data/models/playback.dart';
+
 sealed class FeedEvent {
   const FeedEvent();
 }
@@ -89,6 +91,32 @@ final class MapRequested extends FeedEvent {
 /// playback without starting over.
 final class PlaybackReloadRequested extends FeedEvent {
   const PlaybackReloadRequested(this.runId);
+
+  final String runId;
+}
+
+/// A background commit landed. Reconciles the ending outcome when the run
+/// is still on the committed destination; the clip itself arrived locally
+/// long before, so node bodies never ride the ack.
+final class BackgroundCommitAcked extends FeedEvent {
+  const BackgroundCommitAcked({
+    required this.runId,
+    required this.toNodeId,
+    this.sagaUnlocked,
+    this.rewardCode,
+  });
+
+  final String runId;
+  final String toNodeId;
+  final SagaUnlocked? sagaUnlocked;
+  final String? rewardCode;
+}
+
+/// A background commit was rejected as invalid: the run moved on elsewhere
+/// (another device, the map). Reloads the run truth. Parked offline commits
+/// stay silent instead: they keep waiting for a connection.
+final class BackgroundCommitInvalid extends FeedEvent {
+  const BackgroundCommitInvalid(this.runId);
 
   final String runId;
 }

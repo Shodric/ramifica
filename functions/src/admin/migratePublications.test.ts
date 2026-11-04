@@ -100,6 +100,14 @@ test("admin migration inspects, activates once, and preserves " +
       .doc("root")
       .get();
     assert.deepEqual(stats.data()?.choiceCounts, {c: 5});
+    const staged = await ref
+      .collection("publications")
+      .doc(current.activePublicationId)
+      .get();
+    assert.deepEqual(
+      Object.keys(staged.data()?.nodes ?? {}).sort(),
+      ["end", "root"]
+    );
   } finally {
     await db.terminate(); await app.delete();
   }

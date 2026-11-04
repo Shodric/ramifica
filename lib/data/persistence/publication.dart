@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/persistence/document_store.dart';
 
@@ -5,6 +7,11 @@ const fallbackBlur =
     'data:image/png;base64,'
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAF'
     'gAI/ScLbtAAAAABJRU5ErkJggg==';
+
+/// Largest scene table a publication may stage, in encoded bytes. Firestore
+/// caps a document at 1 MiB; the table shares its doc with a few small
+/// fields, so this stays comfortably below it.
+const maxSceneTableBytes = 900 * 1024;
 
 /// Mirrors the original publication checklist, now run on the client.
 /// Existing published stories are migrated without revalidating legacy media.
@@ -210,11 +217,28 @@ class ClientPublisher {
     final pubId = store.newId('$path/publications');
     final base = '$path/publications/$pubId';
     final author = await store.get('users/${currentUid()}');
+    // The scene table rides the publication doc: one cached read gives the
+    // player every destination body, so holds never wait for the commit.
+    // Bodies are the same projections as the per-node docs, minus the id
+    // (the entry key is the node id).
+    final table = <String, Json>{
+      for (final entry in nodes.entries)
+        entry.key: playbackDocument(entry.key, entry.value, nodes),
+    };
+    final tableBytes = jsonEncode(table).length;
+    if (tableBytes > maxSceneTableBytes) {
+      return [
+        'The story is too large to publish '
+        '(${(tableBytes / 1024).round()} KB of scenes). '
+        'Split it into smaller stories.',
+      ];
+    }
     final writes = <DocumentWrite>[
       DocumentWrite(base, {
         'sourceRevision': revisionOf(story),
         'nodeCount': nodes.length,
         'rootNodeId': story['rootNodeId'],
+        'nodes': table,
         'createdAt': commitTime,
       }),
       for (final entry in nodes.entries) ...[

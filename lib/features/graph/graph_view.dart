@@ -156,8 +156,7 @@ class _GraphViewState extends State<GraphView> {
             orphans: draftOrphansFromStubs(state.stubs),
             rootNodeId: draftRootIdFromStubs(state.stubs),
             currentNodeId: state.currentNodeId,
-            onSelect: (id) =>
-                context.read<GraphBloc>().add(NodeSelected(id)),
+            onSelect: (id) => context.read<GraphBloc>().add(NodeSelected(id)),
             transformationController: _viewer,
           ),
         ),
@@ -228,7 +227,9 @@ class _GraphViewState extends State<GraphView> {
     _playTarget = null;
     final current = state.currentNodeId;
     if (current == null || target == null || current != target) return;
-    final feed = _feedOf(context);
+    // Cached, never looked up: provider forbids listened reads outside
+    // the build, and didChangeDependencies already keeps _feed fresh.
+    final feed = _feed;
     final run = state.runId;
     if (feed != null && run != null && run.isNotEmpty) {
       feed.add(PlaybackReloadRequested(run));
@@ -241,11 +242,10 @@ class _GraphViewState extends State<GraphView> {
       context.read<ShellBloc>().add(const TabSelected(.feed));
       final storyId = state.storyId ?? widget.storyId;
       if (storyId.isNotEmpty) {
-        AppNavigation.read(context).go(
-          AppRoutes.storyPath(Uri.encodeComponent(storyId)),
-        );
+        AppNavigation.read(context)
+            .go(AppRoutes.storyPath(Uri.encodeComponent(storyId)));
       }
-    } on FlutterError {
+    } on Exception {
       // Widget tests mount GraphView without the shell.
     }
   }

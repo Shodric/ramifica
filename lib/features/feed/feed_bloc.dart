@@ -70,6 +70,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
     on<HoldCompleted>(_onHeld, transformer: droppable());
+    on<BackgroundCommitAcked>(_onAcked);
+    on<BackgroundCommitInvalid>(_onInvalidAck);
     on<OtherPathRequested>(_onOtherPath, transformer: restartable());
     on<MapRequested>(_onMap, transformer: droppable());
     final voice = previewPlayback?.node.ttsAudioUrl?.trim();
@@ -108,6 +110,13 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   final bool _preview;
   var _holdSealed = false;
 
+  /// Background commits in send order. Holds enqueue; the pump sends
+  /// serially so chained from-nodes validate. An offline head parks the
+  /// pump until a gesture, a load, or a new hold resumes it.
+  final List<_CommitItem> _commitQueue = [];
+  var _commitPumpActive = false;
+  var _commitParked = false;
+
   Future<void> _onOpened(StoryOpened event, Emitter<FeedState> emit) async {
     if (_preview) return;
     final raw = event.storyId?.trim();
@@ -119,7 +128,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   /// Reloads the run current playback after the map moved it. Unlike
   /// [_loadStory] this restarts nothing: the run keeps its history and
-  /// the feed opens wherever the pointer now sits.
+  /// the feed opens wherever the pointer now sits. Run and playback
+  /// stay put while loading, so the shell's reopen guard sees settled
+  /// content and skips its StoryOpened instead of restarting.
   Future<void> _onReload(
     PlaybackReloadRequested event,
     Emitter<FeedState> emit,
@@ -127,12 +138,18 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     if (_preview) return;
     final runId = event.runId.trim();
     if (runId.isEmpty) return;
+    // The map moved the pointer: parked from-nodes are stale, the rest of
+    // the queue may resume.
+    _dropRunCommits(runId);
+    _pumpCommits(resume: true);
     _holdSealed = false;
     _silence();
     emit(
       FeedState(
         phase: .loading,
         storyId: state.storyId,
+        runId: state.runId,
+        playback: state.playback,
         muted: state.muted,
         autoMuted: state.autoMuted,
       ),
@@ -209,6 +226,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }) async {
     _holdSealed = false;
     _silence();
+    _pumpCommits(resume: true);
     emit(
       FeedState(
         phase: .loading,
@@ -272,6 +290,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }
 
   void _onUserGestured(UserGestured event, Emitter<FeedState> emit) {
+    // Any tap may restore the connection a parked commit waits for.
+    _pumpCommits(resume: true);
     final hadAuto = state.autoMuted;
     final wasHidden = state.hiddenPaused;
     if (!hadAuto && !wasHidden) return;
@@ -419,15 +439,26 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     final holdChoiceId = state.holdChoiceId;
     if (state.phase != .holding) return;
     if (playback == null || runId == null || holdChoiceId == null) return;
+    final choice = _choice(holdChoiceId);
+    final scene = choice == null ? null : playback.nodes[choice.targetNodeId];
+    if (choice != null && scene != null) {
+      // The scene table knows the destination: arrive now, commit behind.
+      _arriveLocal(scene, choice, runId, emit);
+      return;
+    }
+    // Legacy publication without a scene table: await the commit, which
+    // is also the only way to learn the destination clip.
     _holdSealed = true;
     final requestId = _newRequestId();
     emit(state.copy(phase: .committing, pendingRequestId: requestId));
     try {
-      final result = await _commit(
+      final result = await _enqueueCommit(
         runId: runId,
         fromNodeId: playback.node.nodeId,
         choiceId: holdChoiceId,
+        toNodeId: choice?.targetNodeId ?? '',
         requestId: requestId,
+        events: false,
       );
       if (emit.isDone) return;
       _arrive(result, emit);
@@ -448,6 +479,97 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         ),
       );
     }
+  }
+
+  /// Arrives at a scene-table destination without waiting for the commit.
+  /// Mirrors [_arrive]: fresh state on `playing`, warmed clip, prepared
+  /// voice. The commit runs behind (see [_enqueueCommit]); its ending
+  /// outcome reconciles through [BackgroundCommitAcked].
+  void _arriveLocal(
+    PlaybackScene scene,
+    PlaybackChoice choice,
+    String runId,
+    Emitter<FeedState> emit,
+  ) {
+    final current = state.playback!;
+    final requestId = _newRequestId();
+    // The outcome arrives via ack events; a parked error stays silent.
+    unawaited(
+      _enqueueCommit(
+        runId: runId,
+        fromNodeId: current.node.nodeId,
+        choiceId: choice.choiceId,
+        toNodeId: choice.targetNodeId,
+        requestId: requestId,
+      ).then<void>((_) {}, onError: (_) {}),
+    );
+    final next = Playback(
+      runId: current.runId,
+      status: scene.node.isEnding ? RunStatus.ended : RunStatus.active,
+      story: current.story,
+      node: scene.node,
+      choices: scene.choices,
+      nodes: current.nodes,
+    );
+    _holdSealed = false;
+    _silence();
+    prefetcher.warm(next);
+    final voice = next.node.ttsAudioUrl?.trim();
+    if (voice != null && voice.isNotEmpty) {
+      unawaited(narrator.prepare(voice));
+    }
+    emit(
+      FeedState(
+        phase: .playing,
+        storyId: next.story.storyId,
+        runId: next.runId,
+        playback: next,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
+  }
+
+  /// Reconciles a background commit's ending outcome: the saga unlock and
+  /// the reward code the scene table cannot know. Anything for another run
+  /// or an older destination is dropped, and settled values never re-emit.
+  void _onAcked(BackgroundCommitAcked event, Emitter<FeedState> emit) {
+    if (_preview) return;
+    if (state.runId != event.runId) return;
+    final playback = state.playback;
+    if (playback == null || playback.node.nodeId != event.toNodeId) return;
+    final saga = event.sagaUnlocked;
+    final code = event.rewardCode;
+    final settled =
+        (saga == null || saga == state.sagaUnlocked) &&
+        (code == null || code == playback.node.rewardCode);
+    if (settled) return;
+    emit(
+      state.copy(
+        playback: code == null
+            ? null
+            : Playback(
+                runId: playback.runId,
+                status: playback.status,
+                story: playback.story,
+                node: playback.node.copy(rewardCode: code),
+                choices: playback.choices,
+                nodes: playback.nodes,
+              ),
+        sagaUnlocked: saga,
+      ),
+    );
+  }
+
+  /// A background commit was rejected as invalid: something else moved the
+  /// run, so the locally shown destination may be wrong. Reloads the truth.
+  Future<void> _onInvalidAck(
+    BackgroundCommitInvalid event,
+    Emitter<FeedState> emit,
+  ) async {
+    if (_preview) return;
+    if (state.runId != event.runId) return;
+    await _recover(event.runId, emit);
   }
 
   /// Sends the hold once. A lost network sends it again with the same
@@ -473,6 +595,121 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
         choiceId: choiceId,
         requestId: requestId,
       );
+    }
+  }
+
+  /// Enqueues a commit behind earlier holds and pumps the queue. Items send
+  /// strictly in order, so back-to-back holds validate their chained
+  /// from-nodes. A re-hold from the same scene drops parked (never sent)
+  /// items for it: the finger changed its mind while offline. With [events]
+  /// the worker also reports through [BackgroundCommitAcked] and
+  /// [BackgroundCommitInvalid]; the legacy path awaits the future instead
+  /// and passes false.
+  Future<CommitResult> _enqueueCommit({
+    required String runId,
+    required String fromNodeId,
+    required String choiceId,
+    required String toNodeId,
+    required String requestId,
+    bool events = true,
+  }) {
+    for (final stale in _commitQueue
+        .where(
+          (item) =>
+              !item.active &&
+              item.runId == runId &&
+              item.fromNodeId == fromNodeId,
+        )
+        .toList()) {
+      _commitQueue.remove(stale);
+      stale.fail(const AppFailure(.invalid));
+    }
+    final item = _CommitItem(
+      runId: runId,
+      fromNodeId: fromNodeId,
+      choiceId: choiceId,
+      toNodeId: toNodeId,
+      requestId: requestId,
+      events: events,
+    );
+    _commitQueue.add(item);
+    _pumpCommits(resume: true);
+    return item.future;
+  }
+
+  /// Drops parked commits for [runId] without reporting: the map moved the
+  /// pointer, so their from-nodes are stale by definition.
+  void _dropRunCommits(String runId) {
+    for (final item in _commitQueue
+        .where((item) => !item.active && item.runId == runId)
+        .toList()) {
+      _commitQueue.remove(item);
+      item.fail(const AppFailure(.invalid));
+    }
+  }
+
+  /// Starts the pump unless it runs already. A parked pump only resumes
+  /// with [resume], so a failed head never spins on its own.
+  void _pumpCommits({bool resume = false}) {
+    if (_commitPumpActive || isClosed) return;
+    if (_commitParked && !resume) return;
+    _commitParked = false;
+    _commitPumpActive = true;
+    unawaited(
+      _pump().whenComplete(() {
+        _commitPumpActive = false;
+        // An enqueue that landed between the last check and this reset
+        // must not strand: repump drained queues, never parked ones.
+        if (_commitQueue.isNotEmpty && !_commitParked && !isClosed) {
+          _pumpCommits();
+        }
+      }),
+    );
+  }
+
+  /// Sends queued commits head-first. An invalid head is terminal for that
+  /// hold (something else moved the run); any other failure parks the pump
+  /// with the head kept, so a later gesture or hold resumes it. Parked
+  /// legacy waiters fail loudly; local holds already arrived and only
+  /// listen for ack events.
+  Future<void> _pump() async {
+    while (_commitQueue.isNotEmpty && !isClosed) {
+      final item = _commitQueue.first;
+      item.active = true;
+      try {
+        final result = await _commit(
+          runId: item.runId,
+          fromNodeId: item.fromNodeId,
+          choiceId: item.choiceId,
+          requestId: item.requestId,
+        );
+        _commitQueue.remove(item);
+        item.active = false;
+        item.win(result);
+        if (item.events && !isClosed) {
+          add(
+            BackgroundCommitAcked(
+              runId: item.runId,
+              toNodeId: item.toNodeId,
+              sagaUnlocked: result.sagaUnlocked,
+              rewardCode: result.reward?.code,
+            ),
+          );
+        }
+      } on AppFailure catch (error) {
+        item.active = false;
+        if (error.code == .invalid) {
+          _commitQueue.remove(item);
+          item.fail(error);
+          if (item.events && !isClosed) {
+            add(BackgroundCommitInvalid(item.runId));
+          }
+        } else {
+          item.fail(error);
+          _commitParked = true;
+          return;
+        }
+      }
     }
   }
 
@@ -554,6 +791,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     final storyId = state.storyId;
     _holdSealed = false;
     _silence();
+    _pumpCommits(resume: true);
     emit(
       FeedState(
         phase: .loading,
@@ -606,9 +844,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   /// Warms every choice target clip for the current scene. Runs each
   /// time the window opens so destinations load before the hold.
-  /// Best-effort only: `warm` skips secret and empty targets the same
-  /// way [_startHold] skips them, duplicate warms are harmless, and any
-  /// failure is swallowed instead of reaching bloc state.
+  /// Best-effort only: `warm` resolves through the scene table and skips
+  /// targets without a URL, duplicate warms are harmless, and any failure
+  /// is swallowed instead of reaching bloc state.
   void _preloadChoiceTargets() {
     final playback = state.playback;
     if (playback == null) return;
@@ -624,7 +862,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     // A hold may begin mid-narration; grabbing a choice cuts the cue.
     // At window nothing is playing, so this is a no-op there.
     _silence();
-    final url = choice.target?.videoUrl.trim();
+    final scene = state.playback?.nodes[choice.targetNodeId];
+    final url = (scene?.node.videoUrl ?? choice.target?.videoUrl)?.trim();
     if (url != null && url.isNotEmpty) prefetcher.promote(url);
     emit(
       state.copy(
@@ -716,11 +955,52 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     _silence();
     narrator.dispose();
     prefetcher.dispose();
+    // The pump checks isClosed; dropped futures settle nowhere.
+    _commitQueue.clear();
     return super.close();
   }
 }
 
 String _uuidRequestId() => const Uuid().v4();
+
+/// One queued hold. The future settles exactly once: the legacy path
+/// awaits it, while local holds swallow it and listen for ack events.
+class _CommitItem {
+  _CommitItem({
+    required this.runId,
+    required this.fromNodeId,
+    required this.choiceId,
+    required this.toNodeId,
+    required this.requestId,
+    required this.events,
+  });
+
+  final String runId;
+  final String fromNodeId;
+  final String choiceId;
+  final String toNodeId;
+  final String requestId;
+  final bool events;
+
+  /// True while a send is in flight. Only idle items are superseded.
+  var active = false;
+  var _settled = false;
+  final _done = Completer<CommitResult>();
+
+  Future<CommitResult> get future => _done.future;
+
+  void win(CommitResult result) {
+    if (_settled) return;
+    _settled = true;
+    _done.complete(result);
+  }
+
+  void fail(Object error) {
+    if (_settled) return;
+    _settled = true;
+    _done.completeError(error);
+  }
+}
 
 Future<Map<String, dynamic>> _previewRunUnavailable(
   String operation,

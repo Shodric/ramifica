@@ -282,6 +282,27 @@ void main() {
     expect(story['authorName'], 'Author');
     expect(story['revision'], 5);
   });
+  test('publication stages the scene table and playback attaches it once', () async {
+    seedReady(store);
+    expect(await ClientPublisher(store, () => 'author').publish('s'), isEmpty);
+    final story = store.documents['stories/s']!;
+    final base = 'stories/s/publications/${story['activePublicationId']}';
+    final table = jsonMap(store.documents[base]!['nodes']);
+    expect(table.keys, unorderedEquals(['root', 'end']));
+    expect(jsonMap(table['end'])['isEnding'], true);
+    expect(
+      jsonMap((jsonMap(table['root'])['choices'] as List).first)['targetNodeId'],
+      'end',
+    );
+    final game = ClientGameService(store, () => 'player');
+    final start = await game.execute('startRun', {'storyId': 's'});
+    final runId = start['runId'] as String;
+    final playback = await game.execute('loadPlayback', {'runId': runId});
+    expect(jsonMap(playback['nodes']).keys, unorderedEquals(['root', 'end']));
+    final reads = store.reads.where((p) => p == base).length;
+    await game.execute('loadPlayback', {'runId': runId});
+    expect(store.reads.where((p) => p == base), hasLength(reads));
+  });
   test('interrupted staging never activates; changed revision refuses stale publication', () async {
     seedReady(store);
     store.beforeBatch = (_) async {

@@ -562,28 +562,24 @@ void main() {
         MaterialApp(
           home: BlocProvider<FeedBloc>.value(
             value: feed,
-            child: GraphView(
-              storyId: 'story_temple',
-              runId: 'run_1',
-              repository: repository,
-            ),
+            child: GraphView(storyId: '', repository: repository),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(feed.added, isEmpty);
 
-      // The feed moves on its own; the map follows without asking the
-      // feed to reload or stealing the tab. Only a tapped card play
-      // navigates.
-      feed.show(
-        FeedState(
-          phase: .playing,
-          storyId: 'story_temple',
-          runId: 'run_1',
-          playback: Playback.fromJson(_playback(nodeId: 'node_002')),
-        ),
-      );
+      // The feed moves on its own; the map follows each step without
+      // asking the feed to reload or stealing the tab. Only a tapped
+      // card play navigates.
+      FeedState playing(String nodeId) => FeedState(
+            phase: .playing,
+            storyId: 'story_temple',
+            runId: 'run_1',
+            playback: Playback.fromJson(_playback(nodeId: nodeId)),
+          );
+      feed.show(playing('node_001'));
+      await tester.pumpAndSettle();
+      feed.show(playing('node_002'));
       await tester.pumpAndSettle();
 
       final graph = tester.element(find.byType(DraftCanvas)).read<GraphBloc>();
@@ -855,6 +851,13 @@ Future<void> _pumpGraph(
   String current = 'node_001',
 }) async {
   final callsSink = calls ?? <_Call>[];
+  // A phone-tall viewport: the hub canvas lays child levels ~320 px
+  // apart, so the default 600 px fold hides them from taps. Real
+  // phones (840+) show the second level; deeper trees pan.
+  tester.view.physicalSize = const Size(800, 1000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     MaterialApp(
       home: GraphView(

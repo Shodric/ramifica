@@ -92,6 +92,8 @@ class FeedState {
 
   FeedState copy({
     FeedPhase? phase,
+    Playback? playback,
+    SagaUnlocked? sagaUnlocked,
     bool? muted,
     bool? autoMuted,
     String? holdChoiceId,
@@ -111,8 +113,8 @@ class FeedState {
       phase: phase ?? this.phase,
       storyId: storyId,
       runId: runId,
-      playback: playback,
-      sagaUnlocked: sagaUnlocked,
+      playback: playback ?? this.playback,
+      sagaUnlocked: sagaUnlocked ?? this.sagaUnlocked,
       failure: failure,
       muted: muted ?? this.muted,
       autoMuted: autoMuted ?? this.autoMuted,

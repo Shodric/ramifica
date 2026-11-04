@@ -169,7 +169,11 @@ class RewardGrant {
   int get hashCode => Object.hash(rewardId, code);
 }
 
-/// The `loadPlayback` payload: story, current node, and choices.
+/// The `loadPlayback` payload: story, current node, choices, and the story's
+/// scene table. The table carries every scene's full body keyed by node id,
+/// so a hold resolves its destination locally and the commit never blocks
+/// the next clip. Missing on publications staged before the table existed:
+/// those play through the legacy await-the-commit path.
 class Playback {
   const Playback({
     required this.runId,
@@ -177,6 +181,7 @@ class Playback {
     required this.story,
     required this.node,
     required this.choices,
+    this.nodes = const {},
   });
 
   factory Playback.fromJson(Map<String, dynamic> json) {
@@ -191,6 +196,7 @@ class Playback {
         for (final choice in rawChoices)
           PlaybackChoice.fromJson(_objectMap(choice)),
       ],
+      nodes: _scenes(json['nodes']),
     );
   }
 
@@ -200,6 +206,9 @@ class Playback {
   final PlaybackNode node;
   final List<PlaybackChoice> choices;
 
+  /// Every scene by node id. Empty for legacy publications and previews.
+  final Map<String, PlaybackScene> nodes;
+
   @override
   bool operator ==(Object other) {
     return other is Playback &&
@@ -207,12 +216,53 @@ class Playback {
         other.status == status &&
         other.story == story &&
         other.node == node &&
+        _sameList(other.choices, choices) &&
+        _sameScenes(other.nodes, nodes);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    runId,
+    status,
+    story,
+    node,
+    Object.hashAll(choices),
+    Object.hashAllUnordered(
+      nodes.entries.map((entry) => Object.hash(entry.key, entry.value)),
+    ),
+  );
+}
+
+/// One scene of the story table: the destination body a hold arrives at,
+/// with its own choices. The entry key is the node id; bodies carry no id
+/// of their own.
+class PlaybackScene {
+  const PlaybackScene({required this.node, required this.choices});
+
+  factory PlaybackScene.fromJson(String nodeId, Map<String, dynamic> json) {
+    final rawChoices = json['choices'];
+    if (rawChoices is! List) throw const AppFailure(.invalid);
+    return PlaybackScene(
+      node: PlaybackNode.fromJson({...json, 'nodeId': nodeId}),
+      choices: [
+        for (final choice in rawChoices)
+          PlaybackChoice.fromJson(_objectMap(choice)),
+      ],
+    );
+  }
+
+  final PlaybackNode node;
+  final List<PlaybackChoice> choices;
+
+  @override
+  bool operator ==(Object other) {
+    return other is PlaybackScene &&
+        other.node == node &&
         _sameList(other.choices, choices);
   }
 
   @override
-  int get hashCode =>
-      Object.hash(runId, status, story, node, Object.hashAll(choices));
+  int get hashCode => Object.hash(node, Object.hashAll(choices));
 }
 
 class PlaybackStory {
@@ -298,6 +348,26 @@ class PlaybackNode {
   final String? endingType;
   final String? endingBadgeUrl;
   final String? rewardCode;
+
+  /// Returns this node with the background commit's reward code filled in.
+  /// Only the code arrives late; every other field rides the scene table.
+  PlaybackNode copy({String? rewardCode}) {
+    return PlaybackNode(
+      nodeId: nodeId,
+      title: title,
+      isEnding: isEnding,
+      videoUrl: videoUrl,
+      durationSeconds: durationSeconds,
+      videoFrameLastBlurData: videoFrameLastBlurData,
+      videoFrameFirstBlurData: videoFrameFirstBlurData,
+      ttsText: ttsText,
+      ttsAudioUrl: ttsAudioUrl,
+      ttsDurationSeconds: ttsDurationSeconds,
+      endingType: endingType,
+      endingBadgeUrl: endingBadgeUrl,
+      rewardCode: rewardCode ?? this.rewardCode,
+    );
+  }
 
   @override
   bool operator ==(Object other) {
@@ -502,6 +572,25 @@ bool _sameList<T>(List<T> a, List<T> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
     if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// The story table, or empty when the publication predates it. A present
+/// but malformed table is invalid, like any other malformed payload.
+Map<String, PlaybackScene> _scenes(Object? value) {
+  if (value == null) return const {};
+  final map = _objectMap(value);
+  return {
+    for (final entry in map.entries)
+      entry.key: PlaybackScene.fromJson(entry.key, _objectMap(entry.value)),
+  };
+}
+
+bool _sameScenes(Map<String, PlaybackScene> a, Map<String, PlaybackScene> b) {
+  if (a.length != b.length) return false;
+  for (final key in a.keys) {
+    if (a[key] != b[key]) return false;
   }
   return true;
 }

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/app/app.dart';
+import 'package:ramifica/app/navigation.dart';
+import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/prefetcher.dart';
 import 'package:ramifica/core/warm_slot.dart';
@@ -85,6 +87,42 @@ void main() {
     ]);
     expect(bloc.state.runId, 'run_1');
     expect(bloc.state.failure, isNull);
+  });
+
+  test('a map reload keeps its playback while loading', () async {
+    final calls = <_Call>[];
+    var loads = 0;
+    final gate = Completer<void>();
+    final bloc = FeedBloc(
+      repository: _runs(calls, (name, data) async {
+        if (name == 'loadPlayback') {
+          loads += 1;
+          if (loads > 1) await gate.future;
+        }
+        return _active(name, data);
+      }),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    expect(bloc.state.playback!.node.nodeId, 'node_001');
+
+    // While the reload is in flight the old scene stays put, so the
+    // shell's reopen guard sees settled content and skips its StoryOpened
+    // instead of restarting the run the map just moved.
+    bloc.add(const PlaybackReloadRequested('run_1'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.loading);
+    expect(bloc.state.playback!.node.nodeId, 'node_001');
+    expect(bloc.state.runId, 'run_1');
+
+    gate.complete();
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    expect(calls.map((call) => call.name), [
+      'startRun',
+      'loadPlayback',
+      'loadPlayback',
+    ]);
   });
 
   test('an ended run enters ending', () async {
@@ -587,6 +625,64 @@ void main() {
     await host(true);
     await tester.pump();
     expect(player.resumes, 1);
+  });
+
+  testWidgets('returning to the feed mid-reload keeps the run', (tester) async {
+    final auth = _Auth();
+    addTearDown(auth.sessions.close);
+    final calls = <_Call>[];
+    var loads = 0;
+    final gate = Completer<void>();
+    await tester.pumpWidget(
+      RamificaApp(
+        initialRoute: '/story/story_temple',
+        authRepository: AuthRepository(auth: auth, users: _Users()),
+        runRepository: _runs(calls, (name, data) async {
+          if (name == 'loadPlayback') {
+            loads += 1;
+            if (loads > 1) await gate.future;
+          }
+          if (name == 'startRun') {
+            return {
+              'runId': 'run_1',
+              'storyId': 'story_temple',
+              'status': 'active',
+            };
+          }
+          return _playback(nodeId: loads <= 1 ? 'node_001' : 'node_002');
+        }),
+      ),
+    );
+    auth.identity = const AuthIdentity(uid: 'uid_1', providers: ['google.com']);
+    auth.sessions.add(auth.identity);
+    await tester.pumpAndSettle();
+
+    final feedElement = tester.element(find.byType(FeedView));
+    final bloc = feedElement.read<FeedBloc>();
+    final nav = AppNavigation.read(feedElement);
+    expect(bloc.state.phase, FeedPhase.playing);
+
+    // A map play reloads the run, then returns to the feed while the
+    // reload is still in flight. Reopening the same story route must not
+    // restart the run the map just moved.
+    bloc.add(const PlaybackReloadRequested('run_1'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.loading);
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
+    await tester.pumpAndSettle();
+    nav.go(AppRoutes.storyPath('story_temple'));
+    await tester.pumpAndSettle();
+
+    expect(calls.where((call) => call.name == 'startRun'), hasLength(1));
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.playback!.node.nodeId, 'node_002');
+    expect(calls.map((call) => call.name), [
+      'startRun',
+      'loadPlayback',
+      'loadPlayback',
+    ]);
   });
 
   testWidgets('speaking keeps the same run across tabs', (tester) async {

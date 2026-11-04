@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/navigation.dart';
@@ -64,9 +65,9 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// past 64 px counts as a swipe, like a fast fling does.
   double _dragDy = 0;
 
-  /// Accumulated horizontal drag, same 64 px rule. A rightward swipe
-  /// exits the feed to the open story's tree.
-  double _dragDx = 0;
+  /// Down position per pointer, for the hold move-cancel below. Entries
+  /// die on release; the map stays tiny (one entry per finger down).
+  final _downPositions = <int, Offset>{};
   Size? _previewVideoSize;
 
   /// Whether the clip was hidden when the current tap pressed down. Read
@@ -224,11 +225,25 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                 // The first pointerdown anywhere clears the browser auto-mute and
                 // resumes the audio context. The bloc ignores repeats and never
                 // overrides a manual mute. Also resumes a hidden-parked clip.
-                onPointerDown: (_) {
+                onPointerDown: (event) {
                   _hiddenAtDown = bloc.state.hiddenPaused;
                   _autoMutedAtDown = bloc.state.autoMuted;
+                  _downPositions[event.pointer] = event.position;
                   bloc.narrator.unlock();
                   bloc.add(const UserGestured());
+                },
+                // A hold never moves: once the holding finger drifts past
+                // the touch slop the hold cancels. This (not a horizontal
+                // drag handler) owns that cancel, so the pager above keeps
+                // full ownership of horizontal swipes.
+                onPointerMove: (event) {
+                  final down = _downPositions[event.pointer];
+                  if (down == null) return;
+                  if ((event.position - down).distance < kTouchSlop) return;
+                  _downPositions.remove(event.pointer);
+                  if (_pointer != event.pointer) return;
+                  _pointer = null;
+                  bloc.add(const HoldCancelled());
                 },
                 child: Scaffold(
                   body: Semantics(
@@ -308,29 +323,12 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                             if (!fling && !drag) return;
                             bloc.add(const StorySwiped());
                           },
-                          // Swipe right exits the fullscreen feed to the
-                          // tree of the story on screen. Same path as the
-                          // rail's "See map" pill, so previews stay put.
-                          onHorizontalDragStart: (_) {
-                            _dragDx = 0;
-                            if (_pointer != null) {
-                              _pointer = null;
-                              bloc.add(const HoldCancelled());
-                            }
-                          },
-                          onHorizontalDragUpdate: (details) {
-                            _dragDx += details.primaryDelta ?? 0;
-                          },
-                          onHorizontalDragEnd: (details) {
-                            _pointer = null;
-                            final fling = (details.primaryVelocity ?? 0) >= 200;
-                            final drag = _dragDx >= 64;
-                            _dragDx = 0;
-                            if (widget.preview) return;
-                            if (!fling && !drag) return;
-                            bloc.add(const MapRequested());
-                            _openMap(context, state.storyId);
-                          },
+                          // No horizontal handlers: the FeedGraphPager above
+                          // owns feed-to-tree swipes natively (1:1 drag with
+                          // snap, leftward, locked off-feed). Claiming the
+                          // horizontal arena here would fight it and double
+                          // navigate. Hold move-cancel lives on the pointer
+                          // listener above instead.
                           child: Stack(
                             fit: .expand,
                             children: [
@@ -697,6 +695,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                 Positioned.fill(
                                   child: _ReleaseCatcher(
                                     onRelease: (pointer) {
+                                      _downPositions.remove(pointer);
                                       if (pointer != _pointer) return;
                                       _pointer = null;
                                       bloc.add(const HoldCancelled());

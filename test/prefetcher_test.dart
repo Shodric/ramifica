@@ -118,6 +118,35 @@ void main() {
     ]);
   });
 
+  test('resolves destination urls through the scene table', () {
+    final prefetcher = _prefetcher([], []);
+    final secret = _secret();
+    prefetcher.warm(
+      _playback(
+        choices: [secret],
+        nodes: {
+          'node_secret': PlaybackScene(
+            node: PlaybackNode(
+              nodeId: 'node_secret',
+              title: 'Hidden',
+              isEnding: false,
+              videoUrl: 'https://example.com/hidden.mp4',
+              durationSeconds: 10,
+              videoFrameLastBlurData: 'data:image/webp;base64,abc',
+            ),
+            choices: const [],
+          ),
+        },
+      ),
+    );
+
+    // The choice target is null (secret), but the table knows the clip.
+    expect(prefetcher.urls, [
+      'https://example.com/a.mp4',
+      'https://example.com/hidden.mp4',
+    ]);
+  });
+
   test('clear drops every slot', () {
     final disposed = <String>[];
     final prefetcher = _prefetcher([], disposed);
@@ -163,6 +192,7 @@ Playback _playback({
   String storyId = 'story_temple',
   String video = 'https://example.com/a.mp4',
   List<PlaybackChoice>? choices,
+  Map<String, PlaybackScene>? nodes,
 }) {
   return Playback(
     runId: 'run_1',
@@ -182,6 +212,7 @@ Playback _playback({
       ttsAudioUrl: 'https://example.com/voice.m4a',
     ),
     choices: choices ?? [_open('b', 'https://example.com/b.mp4'), _secret()],
+    nodes: nodes ?? const {},
   );
 }
 
