@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/you_are_here_pill.dart';
 import 'package:ramifica/data/models/graph_stub.dart';
 
 const _hGap = 176.0;
@@ -234,45 +235,12 @@ class _GraphCanvasState extends State<GraphCanvas> {
                           top: -14,
                           left: 0,
                           right: 0,
-                          child: Center(child: _YouAreHerePill()),
+                          child: Center(child: YouAreHerePill()),
                         ),
                     ],
                   ),
                 ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _YouAreHerePill extends StatelessWidget {
-  const _YouAreHerePill();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
-        ),
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: const [
-          BoxShadow(color: RamificaColors.glowCyan, blurRadius: 16),
-        ],
-      ),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        child: Text(
-          'You are here',
-          style: TextStyle(
-            fontFamily: RamificaText.sans,
-            fontWeight: FontWeight.w700,
-            fontSize: 10,
-            height: 14 / 10,
-            letterSpacing: 0.2,
-            color: RamificaColors.onSecondary,
-          ),
         ),
       ),
     );

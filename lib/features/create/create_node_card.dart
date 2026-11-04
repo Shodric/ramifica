@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -21,7 +23,7 @@ class CreateNodeCard extends StatelessWidget {
     required this.isRoot,
     required this.isOpen,
     required this.isOrphan,
-    required this.onTap,
+    this.onTap,
   });
 
   final DraftNode node;
@@ -33,7 +35,8 @@ class CreateNodeCard extends StatelessWidget {
   final bool isRoot;
   final bool isOpen;
   final bool isOrphan;
-  final VoidCallback onTap;
+  /// Null renders the card without tap handling (read-only map).
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +79,10 @@ class CreateNodeCard extends StatelessWidget {
                       ),
                       child: Container(
                         color: RamificaColors.containerHigh,
-                        child: CreateNodeThumb(url: thumbnail),
+                        child: CreateNodeThumb(
+                          url: thumbnail,
+                          blurData: node.videoFrameLastBlurData,
+                        ),
                       ),
                     ),
                     if (isOpen)
@@ -215,37 +221,64 @@ class _Pill extends StatelessWidget {
   }
 }
 
-/// Square-ish node thumbnail with the empty placeholder fallback. Shared
-/// by the canvas card and the HUD active card so both stay identical.
+/// Square-ish node thumbnail: the image URL, else the decoded blur
+/// frame, else the empty placeholder fallback. Shared by the canvas
+/// card and the HUD active card so both stay identical.
 class CreateNodeThumb extends StatelessWidget {
-  const CreateNodeThumb({super.key, required this.url, this.iconSize = 20});
+  const CreateNodeThumb({
+    super.key,
+    required this.url,
+    this.blurData,
+    this.iconSize = 20,
+  });
 
   final String? url;
+  final String? blurData;
   final double iconSize;
 
   @override
   Widget build(BuildContext context) {
-    if (url == null || url!.isEmpty) {
-      return Container(
-        color: RamificaColors.inputFill,
-        child: Icon(
-          Icons.image_outlined,
-          size: iconSize,
-          color: RamificaColors.textSecondary,
-        ),
+    if (url != null && url!.isNotEmpty) {
+      return Image.network(
+        url!,
+        fit: .cover,
+        errorBuilder: (_, _, _) => _placeholder(),
       );
     }
-    return Image.network(
-      url!,
-      fit: .cover,
-      errorBuilder: (_, _, _) => Container(
-        color: RamificaColors.inputFill,
-        child: Icon(
-          Icons.image_outlined,
-          size: iconSize,
-          color: RamificaColors.textSecondary,
-        ),
+    final blur = _decodeBlur(blurData);
+    if (blur != null) {
+      return Image.memory(
+        blur,
+        fit: .cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => _placeholder(),
+      );
+    }
+    return _placeholder();
+  }
+
+  Widget _placeholder() {
+    return Container(
+      color: RamificaColors.inputFill,
+      child: Icon(
+        Icons.image_outlined,
+        size: iconSize,
+        color: RamificaColors.textSecondary,
       ),
     );
+  }
+}
+
+/// Decodes a `data:image/...;base64,...` blur frame. Malformed values
+/// decode to null, which falls back to the placeholder.
+Uint8List? _decodeBlur(String? source) {
+  if (source == null || source.isEmpty) return null;
+  try {
+    final comma = source.indexOf(',');
+    final payload = comma < 0 ? source : source.substring(comma + 1);
+    if (payload.isEmpty) return null;
+    return base64Decode(payload);
+  } catch (_) {
+    return null;
   }
 }

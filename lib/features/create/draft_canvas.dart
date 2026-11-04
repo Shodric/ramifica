@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/widgets/you_are_here_pill.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/features/create/create_node_card.dart';
@@ -410,8 +411,9 @@ class DraftCanvas extends StatelessWidget {
     required this.orphans,
     this.openNodeId,
     this.rootNodeId,
-    required this.onSelect,
-    required this.onAdd,
+    this.currentNodeId,
+    this.onSelect,
+    this.onAdd,
     required this.transformationController,
     this.rootMode = false,
   });
@@ -420,12 +422,19 @@ class DraftCanvas extends StatelessWidget {
   final Set<String> orphans;
   final String? openNodeId;
   final String? rootNodeId;
-  final ValueChanged<String> onSelect;
+
+  /// Run position on the read-only map: its card keeps the You-are-here
+  /// pill. Null (the editor) marks nothing.
+  final String? currentNodeId;
+
+  /// Node tap. Null disables card taps for the read-only map.
+  final ValueChanged<String>? onSelect;
 
   /// Parent id and slot for the new child. Both travel with the tap so the
-  /// auto-link lands exactly on the tapped mini — never the open node by
-  /// accident, never the wrong slot.
-  final void Function(String parentId, String slot) onAdd;
+  /// auto-link lands exactly on the tapped mini - never the open node by
+  /// accident, never the wrong slot. Null hides the add minis: nothing
+  /// can be added on the read-only map.
+  final void Function(String parentId, String slot)? onAdd;
   final TransformationController transformationController;
 
   /// When true, only the root and its direct children render.
@@ -443,15 +452,20 @@ class DraftCanvas extends StatelessWidget {
     final scene = sceneIndexes(nodes, rootNodeId);
     final paths = slotPaths(nodes, rootNodeId);
     final minis = <_Mini>[];
-    for (final node in nodes) {
-      if (!shown(node.nodeId)) continue;
-      if (rootMode && node.nodeId != rootNodeId) continue;
-      for (final s in const ['A', 'B']) {
-        final id = 'mini:${node.nodeId}:$s';
-        if (!layout.positions.containsKey(id)) continue;
-        minis.add(_Mini(id: id, parentId: node.nodeId, slot: s));
+    // Without an add target the map shows no minis: its structure is
+    // fixed, so free slots are unknown children, not add buttons.
+    if (onAdd != null) {
+      for (final node in nodes) {
+        if (!shown(node.nodeId)) continue;
+        if (rootMode && node.nodeId != rootNodeId) continue;
+        for (final s in const ['A', 'B']) {
+          final id = 'mini:${node.nodeId}:$s';
+          if (!layout.positions.containsKey(id)) continue;
+          minis.add(_Mini(id: id, parentId: node.nodeId, slot: s));
+        }
       }
     }
+    final add = onAdd;
     final virtualIds = {for (final mini in minis) mini.id};
     final positions = <String, Offset>{
       for (final node in nodes)
@@ -459,6 +473,22 @@ class DraftCanvas extends StatelessWidget {
           node.nodeId: layout.positions[node.nodeId]!,
       for (final mini in minis) mini.id: layout.positions[mini.id]!,
     };
+    // First incoming edge wins the parent: merges attach to one side.
+    final parentOf = <String, String>{};
+    for (final edge in layout.edges) {
+      parentOf.putIfAbsent(edge.to, () => edge.from);
+    }
+    // Dodges the incoming edge: an A-side child hangs left of its
+    // parent, so the pill hugs the outer side. Roots stay centered.
+    Alignment pillAlignment(String nodeId) {
+      final parent = parentOf[nodeId];
+      final here = positions[nodeId];
+      final there = parent == null ? null : positions[parent];
+      if (here == null || there == null) return .center;
+      if (here.dx < there.dx - 1) return .centerLeft;
+      if (here.dx > there.dx + 1) return .centerRight;
+      return .center;
+    }
     final size = layout.size;
     return InteractiveViewer(
       transformationController: transformationController,
@@ -485,15 +515,32 @@ class DraftCanvas extends StatelessWidget {
                 Positioned(
                   left: positions[node.nodeId]!.dx - createCardWidth / 2,
                   top: positions[node.nodeId]!.dy - createCardHeight / 2,
-                  child: CreateNodeCard(
-                    key: ValueKey('canvas-node-${node.nodeId}'),
-                    node: node,
-                    sceneIndex: scene[node.nodeId] ?? 0,
-                    slotPath: paths[node.nodeId] ?? '',
-                    isRoot: node.nodeId == rootNodeId,
-                    isOpen: node.nodeId == openNodeId,
-                    isOrphan: orphans.contains(node.nodeId),
-                    onTap: () => onSelect(node.nodeId),
+                  child: Stack(
+                    clipBehavior: .none,
+                    children: [
+                      CreateNodeCard(
+                        key: ValueKey('canvas-node-${node.nodeId}'),
+                        node: node,
+                        sceneIndex: scene[node.nodeId] ?? 0,
+                        slotPath: paths[node.nodeId] ?? '',
+                        isRoot: node.nodeId == rootNodeId,
+                        isOpen: node.nodeId == openNodeId,
+                        isOrphan: orphans.contains(node.nodeId),
+                        onTap: onSelect == null
+                            ? null
+                            : () => onSelect!(node.nodeId),
+                      ),
+                      if (node.nodeId == currentNodeId)
+                        Positioned(
+                          top: -14,
+                          left: 0,
+                          right: 0,
+                          child: Align(
+                            alignment: pillAlignment(node.nodeId),
+                            child: const YouAreHerePill(),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
             for (final edge in layout.edges)
@@ -510,6 +557,7 @@ class DraftCanvas extends StatelessWidget {
                   edge: edge,
                   index: _badgeIndex(nodes, edge),
                 ),
+            if (add != null)
             for (final mini in minis)
               Positioned(
                 left: positions[mini.id]!.dx - createMiniWidth / 2,
@@ -518,7 +566,7 @@ class DraftCanvas extends StatelessWidget {
                   key: ValueKey('canvas-add-${mini.parentId}-${mini.slot}'),
                   parentId: mini.parentId,
                   slot: mini.slot,
-                  onAdd: (_) => onAdd(mini.parentId, mini.slot),
+                  onAdd: (_) => add(mini.parentId, mini.slot),
                 ),
               ),
           ],
