@@ -23,6 +23,12 @@ final class ProfileDraftsRequested extends ProfileEvent {
   const ProfileDraftsRequested();
 }
 
+/// Loads the signed-in user's own unlocked endings for the Endings tab.
+/// Ignored on foreign profiles: endings stay private.
+final class ProfileEndingsRequested extends ProfileEvent {
+  const ProfileEndingsRequested();
+}
+
 /// Flips the follow on the loaded foreign profile. Ignored unless a
 /// foreign profile is loaded; self-follow is a no-op (no call, no state
 /// change) and is guarded here, not in the repository.

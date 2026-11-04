@@ -50,6 +50,7 @@ class ClientGameService {
           documentId(data['runId'] as String? ?? ''),
         ),
         'commitChoice' => commitChoice(data),
+        'unlockedEndings' => unlockedEndings(),
         'graphStubs' => graph(data),
         'playApproach' => approach(data),
         'rewindRun' => rewind(documentId(data['runId'] as String? ?? '')),
@@ -350,6 +351,46 @@ class ClientGameService {
       'sagaUnlocked': outcome['sagaUnlocked'],
       'reward': outcome['reward'],
     };
+  }
+
+  /// Every ending this account unlocked, newest story first.
+  ///
+  /// Reads `users/{uid}/storyState/*/endings` plus each `rewards/{id}` for
+  /// the earned badge. A story or node that is gone or unreadable is
+  /// skipped, never fatal: one bad row must not empty the profile tab.
+  Future<Json> unlockedEndings() async {
+    final rows = <Json>[];
+    final states = await store.list(
+      '$_user/storyState',
+      orderBy: 'updatedAt',
+      descending: true,
+    );
+    for (final state in states) {
+      final storyId = state.key;
+      Json story;
+      try {
+        story = await _story(storyId);
+      } on AppFailure {
+        continue;
+      }
+      for (final nodeId in _strings(state.value['endings'])) {
+        Json node;
+        try {
+          node = await _node(storyId, nodeId, story);
+        } on AppFailure {
+          continue;
+        }
+        if (node['isEnding'] != true) continue;
+        final raw = await store.get('$_user/rewards/${rewardId(storyId, nodeId)}');
+        rows.add({
+          'storyId': storyId,
+          'name': node['endingName'] ?? node['title'] ?? 'Ending',
+          'type': node['endingType'],
+          'badgeUrl': raw?['badgeUrl'] ?? node['endingBadgeUrl'],
+        });
+      }
+    }
+    return {'rows': rows};
   }
 
   Future<void> _finalize(

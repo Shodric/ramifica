@@ -71,21 +71,6 @@ class EndingCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           EndingBadge(type: type),
-          if (rewardCode != null || unlockedTitle != null) ...[
-            const SizedBox(height: 12),
-            if (unlockedTitle != null)
-              Text(
-                'Unlocked ${unlockedTitle!}',
-                key: const ValueKey('unlocked-title'),
-                style: RamificaText.label,
-              ),
-            if (rewardCode != null)
-              SelectableText(
-                rewardCode!,
-                key: const ValueKey('reward-code'),
-                style: RamificaText.body,
-              ),
-          ],
         ],
       ),
     );

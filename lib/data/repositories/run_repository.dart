@@ -51,6 +51,21 @@ class RunRepository {
     });
     return CommitResult.fromJson(payload);
   }
+
+  /// Rows for the profile Endings tab: one map per unlocked ending with
+  /// `storyId`, `name`, `type` and `badgeUrl`. Malformed rows are dropped.
+  Future<List<Map<String, dynamic>>> fetchUnlockedEndingRows() async {
+    final payload = await execute('unlockedEndings', {});
+    final rows = payload['rows'];
+    if (rows is! List) return [];
+    return [
+      for (final row in rows)
+        if (row is Map<String, dynamic>)
+          row
+        else if (row is Map)
+          row.map((key, value) => MapEntry(key.toString(), value)),
+    ];
+  }
 }
 
 RunRepository createFirebaseRunRepository() =>

@@ -710,10 +710,12 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                 // the screen width instead of sliding under
                                 // the rail buttons.
                                 Positioned(
-                                  left: 24,
-                                  right: 8 + 56 + 24,
+                                  left: 12,
+                                  right: 8 + 56 + 12,
                                   bottom:
-                                      MediaQuery.paddingOf(context).bottom + 96,
+                                      MediaQuery.paddingOf(context).bottom +
+                                      96 -
+                                      12,
                                   child: EndingCard(
                                     key: const ValueKey('ending-card'),
                                     name: playback.node.title,

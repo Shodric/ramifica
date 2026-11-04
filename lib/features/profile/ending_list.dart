@@ -3,29 +3,9 @@ import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/ending_badge.dart';
 
-/// One unlocked ending: which story it belongs to plus its display name
-/// and type. Profile state carries no endings today (backend read lands in
-/// a later slice), so the profile view takes these in as data until a
-/// reachable source exists.
-class UnlockedEnding {
-  const UnlockedEnding({
-    required this.storyId,
-    required this.name,
-    this.type,
-    this.badgeUrl,
-  });
+import 'package:ramifica/data/models/unlocked_ending.dart';
 
-  /// The story whose graph opens on tap (`/graph/{storyId}`).
-  final String storyId;
-
-  final String name;
-
-  /// One of the nine ending types; see [EndingBadge].
-  final String? type;
-
-  /// The unlocked prize image. Null hides the row thumbnail.
-  final String? badgeUrl;
-}
+export 'package:ramifica/data/models/unlocked_ending.dart' show UnlockedEnding;
 
 /// Unlocked endings as rows: scene title plus [EndingBadge]. Tapping a row
 /// reports its story id through [onOpen]; the owner navigates. Pure: data

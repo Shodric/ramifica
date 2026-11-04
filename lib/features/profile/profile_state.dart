@@ -1,4 +1,5 @@
 import 'package:ramifica/data/models/draft_story.dart';
+import 'package:ramifica/data/models/unlocked_ending.dart';
 import 'package:ramifica/data/models/user.dart';
 
 enum ProfilePhase { loading, loaded, failed, signedOut }
@@ -33,6 +34,7 @@ class ProfileState {
     this.saving = false,
     this.failure,
     this.drafts = const [],
+    this.endings = const [],
   });
 
   final ProfilePhase phase;
@@ -53,6 +55,10 @@ class ProfileState {
   /// for the Creations tab; never loaded on foreign profiles.
   final List<DraftStory> drafts;
 
+  /// The signed-in user's own unlocked endings, newest first. Loaded on
+  /// demand for the Endings tab; never loaded on foreign profiles.
+  final List<UnlockedEnding> endings;
+
   ProfileState copy({
     ProfilePhase Function()? phase,
     String? uid,
@@ -68,6 +74,7 @@ class ProfileState {
     bool? saving,
     String? Function()? failure,
     List<DraftStory>? drafts,
+    List<UnlockedEnding>? endings,
   }) {
     return ProfileState(
       phase: phase == null ? this.phase : phase(),
@@ -86,6 +93,7 @@ class ProfileState {
       saving: saving ?? this.saving,
       failure: failure == null ? this.failure : failure(),
       drafts: drafts ?? this.drafts,
+      endings: endings ?? this.endings,
     );
   }
 
@@ -105,7 +113,8 @@ class ProfileState {
         other.toggling == toggling &&
         other.saving == saving &&
         other.failure == failure &&
-        _sameDrafts(other.drafts, drafts);
+        _sameDrafts(other.drafts, drafts) &&
+        _sameEndings(other.endings, endings);
   }
 
   @override
@@ -124,10 +133,19 @@ class ProfileState {
     saving,
     failure,
     Object.hashAll(drafts),
+    Object.hashAll(endings),
   );
 }
 
 bool _sameDrafts(List<DraftStory> a, List<DraftStory> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+bool _sameEndings(List<UnlockedEnding> a, List<UnlockedEnding> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
     if (a[i] != b[i]) return false;
