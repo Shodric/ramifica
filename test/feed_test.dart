@@ -491,11 +491,14 @@ void main() {
       tester.element(find.byType(FeedView)).read<FeedBloc>().state.phase,
       FeedPhase.playing,
     );
-    expect(find.text('Feed'), findsWidgets);
+    expect(find.text('The temple secret'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
+    // The feed hides the bar. Leave and come back through the same paths
+    // the Feed tab writes once a story is open.
+    final nav = AppNavigation.read(tester.element(find.byType(FeedView)));
+    nav.go(AppRoutes.profile);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Feed'));
+    nav.go(AppRoutes.storyPath('story_temple'));
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(2));
@@ -780,9 +783,12 @@ void main() {
     expect(bloc.state.phase, FeedPhase.speaking);
     expect(find.text('The temple secret'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
+    // The feed hides the bar. Leave and come back through the same paths
+    // the Feed tab writes once a story is open.
+    final nav = AppNavigation.read(tester.element(find.byType(FeedView)));
+    nav.go(AppRoutes.profile);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Feed'));
+    nav.go(AppRoutes.storyPath('story_temple'));
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(2));

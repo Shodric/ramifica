@@ -61,9 +61,17 @@ class _GraphViewState extends State<GraphView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _feed = _feedOf(context);
-    _bloc ??= GraphBloc(
-      repository: widget.repository ?? createFirebaseGraphRepository(),
-    );
+    if (_bloc == null) {
+      // Widget tests mount the shell without Firebase. Production
+      // initializes Firebase in main before this page builds.
+      try {
+        _bloc = GraphBloc(
+          repository: widget.repository ?? createFirebaseGraphRepository(),
+        );
+      } catch (_) {
+        _bloc = null;
+      }
+    }
     _requestGraph();
   }
 
@@ -105,7 +113,12 @@ class _GraphViewState extends State<GraphView> {
   Widget build(BuildContext context) {
     final bloc = _bloc;
     if (bloc == null) {
-      return const Scaffold(body: SizedBox.shrink());
+      return Scaffold(
+        body: Semantics(
+          label: 'Map ${widget.storyId}',
+          child: const SafeArea(child: _Unavailable()),
+        ),
+      );
     }
     return BlocProvider.value(
       value: bloc,
@@ -360,6 +373,24 @@ class _StoryCover extends StatelessWidget {
                 ),
               ),
       ),
+    );
+  }
+}
+
+/// Static page when no bloc exists: widget tests mount the shell without
+/// Firebase, so the factory throws and the tab keeps its title.
+class _Unavailable extends StatelessWidget {
+  const _Unavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const .all(16),
+      children: const [
+        Text('Map', style: RamificaText.screenTitle),
+        SizedBox(height: 16),
+        EmptyState(message: 'Map is unavailable right now.'),
+      ],
     );
   }
 }

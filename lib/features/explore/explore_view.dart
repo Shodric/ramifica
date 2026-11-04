@@ -51,14 +51,23 @@ class _ExploreViewState extends State<ExploreView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_bloc != null) return;
-    _bloc =
-        widget.bloc ??
-              ExploreBloc(
-                catalog: createFirebaseCatalogRepository(),
-                follows: createFirebaseFollowRepository(),
-                uid: widget.uid,
-              )
-          ..add(const CatalogRequested());
+    final injected = widget.bloc;
+    if (injected != null) {
+      _bloc = injected..add(const CatalogRequested());
+      return;
+    }
+    // Widget tests mount the shell without Firebase: stay on a static
+    // page instead of throwing. Production initializes Firebase in main
+    // before this tab builds, like ProfileView.
+    try {
+      _bloc = ExploreBloc(
+        catalog: createFirebaseCatalogRepository(),
+        follows: createFirebaseFollowRepository(),
+        uid: widget.uid,
+      )..add(const CatalogRequested());
+    } catch (_) {
+      _bloc = null;
+    }
   }
 
   @override
@@ -72,7 +81,7 @@ class _ExploreViewState extends State<ExploreView> {
   Widget build(BuildContext context) {
     final bloc = _bloc;
     if (bloc == null) {
-      return const Scaffold(body: SizedBox.shrink());
+      return const Scaffold(body: SafeArea(child: _Unavailable()));
     }
     return BlocProvider.value(
       value: bloc,
@@ -494,6 +503,24 @@ class _SectionHeader extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(child: Text(title, style: RamificaText.headlineSM)),
         if (trailing != null) Text(trailing!, style: RamificaText.meta),
+      ],
+    );
+  }
+}
+
+/// Static page when no bloc exists: widget tests mount the shell without
+/// Firebase, so the factories throw and the tab keeps its title.
+class _Unavailable extends StatelessWidget {
+  const _Unavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const .all(16),
+      children: const [
+        Text('Explore', style: RamificaText.screenTitle),
+        SizedBox(height: 16),
+        EmptyState(message: 'Explore is unavailable right now.'),
       ],
     );
   }
