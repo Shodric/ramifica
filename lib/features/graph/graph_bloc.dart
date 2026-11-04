@@ -9,6 +9,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
   GraphBloc({required this.repository}) : super(const GraphState()) {
     on<GraphRequested>(_onRequested, transformer: restartable());
     on<NodeSelected>(_onSelected);
+    on<PlayRequested>(_onPlay, transformer: droppable());
     on<ContinueRequested>(_onContinue, transformer: droppable());
     on<ApproachRequested>(_onApproach, transformer: droppable());
     on<RewindRequested>(_onRewind, transformer: droppable());
@@ -47,6 +48,8 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
           runId: run,
           stubs: result.nodes,
           currentNodeId: result.currentNodeId,
+          storyTitle: result.storyTitle,
+          storyCoverUrl: result.storyCoverUrl,
           selectedId: result.currentNodeId,
           acting: false,
         ),
@@ -77,6 +80,42 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
     }
     if (!known) return;
     emit(state.copy(selectedId: () => id, failure: () => null));
+  }
+
+  Future<void> _onPlay(
+    PlayRequested event,
+    Emitter<GraphState> emit,
+  ) async {
+    if (state.phase != .loaded || state.acting) return;
+    final run = state.runId;
+    final story = state.storyId;
+    final node = event.nodeId.trim();
+    if (run == null ||
+        run.isEmpty ||
+        story == null ||
+        story.isEmpty ||
+        node.isEmpty) {
+      emit(state.copy(failure: () => const AppFailure(.invalid).phrase));
+      return;
+    }
+    emit(state.copy(acting: true, failure: () => null));
+    try {
+      final playback = await repository.jumpToNode(runId: run, nodeId: node);
+      if (emit.isDone) return;
+      final refreshed = await repository.fetchStubs(storyId: story, runId: run);
+      if (emit.isDone) return;
+      emit(
+        state.copy(
+          acting: false,
+          stubs: refreshed.nodes,
+          currentNodeId: () => playback.node.nodeId,
+          selectedId: () => playback.node.nodeId,
+        ),
+      );
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(state.copy(acting: false, failure: () => error.phrase));
+    }
   }
 
   void _onContinue(ContinueRequested event, Emitter<GraphState> emit) {

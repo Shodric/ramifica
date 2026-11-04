@@ -7,17 +7,20 @@ import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
-import 'package:ramifica/data/models/graph_stub.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
+import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
+import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/graph/graph_bloc.dart';
-import 'package:ramifica/features/graph/graph_canvas.dart';
 import 'package:ramifica/features/graph/graph_event.dart';
 import 'package:ramifica/features/graph/graph_state.dart';
-import 'package:ramifica/features/graph/node_sheet.dart';
+import 'package:ramifica/features/graph/scene_info_card.dart';
+import 'package:ramifica/features/graph/stub_draft.dart';
 
-/// Map tab: canvas plus the selected node sheet. Creates its own bloc;
-/// tests inject a fake [repository] and [runId] instead of a FeedBloc.
+/// Map tab: the create hub canvas without actions. Stubs project onto
+/// draft nodes; the run's current node keeps the You-are-here pill.
+/// Creates its own bloc; tests inject a fake [repository] and [runId]
+/// instead of a FeedBloc.
 class GraphView extends StatefulWidget {
   const GraphView({
     super.key,
@@ -38,6 +41,13 @@ class GraphView extends StatefulWidget {
 
 class _GraphViewState extends State<GraphView> {
   GraphBloc? _bloc;
+  final _viewer = TransformationController();
+
+  /// A card play waiting for the run to land. Only this completion opens
+  /// the feed; anything else that moves the run (the map following the
+  /// feed, a reload) stays silent.
+  bool _playArmed = false;
+  String? _playTarget;
   FeedBloc? _feed;
   (String, String, String?)? _lastRequest;
 
@@ -80,6 +90,7 @@ class _GraphViewState extends State<GraphView> {
 
   @override
   void dispose() {
+    _viewer.dispose();
     _bloc?.close();
     super.dispose();
   }
@@ -93,15 +104,22 @@ class _GraphViewState extends State<GraphView> {
     return BlocProvider.value(
       value: bloc,
       child: Builder(
-        builder: (context) => BlocBuilder<GraphBloc, GraphState>(
-          builder: (context, state) {
-            return Scaffold(
-              body: Semantics(
-                label: 'Map ${state.storyId ?? widget.storyId}',
-                child: SafeArea(child: _body(context, state)),
-              ),
-            );
-          },
+        builder: (context) => BlocListener<GraphBloc, GraphState>(
+          listenWhen: (previous, current) =>
+              previous.currentNodeId != current.currentNodeId ||
+              previous.failure != current.failure,
+          listener: _onGraphChange,
+          child: BlocBuilder<GraphBloc, GraphState>(
+            builder: (context, state) {
+              return Scaffold(
+                appBar: state.phase == .loaded ? _mapBar(state) : null,
+                body: Semantics(
+                  label: 'Map ${state.storyId ?? widget.storyId}',
+                  child: SafeArea(child: _body(context, state)),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -130,87 +148,33 @@ class _GraphViewState extends State<GraphView> {
     }
     final selected = state.selected;
     return Stack(
-      fit: .expand,
       children: [
-        Column(
-          crossAxisAlignment: .stretch,
-          children: [
-            _MapHeader(
-              storyId: state.storyId ?? widget.storyId,
-              busy: state.acting,
-              onRewind: () =>
-                  context.read<GraphBloc>().add(const RewindRequested()),
-            ),
-            _MapStats(stubs: state.stubs),
-            Expanded(
-              child: Semantics(
-                label: 'Graph canvas',
-                child: GraphCanvas(
-                  stubs: state.stubs,
-                  currentNodeId: state.currentNodeId,
-                  selectedId: state.selectedId,
-                  onSelected: (id) =>
-                      context.read<GraphBloc>().add(NodeSelected(id)),
-                  onApproach: (id) =>
-                      context.read<GraphBloc>().add(ApproachRequested(id)),
-                ),
-              ),
-            ),
-          ],
+        Semantics(
+          label: 'Story map',
+          child: DraftCanvas(
+            nodes: draftNodesFromStubs(state.stubs),
+            orphans: draftOrphansFromStubs(state.stubs),
+            rootNodeId: draftRootIdFromStubs(state.stubs),
+            currentNodeId: state.currentNodeId,
+            onSelect: (id) =>
+                context.read<GraphBloc>().add(NodeSelected(id)),
+            transformationController: _viewer,
+          ),
         ),
         if (selected != null)
           Positioned(
             left: 16,
             right: 16,
             bottom: 16,
-            child: Semantics(
-              label: 'Node sheet',
-              child: NodeSheet(
-                stub: selected,
-                stubs: state.stubs,
-                isCurrent: selected.nodeId == state.currentNodeId,
-                busy: state.acting,
-                failure: state.failure,
-                onContinue: () => _continue(context),
-                onRewind: () =>
-                    context.read<GraphBloc>().add(const RewindRequested()),
-                onApproach: () => context.read<GraphBloc>().add(
-                  ApproachRequested(selected.nodeId),
-                ),
-                onRetry: () => _requestGraph(force: true),
-                onSelectChild: (id) {
-                  final bloc = context.read<GraphBloc>();
-                  var locked = false;
-                  for (final stub in state.stubs) {
-                    if (stub.nodeId == id && stub.locked) locked = true;
-                  }
-                  bloc.add(locked ? ApproachRequested(id) : NodeSelected(id));
-                },
-              ),
+            child: SceneInfoCard(
+              stub: selected,
+              onPlay: selected.visited && !state.acting
+                  ? () => _playScene(context, state, selected.nodeId)
+                  : null,
             ),
           ),
       ],
     );
-  }
-
-  void _continue(BuildContext context) {
-    context.read<GraphBloc>().add(const ContinueRequested());
-    try {
-      // Keeps the tab bar on Feed while the route below returns to it.
-      context.read<ShellBloc>().add(const TabSelected(.feed));
-    } on Exception {
-      // Widget tests mount GraphView without the shell.
-    }
-    final story = context.read<GraphBloc>().state.storyId ?? '';
-    try {
-      AppNavigation.read(context).go(
-        story.isEmpty
-            ? AppRoutes.feed
-            : AppRoutes.storyPath(Uri.encodeComponent(story)),
-      );
-    } on FlutterError {
-      // Widget tests mount GraphView without the router.
-    }
   }
 
   void _explore(BuildContext context) {
@@ -225,6 +189,66 @@ class _GraphViewState extends State<GraphView> {
       // Widget tests mount GraphView without the router.
     }
   }
+
+  /// Plays a scene from the card. The current one just opens the feed;
+  /// anything else jumps the run first and [_onGraphChange] opens the
+  /// feed once the run moves.
+  void _playScene(BuildContext context, GraphState state, String nodeId) {
+    if (nodeId == state.currentNodeId) {
+      _openFeed(context, state);
+      return;
+    }
+    _playArmed = true;
+    _playTarget = nodeId;
+    context.read<GraphBloc>().add(PlayRequested(nodeId));
+  }
+
+  /// Completes a card play once the run lands on the tapped scene.
+  /// Reloads first: the shell skips same-story opens, so without this
+  /// the feed would keep showing the old scene. While the jump settles
+  /// the arm holds; the first settled state disarms, and only a landing
+  /// on the tapped scene opens the feed. Play failures surface as a
+  /// snack; the card has no failure slot.
+  void _onGraphChange(BuildContext context, GraphState state) {
+    if (!_playArmed) return;
+    final failure = state.failure;
+    if (failure != null && failure.isNotEmpty) {
+      _playArmed = false;
+      _playTarget = null;
+      if (Scaffold.maybeOf(context) != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(failure)));
+      }
+      return;
+    }
+    if (state.acting) return;
+    _playArmed = false;
+    final target = _playTarget;
+    _playTarget = null;
+    final current = state.currentNodeId;
+    if (current == null || target == null || current != target) return;
+    final feed = _feedOf(context);
+    final run = state.runId;
+    if (feed != null && run != null && run.isNotEmpty) {
+      feed.add(PlaybackReloadRequested(run));
+    }
+    _openFeed(context, state);
+  }
+
+  void _openFeed(BuildContext context, GraphState state) {
+    try {
+      context.read<ShellBloc>().add(const TabSelected(.feed));
+      final storyId = state.storyId ?? widget.storyId;
+      if (storyId.isNotEmpty) {
+        AppNavigation.read(context).go(
+          AppRoutes.storyPath(Uri.encodeComponent(storyId)),
+        );
+      }
+    } on FlutterError {
+      // Widget tests mount GraphView without the shell.
+    }
+  }
 }
 
 FeedBloc? _feedOf(BuildContext context) {
@@ -235,251 +259,81 @@ FeedBloc? _feedOf(BuildContext context) {
   }
 }
 
-/// Stitch summary header: story-map eyebrow plus the story id and a
-/// rewind action. No back button: tab navigation owns it.
-class _MapHeader extends StatelessWidget {
-  const _MapHeader({
-    required this.storyId,
-    required this.busy,
-    required this.onRewind,
-  });
-
-  final String storyId;
-  final bool busy;
-  final VoidCallback onRewind;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Row(
-        crossAxisAlignment: .start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: .start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(
-                      Icons.schema,
-                      size: 14,
-                      color: RamificaColors.onPrimaryContainer,
-                      semanticLabel: 'Story map',
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      'STORY MAP',
-                      style: TextStyle(
-                        fontFamily: RamificaText.sans,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 10,
-                        height: 14 / 10,
-                        letterSpacing: 0.8,
-                        color: RamificaColors.onPrimaryContainer,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  storyId,
-                  maxLines: 1,
-                  overflow: .ellipsis,
-                  style: RamificaText.headlineSM,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          _RewindPill(busy: busy, onRewind: onRewind),
-        ],
-      ),
-    );
-  }
-}
-
-class _RewindPill extends StatelessWidget {
-  const _RewindPill({required this.busy, required this.onRewind});
-
-  final bool busy;
-  final VoidCallback onRewind;
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: busy ? 0.5 : 1,
-      child: InkWell(
-        onTap: busy ? null : onRewind,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          decoration: BoxDecoration(
-            color: RamificaColors.containerHigh,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: const Row(
+/// Map header: the story cover, title, and discovered-scenes count.
+/// Only the loaded page has all three; other phases show no bar.
+PreferredSizeWidget _mapBar(GraphState state) {
+  final visited = state.stubs.where((stub) => stub.visited).length;
+  final rawTitle = state.storyTitle?.trim() ?? '';
+  final title = rawTitle.isEmpty ? state.storyId ?? '' : rawTitle;
+  return AppBar(
+    backgroundColor: RamificaColors.surface,
+    surfaceTintColor: Colors.transparent,
+    elevation: 0,
+    automaticallyImplyLeading: false,
+    toolbarHeight: 72,
+    title: Row(
+      children: [
+        _StoryCover(url: state.storyCoverUrl),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
             mainAxisSize: .min,
-            children: [
-              Icon(
-                Icons.restart_alt,
-                size: 16,
-                color: RamificaColors.textSecondary,
-                semanticLabel: 'Rewind',
-              ),
-              SizedBox(width: 4),
-              Text('Rewind', style: RamificaText.labelSM),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Stitch HUD strip, derived from stubs only: visited scenes, endings
-/// found, and total progress with a static bar.
-class _MapStats extends StatelessWidget {
-  const _MapStats({required this.stubs});
-
-  final List<GraphStub> stubs;
-
-  @override
-  Widget build(BuildContext context) {
-    var visited = 0;
-    var endings = 0;
-    var foundEndings = 0;
-    for (final stub in stubs) {
-      if (stub.visited) visited++;
-      if (stub.isEnding) {
-        endings++;
-        if (stub.visited) foundEndings++;
-      }
-    }
-    final percent = stubs.isEmpty ? 0 : (visited / stubs.length * 100).round();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: RamificaColors.containerLowest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            children: [
-              Expanded(
-                child: _StatCell(
-                  value: '$visited/${stubs.length}',
-                  valueColor: RamificaColors.onPrimaryContainer,
-                  label: 'Scenes discovered',
-                ),
-              ),
-              Expanded(
-                child: _StatCell(
-                  value: '$foundEndings/$endings',
-                  valueColor: RamificaColors.rewardGold,
-                  label: 'Endings found',
-                  icon: Icons.emoji_events,
-                ),
-              ),
-              Expanded(
-                child: _StatCell(
-                  value: '$percent%',
-                  valueColor: RamificaColors.nodeActive,
-                  label: 'Total progress',
-                  progress: stubs.isEmpty ? 0 : visited / stubs.length,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatCell extends StatelessWidget {
-  const _StatCell({
-    required this.value,
-    required this.valueColor,
-    required this.label,
-    this.icon,
-    this.progress,
-  });
-
-  final String value;
-  final Color valueColor;
-  final String label;
-  final IconData? icon;
-  final double? progress;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: RamificaColors.containerLow,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: .center,
+            crossAxisAlignment: .start,
             children: [
               Text(
-                value,
-                style: RamificaText.headlineSM.copyWith(color: valueColor),
+                title,
+                maxLines: 1,
+                overflow: .ellipsis,
+                style: RamificaText.screenTitle,
               ),
-              if (icon != null) ...[
-                const SizedBox(width: 4),
-                Icon(icon, size: 16, color: valueColor),
-              ],
+              const SizedBox(height: 2),
+              Text(
+                '$visited/${state.stubs.length} scenes discovered',
+                style: RamificaText.meta,
+              ),
             ],
           ),
-          if (progress != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: SizedBox(
-                  height: 4,
-                  width: double.infinity,
-                  child: CustomPaint(painter: _ProgressBar(progress!)),
+        ),
+      ],
+    ),
+  );
+}
+
+class _StoryCover extends StatelessWidget {
+  const _StoryCover({required this.url});
+
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    final cover = url?.trim() ?? '';
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: cover.isEmpty
+            ? Container(
+                color: RamificaColors.inputFill,
+                child: const Icon(
+                  Icons.image_outlined,
+                  size: 20,
+                  color: RamificaColors.textSecondary,
+                ),
+              )
+            : Image.network(
+                cover,
+                fit: .cover,
+                errorBuilder: (_, _, _) => Container(
+                  color: RamificaColors.inputFill,
+                  child: const Icon(
+                    Icons.image_outlined,
+                    size: 20,
+                    color: RamificaColors.textSecondary,
+                  ),
                 ),
               ),
-            ),
-          Padding(
-            padding: EdgeInsets.only(top: progress != null ? 4 : 2),
-            child: Text(label, textAlign: .center, style: RamificaText.meta),
-          ),
-        ],
       ),
     );
   }
-}
-
-class _ProgressBar extends CustomPainter {
-  const _ProgressBar(this.progress);
-
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = RamificaColors.containerHighest,
-    );
-    if (progress <= 0) return;
-    canvas.drawRect(
-      Offset.zero & Size(size.width * progress.clamp(0.0, 1.0), size.height),
-      Paint()
-        ..shader = const LinearGradient(
-          colors: [RamificaColors.hotspot, RamificaColors.nodeActive],
-        ).createShader(Offset.zero & size),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ProgressBar old) => old.progress != progress;
 }

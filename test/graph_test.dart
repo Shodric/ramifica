@@ -10,6 +10,7 @@ import 'package:ramifica/data/models/graph_stub.dart';
 import 'package:ramifica/data/models/playback.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
+import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
@@ -21,6 +22,7 @@ import 'package:ramifica/features/graph/graph_event.dart';
 import 'package:ramifica/features/graph/graph_state.dart';
 import 'package:ramifica/features/graph/graph_view.dart';
 import 'package:ramifica/features/graph/node_sheet.dart';
+import 'package:ramifica/features/graph/scene_info_card.dart';
 
 void main() {
   group('GraphRepository', () {
@@ -55,7 +57,7 @@ void main() {
       expect(calls, isEmpty);
     });
 
-    test('playApproach and rewind parse playback', () async {
+    test('playApproach, rewind and jump parse playback', () async {
       final calls = <_Call>[];
       final repository = _graphs(calls, (name, data) async {
         return _playback(nodeId: 'node_001');
@@ -66,13 +68,35 @@ void main() {
         nodeId: 'node_003',
       );
       final rewound = await repository.rewind('run_1');
+      final jumped = await repository.jumpToNode(
+        runId: 'run_1',
+        nodeId: 'node_002',
+      );
 
       expect(calls[0].name, 'playApproach');
       expect(calls[0].data, {'runId': 'run_1', 'nodeId': 'node_003'});
       expect(calls[1].name, 'rewindRun');
       expect(calls[1].data, {'runId': 'run_1'});
+      expect(calls[2].name, 'jumpToNode');
+      expect(calls[2].data, {'runId': 'run_1', 'nodeId': 'node_002'});
       expect(approach.node.nodeId, 'node_001');
       expect(rewound.node.nodeId, 'node_001');
+      expect(jumped.node.nodeId, 'node_001');
+    });
+
+    test('jumpToNode rejects blank ids without calling', () async {
+      final calls = <_Call>[];
+      final repository = _graphs(calls, (name, data) async => _stubs());
+
+      await expectLater(
+        repository.jumpToNode(runId: 'run_1', nodeId: '  '),
+        throwsA(const AppFailure(.invalid)),
+      );
+      await expectLater(
+        repository.jumpToNode(runId: '  ', nodeId: 'node_002'),
+        throwsA(const AppFailure(.invalid)),
+      );
+      expect(calls, isEmpty);
     });
   });
 
@@ -333,6 +357,58 @@ void main() {
       expect(calls.map((call) => call.name), contains('rewindRun'));
       expect(bloc.state.selectedId, 'node_001');
     });
+
+    test('play jumps the run and reselects', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'jumpToNode') {
+            return _playback(nodeId: 'node_002', title: 'The inner room');
+          }
+          return _stubs();
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const PlayRequested('node_002'));
+      await bloc.stream.firstWhere(
+        (state) => !state.acting && state.currentNodeId == 'node_002',
+      );
+
+      expect(calls.map((call) => call.name), [
+        'graphStubs',
+        'jumpToNode',
+        'graphStubs',
+      ]);
+      expect(calls[1].data, {'runId': 'run_1', 'nodeId': 'node_002'});
+      expect(bloc.state.selectedId, 'node_002');
+      expect(bloc.state.failure, isNull);
+    });
+
+    test('a play failure warns and leaves the run untouched', () async {
+      final calls = <_Call>[];
+      final bloc = GraphBloc(
+        repository: _graphs(calls, (name, data) async {
+          if (name == 'jumpToNode') throw const AppFailure(.invalid);
+          return _stubs();
+        }),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const GraphRequested(storyId: 'story_temple', runId: 'run_1'));
+      await bloc.stream.firstWhere((state) => state.phase == .loaded);
+      bloc.add(const PlayRequested('node_002'));
+      await bloc.stream.firstWhere(
+        (state) => !state.acting && state.failure != null,
+      );
+
+      expect(bloc.state.failure, 'That action is not valid');
+      expect(bloc.state.currentNodeId, 'node_001');
+      expect(bloc.state.selectedId, 'node_001');
+      expect(calls.map((call) => call.name), ['graphStubs', 'jumpToNode']);
+    });
   });
 
   group('layoutGraph', () {
@@ -412,7 +488,7 @@ void main() {
       await tester.tap(find.text('Retry'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(GraphCanvas), findsOneWidget);
+      expect(find.byType(DraftCanvas), findsOneWidget);
       expect(calls.map((call) => call.name), [
         'startRun',
         'graphStubs',
@@ -454,7 +530,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byType(GraphCanvas), findsOneWidget);
+      expect(find.byType(DraftCanvas), findsOneWidget);
       expect(calls.single.data, {'storyId': 'story_temple', 'runId': 'run_1'});
 
       feed.show(feed.state.copy(muted: false));
@@ -472,8 +548,47 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(calls, hasLength(2));
-      final graph = tester.element(find.byType(GraphCanvas)).read<GraphBloc>();
+      final graph = tester.element(find.byType(DraftCanvas)).read<GraphBloc>();
       expect(graph.state.currentNodeId, 'node_002');
+    });
+
+    testWidgets('following the feed never reloads it back', (tester) async {
+      final feed = _StubFeedBloc();
+      addTearDown(feed.close);
+      final repository = _graphs([], (name, data) async {
+        return _stubs(current: feed.state.playback?.node.nodeId ?? 'node_001');
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BlocProvider<FeedBloc>.value(
+            value: feed,
+            child: GraphView(
+              storyId: 'story_temple',
+              runId: 'run_1',
+              repository: repository,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(feed.added, isEmpty);
+
+      // The feed moves on its own; the map follows without asking the
+      // feed to reload or stealing the tab. Only a tapped card play
+      // navigates.
+      feed.show(
+        FeedState(
+          phase: .playing,
+          storyId: 'story_temple',
+          runId: 'run_1',
+          playback: Playback.fromJson(_playback(nodeId: 'node_002')),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final graph = tester.element(find.byType(DraftCanvas)).read<GraphBloc>();
+      expect(graph.state.currentNodeId, 'node_002');
+      expect(feed.added, isEmpty);
     });
 
     testWidgets('changing story never reuses the previous feed run', (
@@ -521,102 +636,101 @@ void main() {
         'graphStubs',
       ]);
       expect(calls.last.data, {'storyId': 'story_other', 'runId': 'run_other'});
-      final graph = tester.element(find.byType(GraphCanvas)).read<GraphBloc>();
+      final graph = tester.element(find.byType(DraftCanvas)).read<GraphBloc>();
       expect(graph.state.storyId, 'story_other');
       expect(graph.state.failure, isNull);
     });
 
-    testWidgets('shows the sheet with share bars', (tester) async {
+    testWidgets('shows the hub canvas without actions', (tester) async {
       await _pumpGraph(tester);
 
-      expect(find.text('The temple door'), findsOneWidget);
-      expect(find.text('Enter the room'), findsOneWidget);
-      expect(find.text('Climb the ridge'), findsOneWidget);
-      expect(find.text('Continue'), findsOneWidget);
-      expect(find.widgetWithText(OutlinedButton, 'Rewind'), findsOneWidget);
-      expect(find.text('6/10 (60%)'), findsOneWidget);
-      expect(find.text('4/10 (40%)'), findsOneWidget);
+      expect(find.text('The temple door'), findsNWidgets(2));
+      expect(find.text('The inner room'), findsOneWidget);
+      expect(find.text('You are here'), findsOneWidget);
+      expect(find.text('The temple secret'), findsOneWidget);
+      expect(find.text('2/3 scenes discovered'), findsOneWidget);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('60%'), findsOneWidget);
+      expect(find.text('40%'), findsOneWidget);
+      expect(find.text('Continue'), findsNothing);
+      expect(find.text('Rewind'), findsNothing);
+      expect(find.text('Enter the room'), findsNothing);
+      expect(find.text('6/10 (60%)'), findsNothing);
     });
 
-    testWidgets('tapping the canvas selects a node', (tester) async {
-      await _pumpGraph(tester);
-      final layout = layoutGraph(_parsedStubs());
-      final origin = tester.getTopLeft(
-        find.byKey(const ValueKey('graphCanvas')),
+    testWidgets('the pill hugs the left side for A children', (tester) async {
+      await _pumpGraph(tester, current: 'node_002');
+      final align = tester.widget<Align>(
+        find.ancestor(
+          of: find.text('You are here'),
+          matching: find.byType(Align),
+        ),
       );
-      await tester.tapAt(origin + layout.positions['node_002']!);
-      await tester.pumpAndSettle();
-
-      expect(find.text('The inner room'), findsOneWidget);
+      expect(align.alignment, Alignment.centerLeft);
     });
 
-    testWidgets('a lock plays the approach', (tester) async {
+    testWidgets('the pill hugs the right side for B children', (tester) async {
+      await _pumpGraph(tester, current: 'node_003');
+      final align = tester.widget<Align>(
+        find.ancestor(
+          of: find.text('You are here'),
+          matching: find.byType(Align),
+        ),
+      );
+      expect(align.alignment, Alignment.centerRight);
+    });
+
+    testWidgets('the share line renders both segments', (tester) async {
+      await _pumpGraph(tester);
+      final segments = tester.widgetList<ColoredBox>(
+        find.descendant(
+          of: find.byType(SceneInfoCard),
+          matching: find.byType(ColoredBox),
+        ),
+      );
+      expect(segments, hasLength(2));
+      for (final segment in segments) {
+        expect(tester.getSize(find.byWidget(segment)).height, 6);
+      }
+    });
+
+    testWidgets('tapping a node opens nothing', (tester) async {
+      await _pumpGraph(tester);
+      await tester.tap(find.text('The inner room'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('The inner room'), findsNWidgets(2));
+      expect(find.byType(NodeSheet), findsNothing);
+      expect(find.text('Continue'), findsNothing);
+    });
+
+    testWidgets('the scene card play jumps to that scene', (tester) async {
       final calls = <_Call>[];
       await _pumpGraph(tester, calls: calls);
-      await tester.tap(find.text('Climb the ridge'));
+      await tester.tap(find.text('The inner room'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
       await tester.pumpAndSettle();
 
-      expect(calls.map((call) => call.name), contains('playApproach'));
+      final jump = calls.singleWhere((call) => call.name == 'jumpToNode');
+      expect(jump.data, {'runId': 'run_1', 'nodeId': 'node_002'});
     });
 
-    testWidgets('rewind moves the run to the parent', (tester) async {
-      final calls = <_Call>[];
-      await _pumpGraph(tester, calls: calls, current: 'node_002');
-      expect(find.text('The inner room'), findsOneWidget);
-
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Rewind'));
-      await tester.pumpAndSettle();
-
-      expect(calls.map((call) => call.name), contains('rewindRun'));
-      expect(find.text('The temple door'), findsOneWidget);
-    });
-
-    testWidgets('continue needs no feed and sends no call', (tester) async {
+    testWidgets('a locked card shows a lock and plays nothing', (tester) async {
       final calls = <_Call>[];
       await _pumpGraph(tester, calls: calls);
-      await tester.tap(find.text('Enter the room'));
-      await tester.pumpAndSettle();
-      expect(find.text('The inner room'), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+      expect(find.text('(untitled)'), findsOneWidget);
 
-      // No FeedBloc above and no router or shell: a StoryOpened dispatch
-      // or an unguarded navigation read would throw here.
-      await tester.tap(find.text('Continue'));
+      await tester.tap(find.text('(untitled)'));
       await tester.pumpAndSettle();
 
       expect(calls.map((call) => call.name), ['graphStubs']);
-      expect(find.text('The temple door'), findsOneWidget);
-    });
+      expect(find.text('(untitled)'), findsNWidgets(2));
 
-    testWidgets('approach sends only playApproach', (tester) async {
-      final calls = <_Call>[];
-      await _pumpGraph(tester, calls: calls);
-      await tester.tap(find.text('Climb the ridge'));
-      await tester.pumpAndSettle();
-
-      expect(calls.map((call) => call.name), ['graphStubs', 'playApproach']);
-      expect(find.text('The temple door'), findsOneWidget);
-    });
-
-    testWidgets('a root rewind warns in the sheet', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: GraphView(
-            storyId: 'story_temple',
-            runId: 'run_1',
-            repository: _graphs(<_Call>[], (name, data) async {
-              if (name == 'rewindRun') throw const AppFailure(.invalid);
-              return _stubs();
-            }),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Rewind'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('That action is not valid'), findsOneWidget);
-      expect(find.text('The temple door'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(calls.map((call) => call.name), ['graphStubs']);
     });
 
     testWidgets('no story shows EmptyState with Explore', (tester) async {
@@ -753,6 +867,10 @@ Future<void> _pumpGraph(
           if (name == 'rewindRun') {
             return _playback(nodeId: 'node_001', title: 'The temple door');
           }
+          if (name == 'jumpToNode') {
+            final target = data?['nodeId'] as String? ?? 'node_002';
+            return _playback(nodeId: target, title: 'The inner room');
+          }
           return _stubs(current: current);
         }),
       ),
@@ -761,14 +879,10 @@ Future<void> _pumpGraph(
   await tester.pumpAndSettle();
 }
 
-List<GraphStub> _parsedStubs() {
-  final result = GraphStubsResult.fromJson(_stubs());
-  return result.nodes;
-}
-
 Map<String, dynamic> _stubs({String current = 'node_001'}) {
   return {
     'currentNodeId': current,
+    'story': {'title': 'The temple secret', 'coverUrl': 'https://cover/c.png'},
     'nodes': [
       {
         'nodeId': 'node_001',
@@ -870,7 +984,14 @@ class _StillClock implements CueClock {
 class _StubFeedBloc extends Cubit<FeedState> implements FeedBloc {
   _StubFeedBloc() : super(const FeedState());
 
+  final added = <FeedEvent>[];
+
   void show(FeedState next) => emit(next);
+
+  @override
+  void add(FeedEvent event) {
+    added.add(event);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

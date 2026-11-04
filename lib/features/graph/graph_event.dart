@@ -34,3 +34,11 @@ final class ApproachRequested extends GraphEvent {
 final class RewindRequested extends GraphEvent {
   const RewindRequested();
 }
+
+/// From the scene card play button. Jumps the run to a visited scene;
+/// the view opens the feed there once the run moves.
+final class PlayRequested extends GraphEvent {
+  const PlayRequested(this.nodeId);
+
+  final String nodeId;
+}

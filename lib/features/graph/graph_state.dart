@@ -7,6 +7,8 @@ class GraphState {
     this.phase = GraphPhase.loading,
     this.storyId,
     this.runId,
+    this.storyTitle,
+    this.storyCoverUrl,
     this.stubs = const [],
     this.currentNodeId,
     this.selectedId,
@@ -17,6 +19,8 @@ class GraphState {
   final GraphPhase phase;
   final String? storyId;
   final String? runId;
+  final String? storyTitle;
+  final String? storyCoverUrl;
   final List<GraphStub> stubs;
   final String? currentNodeId;
   final String? selectedId;
@@ -50,6 +54,8 @@ class GraphState {
     GraphPhase? phase,
     String? Function()? storyId,
     String? Function()? runId,
+    String? Function()? storyTitle,
+    String? Function()? storyCoverUrl,
     List<GraphStub>? stubs,
     String? Function()? currentNodeId,
     String? Function()? selectedId,
@@ -60,6 +66,10 @@ class GraphState {
       phase: phase ?? this.phase,
       storyId: storyId == null ? this.storyId : storyId(),
       runId: runId == null ? this.runId : runId(),
+      storyTitle: storyTitle == null ? this.storyTitle : storyTitle(),
+      storyCoverUrl: storyCoverUrl == null
+          ? this.storyCoverUrl
+          : storyCoverUrl(),
       stubs: stubs ?? this.stubs,
       currentNodeId: currentNodeId == null
           ? this.currentNodeId
@@ -76,6 +86,8 @@ class GraphState {
         other.phase == phase &&
         other.storyId == storyId &&
         other.runId == runId &&
+        other.storyTitle == storyTitle &&
+        other.storyCoverUrl == storyCoverUrl &&
         _sameStubs(other.stubs, stubs) &&
         other.currentNodeId == currentNodeId &&
         other.selectedId == selectedId &&
@@ -88,6 +100,8 @@ class GraphState {
     phase,
     storyId,
     runId,
+    storyTitle,
+    storyCoverUrl,
     Object.hashAll(stubs),
     currentNodeId,
     selectedId,
