@@ -5,7 +5,7 @@ import 'package:ramifica/app/theme.dart';
 /// data in via params, tap out via [onOpen]. No bloc, no router,
 /// no repository. No counts, ratings, or durations — the catalog model
 /// carries none, and they are never invented.
-class ExploreStoryTile extends StatelessWidget {
+class ExploreStoryTile extends StatefulWidget {
   const ExploreStoryTile({
     super.key,
     required this.title,
@@ -20,25 +20,46 @@ class ExploreStoryTile extends StatelessWidget {
   final VoidCallback? onOpen;
 
   @override
+  State<ExploreStoryTile> createState() => _ExploreStoryTileState();
+}
+
+class _ExploreStoryTileState extends State<ExploreStoryTile> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Story $title',
-      button: onOpen != null,
+      label: 'Story ${widget.title}',
+      button: widget.onOpen != null,
       child: GestureDetector(
-        onTap: onOpen,
-        child: Column(
+        onTap: widget.onOpen,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.95 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: SizedBox(height: 150, child: _TileCover(url: coverUrl)),
+              child: SizedBox(
+                height: 330,
+                child: _TileCover(url: widget.coverUrl),
+              ),
             ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                title,
+                widget.title,
                 style: RamificaText.label.copyWith(fontSize: 14),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -48,13 +69,14 @@ class ExploreStoryTile extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                authorName,
+                widget.authorName,
                 style: RamificaText.meta,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
+          ),
         ),
       ),
     );
