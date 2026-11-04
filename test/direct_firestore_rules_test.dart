@@ -73,6 +73,7 @@ void main() {
           ...readyNode(ending: true, secret: true),
           'startFromNodeId': root.nodeId,
           'startParentFrameHash': 'end',
+          'endingBadgeUrl': 'https://example.com/badge.png',
         }),
       ]);
       // No approvals exist anymore: ready nodes publish as-is.
@@ -137,6 +138,8 @@ void main() {
       final stats = (await player.get('$base/stats/${root.nodeId}'))!;
       expect(stats['choiceCounts'], {'c': 1});
       expect((await player.list('users/player/rewards')).length, 1);
+      final rewards = await player.list('users/player/rewards');
+      expect(rewards.single.value['badgeUrl'], 'https://example.com/badge.png');
       await expectLater(
         foreign.get('users/player/storyState/$id'),
         throwsA(isA<HttpException>()),

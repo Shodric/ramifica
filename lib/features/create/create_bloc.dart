@@ -87,6 +87,11 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       _serialized(_onStoryPublished),
       transformer: droppable(),
     );
+    on<StoryUnpublished>(
+      _serialized(_onStoryUnpublished),
+      transformer: droppable(),
+    );
+    on<StoryDeleted>(_serialized(_onStoryDeleted), transformer: droppable());
     on<ZonesSaved>(_serialized(_onZonesSaved), transformer: droppable());
     on<ZoneMoved>(_onZoneMoved);
     on<ChoiceAdded>(_onChoiceAdded);
@@ -653,7 +658,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         {
           'title': p.title,
           'ttsText': p.ttsText,
-          'endingName': p.endingName,
           'startImagePrompt': p.startImagePrompt,
           'videoPrompt': p.videoPrompt,
         },
@@ -1141,7 +1145,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final url = await repository.generateEndingBadge(
         storyId: story.storyId,
         nodeId: event.nodeId,
-        endingName: node.endingName,
         endingType: node.endingType,
       );
       if (isClosed) return;
@@ -1528,6 +1531,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           job: CreateJob.none,
           jobNodeId: () => null,
           failure: () => null,
+          story: () => story.copy(status: 'published'),
           publishedStoryId: () => story.storyId,
           stories: [
             for (final entry in state.stories)
@@ -1536,6 +1540,92 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
               else
                 entry,
           ],
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => error.hint,
+        ),
+      );
+    }
+  }
+
+  /// Hides the open published story: `status` returns to `draft`, so
+  /// every player read rule stops matching and Publish offers again.
+  /// The local copy mirrors the direct write; the list entry follows.
+  Future<void> _onStoryUnpublished(
+    StoryUnpublished event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    emit(
+      state.copy(
+        job: CreateJob.saving,
+        jobNodeId: () => null,
+        failure: () => null,
+      ),
+    );
+    try {
+      await drafts.unpublishStory(story.storyId);
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+          story: () => story.copy(status: 'draft'),
+          stories: [
+            for (final entry in state.stories)
+              if (entry.storyId == story.storyId)
+                entry.copy(status: 'draft')
+              else
+                entry,
+          ],
+        ),
+      );
+    } on AppFailure catch (error) {
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => error.hint,
+        ),
+      );
+    }
+  }
+
+  /// Deletes the open draft story doc: the canvas clears, the watcher
+  /// stops, and [CreateState.deletedStoryId] sends the view back to the
+  /// creations list. Nodes and publications stay as unreachable orphans.
+  Future<void> _onStoryDeleted(
+    StoryDeleted event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    if (story == null) return;
+    emit(
+      state.copy(
+        job: CreateJob.saving,
+        jobNodeId: () => null,
+        failure: () => null,
+      ),
+    );
+    try {
+      await drafts.deleteStory(story.storyId);
+      if (isClosed) return;
+      unawaited(_draftSubscription?.cancel());
+      _draftSubscription = null;
+      emit(
+        CreateState(
+          stories: [
+            for (final entry in state.stories)
+              if (entry.storyId != story.storyId) entry,
+          ],
+          deletedStoryId: story.storyId,
         ),
       );
     } on AppFailure catch (error) {
@@ -1656,7 +1746,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         fields: const [
           'title',
           'ttsText',
-          'endingName',
           'choices',
           'ttsStatus',
           'ttsAudioUrl',
@@ -2041,7 +2130,6 @@ DraftNode _applyProposal(
 ) {
   final title = proposal.title;
   final line = proposal.ttsText;
-  final ending = proposal.endingName;
   var choices = node.choices;
   if (proposal.choiceLabels.isNotEmpty) {
     choices = [
@@ -2059,12 +2147,6 @@ DraftNode _applyProposal(
         : null,
     ttsText: line != null && (regenerate || node.ttsText.trim().isEmpty)
         ? line
-        : null,
-    endingName:
-        node.isEnding &&
-            ending != null &&
-            (regenerate || (node.endingName?.trim().isEmpty ?? true))
-        ? () => ending
         : null,
     choices: choices,
   );
@@ -2092,10 +2174,6 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.videoPrompt != null) {
     final cleaned = event.videoPrompt!.trim();
     next = next.copy(videoPrompt: () => cleaned.isEmpty ? null : cleaned);
-  }
-  if (event.endingName != null) {
-    final cleaned = event.endingName!.trim();
-    next = next.copy(endingName: () => cleaned.isEmpty ? null : cleaned);
   }
   if (event.sceneDirection != null) {
     final cleaned = event.sceneDirection!.trim();

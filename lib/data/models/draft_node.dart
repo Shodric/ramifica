@@ -156,7 +156,6 @@ class DraftNode {
     this.title = '',
     this.visibility = 'visible',
     this.isEnding = false,
-    this.endingName,
     this.endingType,
     this.endingBadgeUrl,
     this.videoUrl,
@@ -212,7 +211,6 @@ class DraftNode {
       title: _optionalString(data['title']) ?? '',
       visibility: _optionalString(data['visibility']) ?? 'visible',
       isEnding: data['isEnding'] == true,
-      endingName: _optionalString(data['endingName']),
       endingType: _optionalString(data['endingType']),
       endingBadgeUrl: _optionalString(data['endingBadgeUrl']),
       videoUrl: _optionalString(data['videoUrl']),
@@ -275,7 +273,6 @@ class DraftNode {
   /// `visible` or `secret`. Anything else fails publish validation.
   final String visibility;
   final bool isEnding;
-  final String? endingName;
   final String? endingType;
 
   /// Public URL of the generated ending badge (`generateEndingBadge`).
@@ -396,7 +393,6 @@ class DraftNode {
       'title': title,
       'visibility': visibility,
       'isEnding': isEnding,
-      'endingName': endingName,
       'endingType': endingType,
       'endingBadgeUrl': endingBadgeUrl,
       'videoUrl': videoUrl,
@@ -447,7 +443,6 @@ class DraftNode {
     String? title,
     String? visibility,
     bool? isEnding,
-    String? Function()? endingName,
     String? Function()? endingType,
     String? Function()? endingBadgeUrl,
     String? Function()? videoUrl,
@@ -494,7 +489,6 @@ class DraftNode {
       title: title ?? this.title,
       visibility: visibility ?? this.visibility,
       isEnding: isEnding ?? this.isEnding,
-      endingName: endingName == null ? this.endingName : endingName(),
       endingType: endingType == null ? this.endingType : endingType(),
       endingBadgeUrl: endingBadgeUrl == null
           ? this.endingBadgeUrl
@@ -583,7 +577,6 @@ class DraftNode {
         other.title == title &&
         other.visibility == visibility &&
         other.isEnding == isEnding &&
-        other.endingName == endingName &&
         other.endingType == endingType &&
         other.endingBadgeUrl == endingBadgeUrl &&
         other.videoUrl == videoUrl &&
@@ -631,7 +624,6 @@ class DraftNode {
     title,
     visibility,
     isEnding,
-    endingName,
     endingType,
     endingBadgeUrl,
     videoUrl,

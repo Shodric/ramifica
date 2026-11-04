@@ -8,7 +8,6 @@ const _full = SceneProposal(
   ttsText: 'What should they do next?',
   startImagePrompt: 'misty gate',
   videoPrompt: 'slow push in',
-  endingName: 'Dawn',
   choices: [
     SceneProposalChoice(label: 'Enter', icon: 'door'),
     SceneProposalChoice(label: 'Climb'),
@@ -17,11 +16,10 @@ const _full = SceneProposal(
 
 void main() {
   group('sliceProposalForStep', () {
-    test('Info keeps title, line, and ending name only', () {
+    test('Info keeps title and line only', () {
       final sliced = sliceProposalForStep(_full, step: 0, isEnding: true)!;
       expect(sliced.title, 'Spark title');
       expect(sliced.ttsText, 'What should they do next?');
-      expect(sliced.endingName, 'Dawn');
       expect(sliced.startImagePrompt, isNull);
       expect(sliced.videoPrompt, isNull);
       expect(sliced.choices, isEmpty);
@@ -59,10 +57,7 @@ void main() {
     });
 
     test('endings take no options and empty sections slice to null', () {
-      expect(
-        sliceProposalForStep(_full, step: 4, isEnding: true),
-        isNull,
-      );
+      expect(sliceProposalForStep(_full, step: 4, isEnding: true), isNull);
       expect(
         sliceProposalForStep(const SceneProposal(), step: 0, isEnding: false),
         isNull,
@@ -134,13 +129,10 @@ void main() {
     testWidgets('Discard closes without accepting', (tester) async {
       var called = false;
       bool? result;
-      await pumpOpener(
-        tester,
-        (value) {
-          called = true;
-          result = value;
-        },
-      );
+      await pumpOpener(tester, (value) {
+        called = true;
+        result = value;
+      });
 
       await tester.tap(find.byKey(const ValueKey('fill-discard')));
       await tester.pumpAndSettle();

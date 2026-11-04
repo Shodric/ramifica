@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
+import 'package:ramifica/app/shell_bloc.dart';
+import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
@@ -10,15 +12,16 @@ import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
+import 'package:ramifica/features/profile/install_guide.dart';
+import 'package:ramifica/features/profile/install_guide_banner.dart';
 import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
 import 'package:ramifica/features/profile/profile_state.dart';
 import 'package:ramifica/features/profile/saga_list.dart';
 
-/// Profile tab: title AppBar with edit/sign-out icons, install banner,
-/// then the header or editor drawn from [ProfileBloc]. Creates its own
-/// bloc like Explore; tests
+/// Profile tab: screen title, install banner, then the header or editor
+/// drawn from [ProfileBloc]. Creates its own bloc like Explore; tests
 /// inject [bloc] and read recorded events instead of touching Firebase.
 /// A foreign profile passes its id in [authorId]; null means the
 /// signed-in person's own profile. Edit mode and dismissal are local
@@ -85,6 +88,30 @@ class ProfileView extends StatefulWidget {
   State<ProfileView> createState() => _ProfileViewState();
 }
 
+/// Re-requests the own creations whenever the shell lands on the
+/// profile tab: the shell keeps every tab mounted, so drafts fetched
+/// once would never show a publish made on Create. Mounts without a
+/// [ShellBloc] (widget tests) render the child as-is.
+class _RefreshOnProfileTab extends StatelessWidget {
+  const _RefreshOnProfileTab({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    try {
+      context.read<ShellBloc>();
+    } catch (_) {
+      return child;
+    }
+    return BlocListener<ShellBloc, ShellState>(
+      listenWhen: (previous, next) =>
+          previous.tab != ShellTab.profile && next.tab == ShellTab.profile,
+      listener: (context, _) =>
+          context.read<ProfileBloc>().add(const ProfileDraftsRequested()),
+      child: child,
+    );
+  }
+}
+
 class _ProfileViewState extends State<ProfileView> {
   ProfileBloc? _bloc;
   var _editing = false;
@@ -147,40 +174,42 @@ class _ProfileViewState extends State<ProfileView> {
     }
     return BlocProvider.value(
       value: bloc,
-      child: BlocListener<ProfileBloc, ProfileState>(
-        listener: _closeEditorOnSaved,
-        child: BlocBuilder<ProfileBloc, ProfileState>(
-          builder: (context, state) {
-            final showActions =
-                state.phase == ProfilePhase.loaded && state.isOwn && !_editing;
-            return Scaffold(
-              appBar: AppBar(
-                backgroundColor: RamificaColors.surface,
-                surfaceTintColor: Colors.transparent,
-                elevation: 0,
-                title: const Text('Profile', style: RamificaText.screenTitle),
-                actions: [
-                  if (showActions) ...[
-                    IconButton(
-                      key: const Key('profileEditButton'),
-                      tooltip: 'Edit profile',
-                      icon: const Icon(Icons.edit_outlined),
-                      onPressed: () => setState(() => _editing = true),
-                    ),
-                    IconButton(
-                      key: const Key('profileSignOutButton'),
-                      tooltip: 'Sign out',
-                      icon: const Icon(Icons.logout),
-                      onPressed: () => context.read<ProfileBloc>().add(
-                        const SignOutRequested(),
+      child: _RefreshOnProfileTab(
+        child: BlocListener<ProfileBloc, ProfileState>(
+          listener: _closeEditorOnSaved,
+          child: BlocBuilder<ProfileBloc, ProfileState>(
+            builder: (context, state) {
+              final showActions =
+                  state.phase == ProfilePhase.loaded && state.isOwn && !_editing;
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: RamificaColors.surface,
+                  surfaceTintColor: Colors.transparent,
+                  elevation: 0,
+                  title: const Text('Profile', style: RamificaText.screenTitle),
+                  actions: [
+                    if (showActions) ...[
+                      IconButton(
+                        key: const Key('profileEditButton'),
+                        tooltip: 'Edit profile',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => setState(() => _editing = true),
                       ),
-                    ),
+                      IconButton(
+                        key: const Key('profileSignOutButton'),
+                        tooltip: 'Sign out',
+                        icon: const Icon(Icons.logout),
+                        onPressed: () => context.read<ProfileBloc>().add(
+                          const SignOutRequested(),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
-              body: SafeArea(child: _body(context, state)),
-            );
-          },
+                ),
+                body: SafeArea(child: _body(context, state)),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -195,9 +224,17 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Widget _body(BuildContext context, ProfileState state) {
+    final showGuide =
+        widget.showInstallGuide?.call() ?? shouldShowInstallGuide();
     return ListView(
       padding: const .all(16),
       children: [
+        const Text('Profile', style: RamificaText.screenTitle),
+        const SizedBox(height: 16),
+        if (showGuide) ...[
+          InstallGuideBanner(shouldShow: () => showGuide),
+          const SizedBox(height: 16),
+        ],
         switch (state.phase) {
           .loading => const Center(child: CircularProgressIndicator()),
           .failed => Center(
@@ -262,6 +299,25 @@ class _ProfileViewState extends State<ProfileView> {
           Text(
             state.failure!,
             style: RamificaText.body.copyWith(color: RamificaColors.error),
+          ),
+        ],
+        if (state.isOwn && !editing) ...[
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              OutlinedButton(
+                key: const Key('profileEditButton'),
+                onPressed: () => setState(() => _editing = true),
+                child: const Text('Edit profile'),
+              ),
+              const SizedBox(width: 12),
+              TextButton(
+                key: const Key('profileSignOutButton'),
+                onPressed: () =>
+                    context.read<ProfileBloc>().add(const SignOutRequested()),
+                child: const Text('Sign out'),
+              ),
+            ],
           ),
         ],
         const SizedBox(height: 16),

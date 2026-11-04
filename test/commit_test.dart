@@ -238,7 +238,7 @@ void main() {
             state.phase == FeedPhase.playing && state.playback!.node.isEnding,
       );
 
-      expect(bloc.state.playback!.node.endingName, 'The door');
+      expect(bloc.state.playback!.node.title, 'The last door');
       expect(bloc.state.holdChoiceId, isNull);
       expect(bloc.state.pendingRequestId, isNull);
 
@@ -434,7 +434,7 @@ void main() {
       'ending': {
         'storyId': 'story_temple',
         'nodeId': 'node_end',
-        'endingName': 'The door',
+        'title': 'The door',
         'endingType': 'tragic',
       },
       'sagaUnlocked': {'sagaId': 'saga_ab', 'storyId': 'story_river'},
@@ -463,7 +463,7 @@ void main() {
       'ending': {
         'storyId': 'story_temple',
         'nodeId': 'node_end',
-        'endingName': 'The door',
+        'title': 'The door',
         'endingType': 'tragic',
       },
       'sagaUnlocked': null,
@@ -745,7 +745,6 @@ Map<String, dynamic> _ending() {
       'ttsAudioUrl': null,
       'ttsDurationSeconds': null,
       'videoFrameLastBlurData': 'data:image/png;base64,$_png',
-      'endingName': 'The door',
       'endingType': 'tragic',
     },
     'choices': const [],

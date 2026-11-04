@@ -170,7 +170,6 @@ Playback _draftPlayback(DraftNode node, DraftStory? story, String? authorName) {
       ttsText: node.ttsText,
       ttsAudioUrl: node.ttsAudioUrl,
       ttsDurationSeconds: node.ttsDurationSeconds,
-      endingName: node.endingName,
       endingType: node.endingType,
       endingBadgeUrl: node.endingBadgeUrl,
     ),

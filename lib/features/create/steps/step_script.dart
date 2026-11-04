@@ -12,16 +12,16 @@ import 'package:ramifica/features/create/dictation/dictation_controller.dart';
 import 'package:ramifica/features/create/dictation/dictation_controls.dart';
 import 'package:ramifica/features/create/voice_recorder.dart';
 
-/// S1 Script: scene direction (typed or dictated) plus the manual title /
-/// ending name editors. New scenes are secret until the player reveals
+/// S1 Script: scene direction (typed or dictated) plus the manual title
+/// editor. New scenes are secret until the player reveals
 /// them; there is no visibility toggle. [showErrors] renders error text
 /// under each manual field; correcting a field clears its own error live.
 ///
 /// The scene proposal runs from the AppBar spark: the wizard calls
 /// [StepScriptState.proposeDirection], which calls [propose] with the
 /// direction text and returns the normalized [SceneProposal] without
-/// writing the node. The manual title and ending name are preserved
-/// (returned null) so apply never overwrites them.
+/// writing the node. The manual title is preserved
+/// (returned null) so apply never overwrites it.
 class StepScript extends StatefulWidget {
   const StepScript({
     super.key,
@@ -36,7 +36,6 @@ class StepScript extends StatefulWidget {
     this.transcribe,
     this.propose,
     this.onTitleChanged,
-    this.onEndingNameChanged,
     this.onDirectionChanged,
     this.active = true,
     this.continueAction,
@@ -72,14 +71,10 @@ class StepScript extends StatefulWidget {
   /// Proposal-only `generateNodeText` call for the direction text. Never
   /// writes the node. [purpose] selects the backend scope (`scene` for
   /// the whole-scene fields, `narration` for the voice line only).
-  final Future<GeneratedNodeText> Function(
-    String direction, {
-    String? purpose,
-  })?
+  final Future<GeneratedNodeText> Function(String direction, {String? purpose})?
   propose;
 
   final ValueChanged<String>? onTitleChanged;
-  final ValueChanged<String>? onEndingNameChanged;
 
   /// Direction edits, persisted like any other node field. Dictated
   /// finals report here too; the listening placeholder never does.
@@ -92,9 +87,6 @@ class StepScript extends StatefulWidget {
 class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
   late final TextEditingController _title = TextEditingController(
     text: widget.node.title,
-  );
-  late final TextEditingController _endingName = TextEditingController(
-    text: widget.node.endingName ?? '',
   );
   String _beforeDictation = '';
   late final TextEditingController _direction = TextEditingController(
@@ -196,11 +188,6 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
         ttsText: _clip(answer.ttsText, 280),
         startImagePrompt: _clip(start, 2000),
         videoPrompt: _clip(answer.videoPrompt, 2000),
-        endingName: node.isEnding
-            ? ((node.endingName?.trim().isNotEmpty ?? false)
-                  ? null
-                  : _clip(answer.endingName, 40))
-            : null,
         choices: choices,
       );
       if (_isEmptyProposal(proposal)) {
@@ -281,10 +268,8 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
       _dictation.cancel();
       _direction.text = widget.node.sceneDirection ?? '';
       _title.text = widget.node.title;
-      _endingName.text = widget.node.endingName ?? '';
     } else {
       _setIfDifferent(_title, widget.node.title);
-      _setIfDifferent(_endingName, widget.node.endingName ?? '');
       // Never clobber typing, live captions, or the placeholder.
       if (!_directionFocus.hasFocus && !_dictation.recording) {
         _setIfDifferent(_direction, widget.node.sceneDirection ?? '');
@@ -306,7 +291,6 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
     _dictation.removeListener(_onDictation);
     _dictation.dispose();
     _title.dispose();
-    _endingName.dispose();
     _direction.dispose();
     _directionFocus.dispose();
     super.dispose();
@@ -318,7 +302,6 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
         (proposal.startImagePrompt == null ||
             proposal.startImagePrompt!.isEmpty) &&
         (proposal.videoPrompt == null || proposal.videoPrompt!.isEmpty) &&
-        (proposal.endingName == null || proposal.endingName!.isEmpty) &&
         proposal.choices.isEmpty;
   }
 
@@ -421,21 +404,6 @@ class StepScriptState extends State<StepScript> with WidgetsBindingObserver {
                 _hint ?? _dictation.hint ?? '',
                 style: RamificaText.meta.copyWith(color: RamificaColors.error),
               ),
-            ],
-            if (node.isEnding) ...[
-              const SizedBox(height: 8),
-              TextField(
-                key: ValueKey('ending-name-$nodeId'),
-                controller: _endingName,
-                enabled: !widget.busy,
-                maxLength: 40,
-                decoration: _scriptInputDecoration(
-                  labelText: 'Ending name',
-                  hintText: 'Dawn',
-                ),
-                onChanged: widget.onEndingNameChanged,
-              ),
-              const SizedBox(height: 8),
             ],
             if (widget.active && widget.continueAction != null) ...[
               const SizedBox(height: 16),

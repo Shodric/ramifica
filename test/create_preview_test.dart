@@ -759,7 +759,6 @@ Future<CreateBloc> _openEditor(
         MapEntry<String, Map<String, dynamic>>('root', {
           'title': 'The gate',
           'isEnding': ending,
-          'endingName': ending ? 'A new dawn' : null,
           'endingType': ending ? 'open' : null,
           'videoUrl': 'https://example.com/scene.mp4',
           'videoStatus': 'ready',

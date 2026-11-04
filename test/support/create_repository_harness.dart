@@ -122,6 +122,16 @@ class _DraftHarness implements DraftPersistence {
   }
 
   @override
+  Future<void> unpublishStory(String storyId) async {
+    await call('unpublishStory', {'storyId': storyId});
+  }
+
+  @override
+  Future<void> deleteStory(String storyId) async {
+    await call('deleteStory', {'storyId': storyId});
+  }
+
+  @override
   Future<void> delete(String storyId, String nodeId) async {
     await call('deleteNode', {'storyId': storyId, 'nodeId': nodeId});
     _overrides.remove(nodeId);
@@ -193,17 +203,15 @@ class _DraftHarness implements DraftPersistence {
     for (final name in [
       'title',
       'ttsText',
-      'endingName',
       'startImagePrompt',
       'videoPrompt',
     ]) {
       if (name == 'startImagePrompt' && !isRoot) {
         continue;
       }
-      if (name == 'endingName' && !node.isEnding) continue;
       final value = fields[name];
       if (value is String && value.trim().isNotEmpty) {
-        final cap = name == 'title' || name == 'endingName'
+        final cap = name == 'title'
             ? 40
             : name == 'ttsText'
             ? 280

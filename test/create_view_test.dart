@@ -280,6 +280,124 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
     });
 
+    testWidgets('story settings cover action reads like the wizard continue', (
+      tester,
+    ) async {
+      await _pumpDraft(tester);
+
+      await tester.tap(find.byKey(const ValueKey('ribbon-settings')));
+      await tester.pumpAndSettle();
+
+      final size = tester.getSize(
+        find.byKey(const ValueKey('story-settings-generate-cover')),
+      );
+      expect(size.height, 48);
+      // Full dialog width (640 max minus the 20 px page padding twice).
+      expect(size.width, greaterThan(500));
+    });
+
+    testWidgets('story settings offers Hide for a published story', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'published',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {
+              'title': 'Root',
+              'visibility': 'visible',
+              'isEnding': false,
+              'videoStatus': 'idle',
+              'ttsText': '',
+              'lineApproved': false,
+              'ttsStatus': 'idle',
+              'choices': <Map<String, dynamic>>[],
+            }),
+          ],
+          callFunction: (name, data) async {
+            calls.add(_Call(name, data));
+            return <String, dynamic>{};
+          },
+        ),
+      );
+      addTearDown(() => _disposeBloc(tester, bloc));
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('ribbon-settings')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('story-settings-hide')), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-settings-delete')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('story-settings-hide')));
+      await tester.pumpAndSettle();
+      expect(find.text('Hide story'), findsWidgets);
+
+      // Cancel keeps the story published.
+      await tester.tap(find.byKey(const ValueKey('confirm-cancel')));
+      await tester.pumpAndSettle();
+      expect(bloc.state.story?.status, 'published');
+      expect(calls.where((call) => call.name == 'unpublishStory'), isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('story-settings-hide')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-hide-story')));
+      await tester.pumpAndSettle();
+
+      expect(
+        calls.where((call) => call.name == 'unpublishStory'),
+        hasLength(1),
+      );
+      expect(bloc.state.story?.status, 'draft');
+    });
+
+    testWidgets('story settings confirms before deleting the draft', (
+      tester,
+    ) async {
+      final calls = <_Call>[];
+      final bloc = await _pumpDraft(tester, calls);
+
+      await tester.tap(find.byKey(const ValueKey('ribbon-settings')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('story-settings-delete')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('story-settings-hide')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('story-settings-delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete story'), findsWidgets);
+
+      // Cancel keeps the draft.
+      await tester.tap(find.byKey(const ValueKey('confirm-cancel')));
+      await tester.pumpAndSettle();
+      expect(bloc.state.hasDraft, isTrue);
+      expect(calls.where((call) => call.name == 'deleteStory'), isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('story-settings-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-delete-story')));
+      await tester.pumpAndSettle();
+
+      expect(calls.where((call) => call.name == 'deleteStory'), hasLength(1));
+      expect(bloc.state.deletedStoryId, 'story_1');
+      expect(bloc.state.hasDraft, isFalse);
+      // The settings dialog popped with the deletion.
+      expect(find.text('Story settings'), findsNothing);
+    });
+
     testWidgets('creations list shows draft cards with counts and cover', (
       tester,
     ) async {
@@ -329,7 +447,6 @@ void main() {
                     'title': 'Leaf',
                     'visibility': 'visible',
                     'isEnding': true,
-                    'endingName': 'Escape',
                   }),
                 ]
               : const [],
@@ -1331,7 +1448,6 @@ void main() {
           'title': 'Leaf',
           'visibility': 'secret',
           'isEnding': true,
-          'endingName': 'Escape',
           'endingType': 'open',
         }),
         MapEntry('node_3', {
@@ -1984,6 +2100,34 @@ void main() {
       expect(published, 'story_1');
     });
 
+    testWidgets('publish CTA hides for a published story', (tester) async {
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'published',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {'title': 'Root'}),
+          ],
+          callFunction: (name, data) async => {'storyId': 'story_1'},
+        ),
+      );
+      addTearDown(() => _disposeBloc(tester, bloc));
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('ribbon-publish')), findsNothing);
+      expect(find.byKey(const ValueKey('ribbon-settings')), findsOneWidget);
+    });
+
     testWidgets('publish problems render as the checklist', (tester) async {
       final bloc = CreateBloc(
         repository: testCreateRepository(
@@ -2074,7 +2218,6 @@ void main() {
               'title': 'Dawn',
               'visibility': 'visible',
               'isEnding': true,
-              'endingName': 'Dawn',
               'endingType': 'open',
               'startFromNodeId': 'node_1',
               'startParentFrameHash': 'hash-f1',
@@ -2421,7 +2564,6 @@ List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
       'title': 'Leaf',
       'visibility': 'visible',
       'isEnding': true,
-      'endingName': 'Escape',
       'endingType': 'open',
       'videoStatus': 'idle',
       'startFromNodeId': 'node_1',
@@ -2456,7 +2598,6 @@ List<MapEntry<String, Map<String, dynamic>>> _defaultDocs() {
       'title': 'Leaf',
       'visibility': 'secret',
       'isEnding': true,
-      'endingName': 'Escape',
       'endingType': 'open',
     }),
   ];
@@ -2567,7 +2708,6 @@ CreateRepository _repo(
             {'label': 'Enter'},
             {'label': 'Climb'},
           ],
-          'endingName': null,
         },
         'generateStoryCover' => {
           'coverUrl': 'https://cdn.invalid/cover-1.webp',

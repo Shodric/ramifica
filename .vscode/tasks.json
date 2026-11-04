@@ -11,6 +11,14 @@
       "label": "firebase-emulators",
       "type": "shell",
       "command": "export GOOGLE_APPLICATION_CREDENTIALS=\"${HOME}/secrets/meta-ramifica-dev.json\" META_API_KEY=\"$(gcloud secrets versions access latest --secret=META_API_KEY --project=meta-ramifica)\" && npm --prefix functions run build && npx --yes firebase-tools@15 emulators:start --only functions",
+      // Windows: PowerShell build (tsc direct, no sh) + dotenv files instead
+      // of gcloud (see ../docs/ai-configuration.md). Service account picked up from ~/secrets/meta-ramifica-dev.json when present (enables Storage signing).
+      "windows": {
+        "command": "$cred = Join-Path $env:USERPROFILE 'secrets/meta-ramifica-dev.json'; if (Test-Path $cred) { $env:GOOGLE_APPLICATION_CREDENTIALS = $cred }; node functions/node_modules/typescript/bin/tsc -p functions/tsconfig.json; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; New-Item -ItemType Directory -Force functions/lib/media | Out-Null; Copy-Item functions/src/media/encode.sh functions/lib/media/encode.sh -Force; npx --yes firebase-tools@15 emulators:start --only functions --project meta-ramifica",
+        "options": {
+          "cwd": "${workspaceFolder}"
+        }
+      },
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
@@ -41,6 +49,10 @@
       "label": "asr-relay",
       "type": "shell",
       "command": "test -d node_modules || npm ci && export META_API_KEY=\"$(gcloud secrets versions access latest --secret=META_API_KEY --project=meta-ramifica)\" && export GOOGLE_CLOUD_PROJECT=meta-ramifica GCLOUD_PROJECT=meta-ramifica PORT=8081 && node server.js",
+      // Windows: dotenv files instead of gcloud (see ../docs/ai-configuration.md).
+      "windows": {
+        "command": "if (!(Test-Path .env.local)) { Copy-Item .env.example .env.local }; if (!(Test-Path .secret.local)) { Copy-Item .secret.local.example .secret.local }; if (!(Test-Path node_modules)) { npm ci --no-audit --no-fund }; node --env-file=.env.local --env-file=.secret.local server.js"
+      },
       "options": {
         "cwd": "${workspaceFolder}/realtime",
         "env": {

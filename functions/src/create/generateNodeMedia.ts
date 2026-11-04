@@ -536,7 +536,6 @@ export const buildImagePrompt = (
   const synopsis = clip(story.synopsis, 300).replace(/[.\s]+$/, "");
   const scene = clip(node.title, 60) || "Untitled scene";
   const line = clip(node.ttsText, 280);
-  const ending = clip(node.endingName, 40);
   const clipContext = clip(node.videoPrompt, 200);
   const frame = "Opening frame: wide establishing composition, " +
     "subject entering, room for the scene to unfold.";
@@ -546,7 +545,7 @@ export const buildImagePrompt = (
     `STORY: "${storyTitle}"${synopsis === "" ? "" : ` — ${synopsis}`}.`,
     `SCENE: "${scene}".`,
     ...(line === "" ? [] : [`MOMENT (narrator line): "${line}".`]),
-    ...(ending === "" ? [] : [`This is an ending: "${ending}".`]),
+    ...(node.isEnding === true ? [`This is an ending: "${scene}".`] : []),
     `FRAME: ${frame}`,
     ...(clipContext === "" ? [] : [`CLIP CONTEXT: ${clipContext}.`]),
   ];

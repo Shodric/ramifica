@@ -211,7 +211,6 @@ Map<String, dynamic> _endingWithLine() {
       'ttsAudioUrl': null,
       'ttsDurationSeconds': 2.5,
       'videoFrameLastBlurData': 'data:image/webp;base64,abc',
-      'endingName': 'The door',
       'endingType': 'tragic',
     },
     'choices': const [],

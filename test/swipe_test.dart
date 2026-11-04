@@ -269,7 +269,6 @@ Map<String, dynamic> _playback({
           : (ending ? null : 'https://example.com/$storyId.m4a'),
       'ttsDurationSeconds': line ? 2.5 : (ending ? null : 4.1),
       'videoFrameLastBlurData': 'data:image/webp;base64,abc',
-      'endingName': ending ? 'The door' : null,
       'endingType': ending ? 'tragic' : null,
     },
     'choices': ending

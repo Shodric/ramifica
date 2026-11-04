@@ -30,11 +30,7 @@ SceneProposal? sliceProposalForStep(
   late final SceneProposal sliced;
   switch (step) {
     case 0:
-      sliced = SceneProposal(
-        title: proposal.title,
-        ttsText: proposal.ttsText,
-        endingName: proposal.endingName,
-      );
+      sliced = SceneProposal(title: proposal.title, ttsText: proposal.ttsText);
     case 1:
       sliced = SceneProposal(startImagePrompt: proposal.startImagePrompt);
     case 2:
@@ -52,7 +48,6 @@ SceneProposal? sliceProposalForStep(
       (sliced.ttsText == null || sliced.ttsText!.isEmpty) &&
       (sliced.startImagePrompt == null || sliced.startImagePrompt!.isEmpty) &&
       (sliced.videoPrompt == null || sliced.videoPrompt!.isEmpty) &&
-      (sliced.endingName == null || sliced.endingName!.isEmpty) &&
       sliced.choices.isEmpty;
   return empty ? null : sliced;
 }
@@ -111,9 +106,6 @@ List<({String label, String value})> _rows(int step, SceneProposal proposal) {
     rows.add(
       _row(step == 2 ? 'Voice line' : 'Narrator line', proposal.ttsText!),
     );
-  }
-  if (proposal.endingName != null && proposal.endingName!.isNotEmpty) {
-    rows.add(_row('Ending name', proposal.endingName!));
   }
   if (proposal.startImagePrompt != null &&
       proposal.startImagePrompt!.isNotEmpty) {

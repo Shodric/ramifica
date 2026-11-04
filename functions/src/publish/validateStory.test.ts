@@ -47,7 +47,6 @@ const ending = (overrides = {}): ValidatableNode => ({
   title: "The last door",
   visibility: "visible",
   isEnding: true,
-  endingName: "The door",
   endingType: "tragic",
   videoUrl: "https://example.com/end.mp4",
   videoStatus: "ready",
@@ -87,6 +86,35 @@ const validNodes = (): ValidatableNode[] => [
 
 test("a complete story validates clean", () => {
   assert.deepEqual(validateStory(story(), validNodes()), []);
+});
+
+test("a stale parent frame does not block publish", () => {
+  const parent = node({
+    nodeId: "node_002",
+    title: "The ridge",
+    startFromNodeId: "node_001",
+    startParentFrameHash: "hash-e1",
+    videoFrameLastHash: "fresh-hash",
+    choices: [
+      goodChoice({
+        choiceId: "choice_end",
+        label: "Keep going",
+        targetNodeId: "node_003",
+        x: 0.5,
+        y: 0.5,
+        radius: 0.2,
+      }),
+    ],
+  });
+  const staleEnding = ending({
+    nodeId: "node_003",
+    startFromNodeId: "node_002",
+    startParentFrameHash: "stale-hash",
+  });
+  assert.deepEqual(
+    validateStory(story(), [node(), parent, staleEnding]),
+    []
+  );
 });
 
 test("missing root and missing ending are reported", () => {
@@ -162,39 +190,13 @@ test("uploaded video needs its extracted last frame", () => {
   ]);
 });
 
-test("desync with the parent is reported", () => {
-  const parent = node({videoFrameLastHash: "hash-new"});
-  const child = node({
-    nodeId: "node_002",
-    startFromNodeId: "node_001",
-    startParentFrameHash: "hash-old",
-    videoFrameLastHash: "hash-e2",
-    choices: [goodChoice({targetNodeId: "node_003"})],
-  });
-  assert.deepEqual(validateStory(story(), [parent, child, ending({
-    nodeId: "node_003",
-    startFromNodeId: "node_002",
-    startParentFrameHash: "hash-e2",
-  })]), ["Node node_002 is out of sync with its parent."]);
-});
-
-test("a child without a parent link is reported", () => {
-  const nodes = validNodes();
-  delete nodes[1].startFromNodeId;
-  assert.deepEqual(validateStory(story(), nodes), [
-    "Node node_002 is missing its parent link.",
-  ]);
-});
-
-test("endings need a name, a type, and no choices", () => {
+test("endings need a type and no choices", () => {
   const bad = ending({
-    endingName: "",
-    endingType: "epic",
+    endingType: "xyz",
     choices: [goodChoice({choiceId: "choice_x", label: "Out"})],
   });
   assert.deepEqual(validateStory(story(), [node(), bad]), [
     "Ending node_002 must not have choices.",
-    "Ending node_002 needs a name.",
     "Ending node_002 needs a valid type.",
   ]);
 });

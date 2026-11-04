@@ -3,6 +3,7 @@ import 'package:ramifica/app/theme.dart';
 
 /// Stitch-style canvas ribbon: close + story title with the Settings
 /// and Publish actions. The Publish CTA disables while the draft has
+/// Published stories hide the CTA ([showPublish]); Hide lives in settings.
 /// missing items. Zoom and recenter float over the canvas instead.
 /// All copy is final EN — no hold, timing, or tap-to-choose affordances.
 class CreateRibbon extends StatelessWidget {
@@ -13,6 +14,7 @@ class CreateRibbon extends StatelessWidget {
     required this.onPublish,
     required this.canPublish,
     required this.onClose,
+    this.showPublish = true,
   });
 
   final String title;
@@ -25,6 +27,9 @@ class CreateRibbon extends StatelessWidget {
 
   /// Leaves the fullscreen canvas back to Explore.
   final VoidCallback onClose;
+
+  /// False once the story is published: settings owns Hide/Delete then.
+  final bool showPublish;
 
   @override
   Widget build(BuildContext context) {
@@ -51,8 +56,10 @@ class CreateRibbon extends StatelessWidget {
           onPressed: onSettings,
           icon: const Icon(Icons.settings_outlined),
         ),
-        const SizedBox(width: 8),
-        _PublishButton(onPressed: canPublish ? onPublish : null),
+        if (showPublish) ...[
+          const SizedBox(width: 8),
+          _PublishButton(onPressed: canPublish ? onPublish : null),
+        ],
       ],
     );
   }

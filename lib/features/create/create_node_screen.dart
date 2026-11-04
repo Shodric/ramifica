@@ -711,8 +711,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                             );
                                         return slice.text;
                                       },
-                                      propose:
-                                          (direction, {purpose}) async {
+                                      propose: (direction, {purpose}) async {
                                         final storyId =
                                             widget.bloc.state.story!.storyId;
                                         if (!await widget.bloc.flushNode(
@@ -733,14 +732,6 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           NodeFieldChanged(
                                             nodeId: widget.nodeId,
                                             title: value,
-                                          ),
-                                        ),
-                                      ),
-                                      onEndingNameChanged: (value) => _edited(
-                                        () => widget.bloc.add(
-                                          NodeFieldChanged(
-                                            nodeId: widget.nodeId,
-                                            endingName: value,
                                           ),
                                         ),
                                       ),

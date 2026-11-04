@@ -39,7 +39,7 @@ export const projectNode = (
   const body: Fields & {choices: Fields[]} = {
     ...Object.fromEntries(["title", "videoUrl", "durationSeconds",
       "videoWidth", "videoHeight",
-      "ttsText", "ttsAudioUrl", "ttsDurationSeconds", "endingName",
+      "ttsText", "ttsAudioUrl", "ttsDurationSeconds",
       "endingType", "endingBadgeUrl", "thumbnailUrl"]
       .map((key) => [key, node[key] ?? null])),
     isEnding: node.isEnding === true, visibility: node.visibility ?? "visible",

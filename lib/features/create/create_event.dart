@@ -58,7 +58,7 @@ final class NodeAdded extends CreateEvent {
 
 /// Manual edit in the inspector. Writes bloc state only — nothing is
 /// sent until [NodeSaved]. Only non-null fields change; choice labels
-/// replace by choice id, leaving other choices alone. Prompt/ending
+/// replace by choice id, leaving other choices alone. Prompt
 /// fields: null keeps, blank after trim clears to null on save.
 final class NodeFieldChanged extends CreateEvent {
   const NodeFieldChanged({
@@ -71,7 +71,6 @@ final class NodeFieldChanged extends CreateEvent {
     this.visibility,
     this.startImagePrompt,
     this.videoPrompt,
-    this.endingName,
     this.sceneDirection,
   });
 
@@ -102,9 +101,6 @@ final class NodeFieldChanged extends CreateEvent {
   /// Clip prompt override, or null to leave it. Blank clears to null so
   /// generation falls back to its default.
   final String? videoPrompt;
-
-  /// Ending name (endings only), or null to leave it. Blank clears.
-  final String? endingName;
 
   /// Scene direction (proposal input), or null to leave it. Blank clears.
   final String? sceneDirection;
@@ -403,7 +399,7 @@ final class SceneProposalChoice {
 /// and [SceneProposalApplied] writes it. All fields nullable;
 /// absent/blank/invalid normalize to null in the bloc. Children
 /// proposals carry `startImagePrompt: null` (S is inherited); endings
-/// carry `choices: []` with an optional [endingName].
+/// carry `choices: []` .
 /// Accepts legacy shapes via [SceneProposal.fromJson]: plain-string
 /// choices and `choiceLabels` maps, missing prompts.
 final class SceneProposal {
@@ -412,7 +408,6 @@ final class SceneProposal {
     this.ttsText,
     this.startImagePrompt,
     this.videoPrompt,
-    this.endingName,
     this.choices = const [],
   });
 
@@ -467,7 +462,6 @@ final class SceneProposal {
       ttsText: text(json['ttsText'] ?? json['narratorLine']),
       startImagePrompt: text(json['startImagePrompt']),
       videoPrompt: text(json['videoPrompt']),
-      endingName: text(json['endingName']),
       choices: choices,
     );
   }
@@ -476,7 +470,6 @@ final class SceneProposal {
   final String? ttsText;
   final String? startImagePrompt;
   final String? videoPrompt;
-  final String? endingName;
 
   /// Proposed branches in slot order (index 0 → A, 1 → B, max two).
   final List<SceneProposalChoice> choices;
@@ -485,7 +478,7 @@ final class SceneProposal {
 /// Applies a reviewed [proposal] to [nodeId]: flushes pending edits,
 /// then overwrites non-empty fields (narrator line, start/video prompts)
 /// plus per-slot option label/icon/color — staying on the same scene.
-/// The manual title and ending name arrive null (preserved).
+/// The manual title arrives null (preserved).
 /// `droppable`: a second Apply while one is in flight is dropped.
 /// Occupied slots keep ids/target/geometry/default and never delete; free
 /// slots create via the reproducible `v1:author:story:parent:slot` key.
@@ -501,7 +494,7 @@ final class SceneProposalApplied extends CreateEvent {
   final String nodeId;
 
   /// Auto-built proposal from the S1 direction. Every non-empty value
-  /// overwrites; the manual title and ending name are preserved.
+  /// overwrites; the manual title is preserved.
   final SceneProposal proposal;
 
   /// Resolves after the proposal is persisted, or with false on failure —
@@ -560,4 +553,19 @@ final class CoverGenerateRequested extends CreateEvent {
 
   /// Revised cover prompt override, or null to use the fallback.
   final String? prompt;
+}
+
+/// Hides the open published story: an author-guarded client transaction
+/// flips `status` back to `draft`, so every player read rule stops
+/// matching and the story leaves the catalog. Publishing again creates
+/// a fresh publication.
+final class StoryUnpublished extends CreateEvent {
+  const StoryUnpublished();
+}
+
+/// Deletes the open draft story doc. GUARDED by firestore.rules: only
+/// the author of a draft may delete. Node and publication docs turn
+/// into unreachable orphans, like the Storage bytes node deletes leave.
+final class StoryDeleted extends CreateEvent {
+  const StoryDeleted();
 }

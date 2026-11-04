@@ -58,7 +58,7 @@ void main() {
 
     expect(bloc.state.phase, FeedPhase.ending);
     expect(bloc.state.playback!.node.isEnding, isTrue);
-    expect(bloc.state.playback!.node.endingName, 'The door');
+    expect(bloc.state.playback!.node.title, 'The last door');
   });
 
   test('a failure while opening stays failed', () async {
@@ -631,7 +631,6 @@ Map<String, dynamic> _playback({
       'ttsAudioUrl': ending ? null : 'https://example.com/voice.m4a',
       'ttsDurationSeconds': ending ? null : 4.1,
       'videoFrameLastBlurData': 'data:image/webp;base64,abc',
-      'endingName': ending ? 'The door' : null,
       'endingType': ending ? 'tragic' : null,
     },
     'choices': ending

@@ -53,7 +53,6 @@ void main() {
       final url = await repository.generateEndingBadge(
         storyId: 'story_1',
         nodeId: 'node_1',
-        endingName: 'The fall',
         endingType: 'tragic',
       );
 
@@ -62,7 +61,6 @@ void main() {
       expect(calls.single.data, {
         'storyId': 'story_1',
         'nodeId': 'node_1',
-        'endingName': 'The fall',
         'endingType': 'tragic',
       });
     });
@@ -136,12 +134,18 @@ void main() {
       calls.clear();
 
       bloc
-        ..add(const NodeEndingTypeChanged(nodeId: 'missing', endingType: 'epic'))
-        ..add(const NodeEndingTypeChanged(nodeId: 'node_1', endingType: 'nope'));
+        ..add(
+          const NodeEndingTypeChanged(nodeId: 'missing', endingType: 'epic'),
+        )
+        ..add(
+          const NodeEndingTypeChanged(nodeId: 'node_1', endingType: 'nope'),
+        );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(
-        bloc.state.nodes.singleWhere((node) => node.nodeId == 'node_1').endingType,
+        bloc.state.nodes
+            .singleWhere((node) => node.nodeId == 'node_1')
+            .endingType,
         'open',
       );
       expect(calls, isEmpty);
@@ -164,10 +168,7 @@ void main() {
             'https://cdn.example/badge.png',
       );
 
-      expect(
-        calls.any((call) => call.name == 'generateEndingBadge'),
-        isTrue,
-      );
+      expect(calls.any((call) => call.name == 'generateEndingBadge'), isTrue);
       expect(bloc.state.failure, isNull);
       await bloc.stream.firstWhere((state) => state.job == CreateJob.none);
     });
@@ -185,7 +186,9 @@ void main() {
 
       expect(bloc.state.job, CreateJob.none);
       expect(
-        bloc.state.nodes.singleWhere((node) => node.nodeId == 'node_1').endingBadgeUrl,
+        bloc.state.nodes
+            .singleWhere((node) => node.nodeId == 'node_1')
+            .endingBadgeUrl,
         isNull,
       );
     });
@@ -220,7 +223,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(EndingSetupDialog), findsOneWidget);
-      expect(find.byKey(const ValueKey('ending-type-dropdown')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('ending-type-dropdown')),
+        findsOneWidget,
+      );
       expect(find.text('Generate'), findsOneWidget);
       expect(find.text('Close'), findsOneWidget);
     });
@@ -402,7 +408,6 @@ CreateRepository _repo(
     'title': 'Fall',
     'visibility': 'visible',
     'isEnding': ending,
-    'endingName': ending ? 'The fall' : null,
     'endingType': ending ? 'open' : null,
     'videoStatus': 'idle',
     'ttsText': '',

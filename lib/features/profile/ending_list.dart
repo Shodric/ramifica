@@ -27,7 +27,7 @@ class UnlockedEnding {
   final String? badgeUrl;
 }
 
-/// Unlocked endings as rows: ending name plus [EndingBadge]. Tapping a row
+/// Unlocked endings as rows: scene title plus [EndingBadge]. Tapping a row
 /// reports its story id through [onOpen]; the owner navigates. Pure: data
 /// in via params, actions out via callback. No bloc, no router, no
 /// repository. Empty shows text only, no CTA.
