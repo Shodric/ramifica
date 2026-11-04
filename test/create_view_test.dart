@@ -19,6 +19,7 @@ import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/create_event.dart';
 import 'package:ramifica/features/create/create_view.dart';
 import 'package:ramifica/features/create/create_node_screen.dart';
+import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/create/voice_preview.dart';
 import 'package:ramifica/features/create/steps/step_clip.dart';
 
@@ -64,6 +65,94 @@ void main() {
       expect(pathOf(controller.location), AppRoutes.createNew);
       expect(bloc.state.hasDraft, isTrue);
       expect(find.byKey(const ValueKey('canvas-node-node_1')), findsOneWidget);
+    });
+
+    testWidgets('opening a draft centers the canvas on its root, once', (
+      tester,
+    ) async {
+      Matrix4 transformOf() => tester
+          .widget<DraftCanvas>(find.byType(DraftCanvas))
+          .transformationController
+          .value;
+      void panAway() {
+        tester
+                .widget<DraftCanvas>(find.byType(DraftCanvas))
+                .transformationController
+                .value =
+            Matrix4.identity();
+      }
+
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (id) async => {
+            'authorId': 'uid_1',
+            'title': id == 'story_2' ? 'Second' : 'Temple',
+            'synopsis': '',
+            'status': 'draft',
+            'rootNodeId': id == 'story_2' ? 'node_9' : 'node_1',
+          },
+          fetchNodeDocs: (id) async => id == 'story_2'
+              ? [
+                  MapEntry('node_9', {
+                    'title': 'Root 2',
+                    'choices': [
+                      {
+                        'choiceId': 'c9',
+                        'label': '',
+                        'targetNodeId': 'node_10',
+                        'isDefault': true,
+                        'x': 0.25,
+                        'y': 0.65,
+                        'radius': 0.15,
+                      },
+                    ],
+                  }),
+                  const MapEntry('node_10', {
+                    'title': 'Leaf 2',
+                    'isEnding': true,
+                  }),
+                ]
+              : [
+                  const MapEntry('node_1', {'title': 'Root'}),
+                ],
+          callFunction: (name, data) async => <String, dynamic>{},
+        ),
+      );
+      addTearDown(() => _disposeBloc(tester, bloc));
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      // Deep-link arrival: the canvas centers on the root by itself,
+      // exactly like the recenter button would.
+      bloc.add(const DraftOpened('story_1'));
+      await tester.pumpAndSettle();
+      final first = transformOf().storage;
+      expect(first, isNot(Matrix4.identity().storage));
+      panAway();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('ribbon-recenter')));
+      await tester.pumpAndSettle();
+      expect(transformOf().storage, first);
+
+      // Same-story reloads keep the author's pan: no yank back.
+      panAway();
+      await tester.pump();
+      bloc.add(const DraftOpened('story_1'));
+      await tester.pumpAndSettle();
+      expect(transformOf().storage, Matrix4.identity().storage);
+
+      // A different story recenters on its own root, same function.
+      bloc.add(const DraftOpened('story_2'));
+      await tester.pumpAndSettle();
+      final second = transformOf().storage;
+      expect(second, isNot(Matrix4.identity().storage));
+      panAway();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('ribbon-recenter')));
+      await tester.pumpAndSettle();
+      expect(transformOf().storage, second);
     });
 
     testWidgets('the canvas selects nodes and the inspector edits them', (
@@ -1361,7 +1450,7 @@ void main() {
           'visibility': 'secret',
           'isEnding': true,
           'endingName': 'Escape',
-          'endingType': 'abierto',
+          'endingType': 'open',
         }),
         MapEntry('node_3', {
           'title': 'Spare',
@@ -2104,7 +2193,7 @@ void main() {
               'visibility': 'visible',
               'isEnding': true,
               'endingName': 'Dawn',
-              'endingType': 'abierto',
+              'endingType': 'open',
               'startFromNodeId': 'node_1',
               'startParentFrameHash': 'hash-f1',
               'videoStatus': 'ready',
@@ -2451,7 +2540,7 @@ List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
       'visibility': 'visible',
       'isEnding': true,
       'endingName': 'Escape',
-      'endingType': 'abierto',
+      'endingType': 'open',
       'videoStatus': 'idle',
       'startFromNodeId': 'node_1',
       'startParentFrameHash': 'hash-old',
@@ -2486,7 +2575,7 @@ List<MapEntry<String, Map<String, dynamic>>> _defaultDocs() {
       'visibility': 'secret',
       'isEnding': true,
       'endingName': 'Escape',
-      'endingType': 'abierto',
+      'endingType': 'open',
     }),
   ];
 }

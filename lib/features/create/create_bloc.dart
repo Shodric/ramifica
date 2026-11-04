@@ -98,6 +98,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     on<ChoiceRemoved>(_onChoiceRemoved);
     on<ChoiceCutToggled>(_onChoiceCutToggled);
     on<NodeEndingToggled>(_onNodeEndingToggled);
+    on<NodeEndingTypeChanged>(
+      _serialized(_onEndingTypeChanged),
+      transformer: droppable(),
+    );
+    on<NodeEndingBadgeRequested>(
+      _serialized(_onEndingBadgeRequested),
+      transformer: droppable(),
+    );
     on<ChoiceIconDecided>(_onChoiceIconDecided);
     on<TextGenerateRequested>(
       _serialized(_onGenerate),
@@ -1063,6 +1071,128 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         focusChoiceId: () => null,
       ),
     );
+  }
+
+  /// Sets the ending type and persists it through the node save path.
+  /// Unknown nodes, no-op flips, and codes outside [kEndingTypeCodes]
+  /// are ignored. A failed save lands as [CreateState.failure] — the
+  /// shared snack — with the local value kept.
+  Future<void> _onEndingTypeChanged(
+    NodeEndingTypeChanged event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    final node = _node(event.nodeId);
+    if (story == null || node == null) return;
+    if (!kEndingTypeCodes.contains(event.endingType)) return;
+    if (node.endingType == event.endingType) return;
+    _markEdited(event.nodeId, fields: const ['endingType']);
+    final next = node.copy(endingType: () => event.endingType);
+    emit(
+      state.copy(
+        nodes: [
+          for (final current in state.nodes)
+            if (current.nodeId == event.nodeId) next else current,
+        ],
+        job: CreateJob.saving,
+        jobNodeId: () => event.nodeId,
+        failure: () => null,
+        focusChoiceId: () => null,
+      ),
+    );
+    try {
+      await _persistNode(story.storyId, event.nodeId);
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => error.hint,
+        ),
+      );
+    }
+  }
+
+  /// Generates the ending badge, stores its URL on the node, and persists
+  /// it through the node save path. The job pill runs while the callable
+  /// is in flight; failures land as [CreateState.failure] (the shared
+  /// snack), never inline, with the node left untouched.
+  Future<void> _onEndingBadgeRequested(
+    NodeEndingBadgeRequested event,
+    Emitter<CreateState> emit,
+  ) async {
+    final story = state.story;
+    final node = _node(event.nodeId);
+    if (story == null || node == null) return;
+    emit(
+      state.copy(
+        operationKind: 'badge',
+        operationPhase: 'generating',
+        job: CreateJob.imaging,
+        jobNodeId: () => event.nodeId,
+        failure: () => null,
+      ),
+    );
+    try {
+      final url = await repository.generateEndingBadge(
+        storyId: story.storyId,
+        nodeId: event.nodeId,
+        endingName: node.endingName,
+        endingType: node.endingType,
+      );
+      if (isClosed) return;
+      final current = _node(event.nodeId);
+      if (current == null) {
+        emit(
+          state.copy(
+            job: CreateJob.none,
+            jobNodeId: () => null,
+            failure: () => null,
+          ),
+        );
+        return;
+      }
+      _markEdited(event.nodeId, fields: const ['endingBadgeUrl']);
+      final updated = current.copy(endingBadgeUrl: () => url);
+      emit(
+        state.copy(
+          nodes: [
+            for (final candidate in state.nodes)
+              if (candidate.nodeId == event.nodeId) updated else candidate,
+          ],
+          job: CreateJob.imaging,
+          jobNodeId: () => event.nodeId,
+          failure: () => null,
+        ),
+      );
+      await _persistNode(story.storyId, event.nodeId);
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => null,
+          failure: () => null,
+        ),
+      );
+    } on AppFailure catch (error) {
+      if (isClosed) return;
+      emit(
+        state.copy(
+          job: CreateJob.none,
+          jobNodeId: () => event.nodeId,
+          failure: () => error.hint,
+        ),
+      );
+    }
   }
 
   /// Restores the stored node + story docs over unsaved edits. Fetch

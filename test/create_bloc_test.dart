@@ -1793,6 +1793,40 @@ void main() {
       expect(missing, isEmpty);
     });
 
+    test('endings accept every taxonomy type and reject unknown ones', () {
+      const base = DraftNode(
+        nodeId: 'node_9',
+        title: 'Dawn',
+        isEnding: true,
+        endingName: 'Dawn',
+        videoUrl: 'https://example.com/end.mp4',
+        videoStatus: 'ready',
+        videoFrameLastUrl: 'https://example.com/f9.png',
+      );
+      const types = [
+        'open',
+        'tragic',
+        'secret',
+        'heroic',
+        'mysterious',
+        'bittersweet',
+        'dark',
+        'epic',
+        'incomplete',
+      ];
+      for (final type in types) {
+        expect(
+          missingForNode(node: base.copy(endingType: () => type)),
+          isEmpty,
+          reason: type,
+        );
+      }
+      expect(
+        missingForNode(node: base.copy(endingType: () => 'xyz')),
+        contains('Ending node_9 needs a valid type.'),
+      );
+    });
+
     test('orphans are unreachable nodes shown distinctly', () {
       const state = CreateState(
         story: DraftStory(
@@ -2018,7 +2052,7 @@ void main() {
         title: 'Dawn',
         isEnding: true,
         endingName: 'Dawn',
-        endingType: 'abierto',
+        endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
         videoWidth: 480,
@@ -2747,7 +2781,7 @@ void main() {
         title: 'Dawn',
         isEnding: true,
         endingName: 'Dawn',
-        endingType: 'abierto',
+        endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
         videoWidth: 480,

@@ -48,7 +48,7 @@ const ending = (overrides = {}): ValidatableNode => ({
   visibility: "visible",
   isEnding: true,
   endingName: "The door",
-  endingType: "tragico",
+  endingType: "tragic",
   videoUrl: "https://example.com/end.mp4",
   videoStatus: "ready",
   videoSource: "generated",
@@ -218,4 +218,31 @@ test("legacy approvals are ignored", () => {
     ttsApproved: false,
   });
   assert.deepEqual(validateStory(story(), [legacy, ending()]), []);
+});
+
+test("endings accept every taxonomy type", () => {
+  const types = [
+    "open",
+    "tragic",
+    "secret",
+    "heroic",
+    "mysterious",
+    "bittersweet",
+    "dark",
+    "epic",
+    "incomplete",
+  ];
+  for (const endingType of types) {
+    assert.deepEqual(
+      validateStory(story(), [node(), ending({endingType})]),
+      []
+    );
+  }
+});
+
+test("endings reject an unknown type", () => {
+  assert.deepEqual(
+    validateStory(story(), [node(), ending({endingType: "xyz"})]),
+    ["Ending node_002 needs a valid type."]
+  );
 });

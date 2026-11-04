@@ -76,7 +76,17 @@ List<String> validatePublication(Json story, Map<String, Json> nodes) {
     if (ending) {
       if (choices.isNotEmpty) problems.add('Ending $id must not have choices.');
       if (!hasText(n['endingName'])) problems.add('Ending $id needs a name.');
-      if (!['abierto', 'tragico', 'secreto'].contains(n['endingType'])) {
+      if (![
+        'open',
+        'tragic',
+        'secret',
+        'heroic',
+        'mysterious',
+        'bittersweet',
+        'dark',
+        'epic',
+        'incomplete',
+      ].contains(n['endingType'])) {
         problems.add('Ending $id needs a valid type.');
       }
     } else {
@@ -136,6 +146,7 @@ Json playbackDocument(String id, Json node, Map<String, Json> nodes) => {
   'videoFrameLastBlurData': node['videoFrameLastBlurData'] ?? fallbackBlur,
   'endingName': node['endingName'],
   'endingType': node['endingType'],
+  'endingBadgeUrl': node['endingBadgeUrl'],
   'thumbnailUrl': node['thumbnailUrl'],
   'choices': [
     for (final raw in node['choices'] as List? ?? const [])

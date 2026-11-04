@@ -14,7 +14,7 @@ Json readyNode({bool ending = false, bool secret = false}) => {
     title: ending ? 'End' : 'Gate',
     isEnding: ending,
     endingName: ending ? 'Freedom' : null,
-    endingType: ending ? 'abierto' : null,
+    endingType: ending ? 'open' : null,
     visibility: secret ? 'secret' : 'visible',
   ).toJson(),
   'videoStatus': 'ready',
@@ -433,5 +433,45 @@ void main() {
       throwsA(isA<AppFailure>()),
     );
     expect(store.documents['stories/s'], isNotNull);
+    });
+
+test('validatePublication accepts every ending type of the taxonomy', () {
+    seedReady(store);
+    final story = store.documents['stories/s']!;
+    const types = [
+      'open',
+      'tragic',
+      'secret',
+      'heroic',
+      'mysterious',
+      'bittersweet',
+      'dark',
+      'epic',
+      'incomplete',
+    ];
+    for (final type in types) {
+      final end = Map.of(store.documents['stories/s/nodes/end']!);
+      end['endingType'] = type;
+      final problems = validatePublication(story, {
+        'root': store.documents['stories/s/nodes/root']!,
+        'end': end,
+      });
+      expect(
+        problems.where((p) => p.contains('valid type')),
+        isEmpty,
+        reason: type,
+      );
+    }
+  });
+  test('validatePublication rejects an unknown ending type', () {
+    seedReady(store);
+    final story = store.documents['stories/s']!;
+    final end = Map.of(store.documents['stories/s/nodes/end']!);
+    end['endingType'] = 'xyz';
+    final problems = validatePublication(story, {
+      'root': store.documents['stories/s/nodes/root']!,
+      'end': end,
+    });
+    expect(problems, contains('Ending end needs a valid type.'));
   });
 }

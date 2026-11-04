@@ -254,11 +254,13 @@ class PlaybackNode {
     required this.videoUrl,
     required this.durationSeconds,
     required this.videoFrameLastBlurData,
+    this.videoFrameFirstBlurData,
     this.ttsText,
     this.ttsAudioUrl,
     this.ttsDurationSeconds,
     this.endingName,
     this.endingType,
+    this.endingBadgeUrl,
     this.rewardCode,
   });
 
@@ -270,11 +272,13 @@ class PlaybackNode {
       videoUrl: _requiredString(json['videoUrl']),
       durationSeconds: _requiredDouble(json['durationSeconds']),
       videoFrameLastBlurData: _requiredString(json['videoFrameLastBlurData']),
+      videoFrameFirstBlurData: _optionalString(json['videoFrameFirstBlurData']),
       ttsText: _optionalString(json['ttsText']),
       ttsAudioUrl: _optionalString(json['ttsAudioUrl']),
       ttsDurationSeconds: _optionalDouble(json['ttsDurationSeconds']),
       endingName: _optionalString(json['endingName']),
       endingType: _optionalString(json['endingType']),
+      endingBadgeUrl: _optionalString(json['endingBadgeUrl']),
       rewardCode: _optionalString(json['rewardCode']),
     );
   }
@@ -285,11 +289,17 @@ class PlaybackNode {
   final String videoUrl;
   final double durationSeconds;
   final String videoFrameLastBlurData;
+
+  /// The clip's opening frame in the same encoding. Optional: older
+  /// payloads only carry the last frame. The gap poster prefers this and
+  /// falls back to [videoFrameLastBlurData].
+  final String? videoFrameFirstBlurData;
   final String? ttsText;
   final String? ttsAudioUrl;
   final double? ttsDurationSeconds;
   final String? endingName;
   final String? endingType;
+  final String? endingBadgeUrl;
   final String? rewardCode;
 
   @override
@@ -301,11 +311,13 @@ class PlaybackNode {
         other.videoUrl == videoUrl &&
         other.durationSeconds == durationSeconds &&
         other.videoFrameLastBlurData == videoFrameLastBlurData &&
+        other.videoFrameFirstBlurData == videoFrameFirstBlurData &&
         other.ttsText == ttsText &&
         other.ttsAudioUrl == ttsAudioUrl &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
         other.endingName == endingName &&
         other.endingType == endingType &&
+        other.endingBadgeUrl == endingBadgeUrl &&
         other.rewardCode == rewardCode;
   }
 
@@ -317,11 +329,13 @@ class PlaybackNode {
     videoUrl,
     durationSeconds,
     videoFrameLastBlurData,
+    videoFrameFirstBlurData,
     ttsText,
     ttsAudioUrl,
     ttsDurationSeconds,
     endingName,
     endingType,
+    endingBadgeUrl,
     rewardCode,
   );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/zone_marker.dart';
 
 /// S5 Options: hotspot header and the [ZoneMarker] preview, which holds
@@ -14,6 +15,7 @@ class StepHotspots extends StatefulWidget {
   const StepHotspots({
     super.key,
     required this.node,
+    this.bloc,
     required this.busy,
     required this.showErrors,
     this.isRoot = false,
@@ -31,6 +33,8 @@ class StepHotspots extends StatefulWidget {
     this.onOpenChild,
     this.onCutToggled,
     this.onEndingToggled,
+    this.onEndingTypeChanged,
+    this.onEndingBadgeRequested,
     this.onDelete,
     this.deleteBlockedReason,
     this.active = true,
@@ -38,6 +42,10 @@ class StepHotspots extends StatefulWidget {
   });
 
   final DraftNode node;
+
+  /// Live source forwarded to the ending-setup popup so the badge
+  /// preview swaps in as soon as generation lands.
+  final CreateBloc? bloc;
 
   /// Offstage steps skip the continue action so a single one mounts.
   final bool active;
@@ -86,6 +94,13 @@ class StepHotspots extends StatefulWidget {
   /// drop their options, so enabling with options asks first.
   final ValueChanged<bool>? onEndingToggled;
 
+  /// Fires when the author picks an ending-type code in the setup popup.
+  final ValueChanged<String>? onEndingTypeChanged;
+
+  /// Runs the badge generation from the setup popup; the dialog shows a
+  /// loader until the returned future completes.
+  final Future<void> Function()? onEndingBadgeRequested;
+
   /// Deletes the open node. Null while no draft guards apply.
   final VoidCallback? onDelete;
 
@@ -123,6 +138,7 @@ class _StepHotspotsState extends State<StepHotspots> {
           key: _previewKey,
           child: ZoneMarker(
             nodeId: node.nodeId,
+            bloc: widget.bloc,
             choices: node.choices,
             targets: widget.targets,
             // Options sits after Clip: the backdrop is always the
@@ -131,6 +147,10 @@ class _StepHotspotsState extends State<StepHotspots> {
             busy: widget.busy,
             cutSlots: node.cutSlots,
             isEnding: node.isEnding,
+            endingType: node.endingType,
+            endingBadgeUrl: node.endingBadgeUrl,
+            onEndingTypeChanged: widget.onEndingTypeChanged,
+            onEndingBadgeRequested: widget.onEndingBadgeRequested,
             choiceDestinations: widget.targetTitles,
             errorChoiceIds: errorIds,
             focusChoiceId: widget.focusChoiceId,

@@ -12,7 +12,6 @@ import 'package:ramifica/data/repositories/follow_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
 import 'package:ramifica/features/profile/install_guide.dart';
 import 'package:ramifica/features/profile/install_guide_banner.dart';
-import 'package:ramifica/features/profile/later_block.dart';
 import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
@@ -39,6 +38,7 @@ class ProfileView extends StatefulWidget {
     this.onSagaOpen,
     this.fetchAuthorStories,
     this.onDraftOpen,
+    this.initialTab = 0,
   });
 
   final ProfileBloc? bloc;
@@ -77,6 +77,11 @@ class ProfileView extends StatefulWidget {
   /// through the `/create/:id` deep link.
   final void Function(String storyId)? onDraftOpen;
 
+  /// Content tab to select (0 sagas, 1 endings, 2 creations). The shell
+  /// sets it from the `/profile/<tab>` deep link; out-of-range values
+  /// fall back to the default tab.
+  final int initialTab;
+
   @override
   State<ProfileView> createState() => _ProfileViewState();
 }
@@ -85,7 +90,19 @@ class _ProfileViewState extends State<ProfileView> {
   ProfileBloc? _bloc;
   var _editing = false;
   var _saveInFlight = false;
-  var _tab = 0;
+  late var _tab = _clampTab(widget.initialTab);
+
+  static int _clampTab(int tab) => tab >= 0 && tab <= 2 ? tab : 0;
+
+  @override
+  void didUpdateWidget(covariant ProfileView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The shell reuses this view across `/profile/<tab>` deep links, so
+    // sync the selected tab when the route changes underneath us.
+    if (widget.initialTab != oldWidget.initialTab) {
+      _tab = _clampTab(widget.initialTab);
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -281,10 +298,6 @@ class _ProfileViewState extends State<ProfileView> {
             onOpen: (storyId) => _openEnding(context, storyId),
           ),
         if (_tab == 2) _CreationsCard(drafts: state.drafts, onOpen: (id) => _openDraft(context, id)),
-
-        // Guild placeholder always sits at the bottom of the profile.
-        const SizedBox(height: 16),
-        const LaterBlock(),
       ],
     );
   }

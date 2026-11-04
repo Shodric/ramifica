@@ -245,8 +245,8 @@ void main() {
     expect(zone.icon, 'door');
     expect(zone.iconColor, 'amber');
     expect(zone.radius, 0.12);
-    // Tappable: a preview tap jumps to the target scene when its video is
-    // finished, instead of starting a hold like the player feed does.
+    // Tappable: pressing a hotspot starts a hold like the player feed;
+    // only a full hold navigates to the finished target scene.
     expect(zone.enabled, isTrue);
     expect(zone.compact, isTrue);
     expect(zone.video.screen, const Size(390, 844));
@@ -269,10 +269,12 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(find.byType(ChoiceZone), findsOneWidget);
+    // A hold starts like in the feed, so opening another story mid-hold
+    // is ignored just the same.
     preview.add(const HoldStarted('door'));
     preview.add(const StoryOpened(storyId: 'other'));
     await tester.pump();
-    expect(preview.state.phase, FeedPhase.window);
+    expect(preview.state.phase, FeedPhase.holding);
 
     await tester.tap(find.byKey(const ValueKey('close-preview')));
     await tester.pumpAndSettle();
@@ -306,7 +308,7 @@ void main() {
     await tester.pump();
     final card = tester.widget<EndingCard>(find.byType(EndingCard));
     expect(card.name, 'A new dawn');
-    expect(card.type, 'abierto');
+    expect(card.type, 'open');
     expect(find.byType(ChoiceZone), findsNothing);
 
     await tester.binding.handlePopRoute();
@@ -319,46 +321,47 @@ void main() {
     expect(media.disposed, contains(1));
   });
 
-  test(
-    'preview taps play a finished target at once, even mid-narration',
-    () async {
-      final narrator = _Narrator();
-      final bloc = FeedBloc.preview(
-        playback: _playback,
-        narrator: narrator,
-        resolvePreview: (id) => (
-          playback: id == 'next' ? _nextPlayback : null,
-          exists: id == 'next',
-        ),
-        previewNodeLabel: (id) => id == 'next' ? '1A' : id,
-      );
-      // Zones hidden while the clip plays: the tap is ignored.
-      bloc.add(const PreviewChoiceTaken('door'));
-      await pumpEventQueue();
-      expect(bloc.state.phase, FeedPhase.playing);
-      expect(bloc.state.playback?.node.nodeId, 'root');
+  test('preview holds play a finished target, even mid-narration', () async {
+    final narrator = _Narrator();
+    final bloc = FeedBloc.preview(
+      playback: _playback,
+      narrator: narrator,
+      resolvePreview: (id) =>
+          (playback: id == 'next' ? _nextPlayback : null, exists: id == 'next'),
+      previewNodeLabel: (id) => id == 'next' ? '1A' : id,
+    );
+    // Zones hidden while the clip plays: the hold is ignored.
+    bloc.add(const HoldStarted('door'));
+    await pumpEventQueue();
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.playback?.node.nodeId, 'root');
 
-      bloc.add(const PauseReached());
-      await bloc.stream.firstWhere((state) => state.previewCueStarted);
-      expect(bloc.state.phase, FeedPhase.speaking);
+    bloc.add(const PauseReached());
+    await bloc.stream.firstWhere((state) => state.previewCueStarted);
+    expect(bloc.state.phase, FeedPhase.speaking);
 
-      // No hold, no portal: the tap jumps straight to the target scene.
-      bloc.add(const PreviewChoiceTaken('door'));
-      await bloc.stream.firstWhere(
-        (state) => state.playback?.node.nodeId == 'next',
-      );
-      expect(bloc.state.phase, FeedPhase.playing);
-      expect(
-        bloc.state.playback?.node.videoUrl,
-        'https://example.com/next.mp4',
-      );
-      expect(bloc.state.previewNotice, isNull);
-      await bloc.close();
-      expect(narrator.disposed, isTrue);
-    },
-  );
+    // Like the feed, the hold runs its full 1.5 seconds and only then
+    // jumps to the target scene. A short press never navigates.
+    bloc.add(const HoldStarted('door'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
+    bloc.add(const HoldCancelled());
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.window);
+    expect(bloc.state.playback?.node.nodeId, 'root');
 
-  test('preview taps on unfinished targets raise a notice and stay', () async {
+    bloc.add(const HoldStarted('door'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
+    bloc.add(const HoldCompleted());
+    await bloc.stream.firstWhere(
+      (state) => state.playback?.node.nodeId == 'next',
+    );
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.playback?.node.videoUrl, 'https://example.com/next.mp4');
+    expect(bloc.state.previewNotice, isNull);
+    await bloc.close();
+    expect(narrator.disposed, isTrue);
+  });
+
+  test('preview holds on unfinished targets raise a notice and stay', () async {
     final narrator = _Narrator();
     final bloc = FeedBloc.preview(
       playback: _playback,
@@ -371,15 +374,20 @@ void main() {
     narrator.finish();
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.window);
 
-    bloc.add(const PreviewChoiceTaken('door'));
+    bloc.add(const HoldStarted('door'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
+    bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere((state) => state.previewNoticeSerial == 1);
     expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.holdChoiceId, isNull);
     expect(bloc.state.playback?.node.nodeId, 'root');
     expect(bloc.state.previewNotice, 'Node "1A" not finished yet');
     expect(bloc.state.previewNoticeTarget, 'next');
 
     // Repeats replay the notice instead of merging into one.
-    bloc.add(const PreviewChoiceTaken('door'));
+    bloc.add(const HoldStarted('door'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
+    bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere((state) => state.previewNoticeSerial == 2);
     expect(bloc.state.previewNotice, 'Node "1A" not finished yet');
     expect(bloc.state.previewNoticeTarget, 'next');
@@ -399,14 +407,16 @@ void main() {
     narrator.finish();
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.window);
 
-    bloc.add(const PreviewChoiceTaken('door'));
+    bloc.add(const HoldStarted('door'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.holding);
+    bloc.add(const HoldCompleted());
     await bloc.stream.firstWhere((state) => state.previewNoticeSerial == 1);
     expect(bloc.state.previewNotice, 'Node "next" not finished yet');
     expect(bloc.state.previewNoticeTarget, isNull);
     await bloc.close();
   });
 
-  testWidgets('preview taps walk finished scenes like the feed', (
+  testWidgets('preview holds walk finished scenes like the feed', (
     tester,
   ) async {
     final calls = <String>[];
@@ -456,9 +466,9 @@ void main() {
     await _settleMedia(tester);
     expect(find.byType(ChoiceZone), findsOneWidget);
 
-    // The finished target plays at once, framed with its own metadata.
-    await tester.tap(find.byKey(const ValueKey('ring-door')));
-    await tester.pump();
+    // The finished target plays once the hold covers the screen,
+    // framed with its own metadata.
+    await _holdChoice(tester, 'ring-door');
     expect(preview.state.phase, FeedPhase.playing);
     expect(preview.state.playback?.node.nodeId, 'next');
     expect(
@@ -477,12 +487,12 @@ void main() {
     expect(find.byType(ChoiceZone), findsOneWidget);
     expect(tester.widget<ChoiceZone>(find.byType(ChoiceZone)).label, 'Descend');
 
-    // The unfinished target keeps the scene and names itself. The
-    // messenger mirrors the snackbar on every root Scaffold, so the
-    // covered editor holds a copy too: scope to the preview route.
-    await tester.tap(find.byKey(const ValueKey('ring-stairs')));
-    await tester.pump();
-    expect(preview.state.phase, FeedPhase.speaking);
+    // The unfinished target keeps the scene, falls back to the window,
+    // and names itself. The messenger mirrors the snackbar on every root
+    // Scaffold, so the covered editor holds a copy too: scope to the
+    // preview route.
+    await _holdChoice(tester, 'ring-stairs');
+    expect(preview.state.phase, FeedPhase.window);
     expect(preview.state.playback?.node.nodeId, 'next');
     expect(
       find.descendant(
@@ -524,8 +534,7 @@ void main() {
     media.events[1]!.add(VideoEvent(eventType: VideoEventType.completed));
     await _settleMedia(tester);
 
-    await tester.tap(find.byKey(const ValueKey('ring-door')));
-    await tester.pump();
+    await _holdChoice(tester, 'ring-door');
     expect(preview.state.playback?.node.nodeId, 'root');
     expect(
       find.descendant(
@@ -573,8 +582,7 @@ void main() {
     media.events[1]!.add(VideoEvent(eventType: VideoEventType.completed));
     await _settleMedia(tester);
 
-    await tester.tap(find.byKey(const ValueKey('ring-door')));
-    await tester.pump();
+    await _holdChoice(tester, 'ring-door');
     expect(
       find.descendant(
         of: find.byType(CreatePreview),
@@ -752,7 +760,7 @@ Future<CreateBloc> _openEditor(
           'title': 'The gate',
           'isEnding': ending,
           'endingName': ending ? 'A new dawn' : null,
-          'endingType': ending ? 'abierto' : null,
+          'endingType': ending ? 'open' : null,
           'videoUrl': 'https://example.com/scene.mp4',
           'videoStatus': 'ready',
           'videoWidth': 480,
@@ -831,6 +839,21 @@ Future<void> _settleMedia(WidgetTester tester) async {
   for (var i = 0; i < 4; i++) {
     await tester.pump();
   }
+}
+
+/// Holds a preview hotspot for the full 1.5 seconds, like the feed: the
+/// circle covers the screen and only then does the scene change. A plain
+/// tap presses and releases, which cancels the hold and stays put.
+Future<void> _holdChoice(WidgetTester tester, String ringKey) async {
+  final gesture = await tester.startGesture(
+    tester.getCenter(find.byKey(ValueKey(ringKey))),
+  );
+  await tester.pump();
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 1500));
+  await tester.pump();
+  await gesture.up();
+  await tester.pump();
 }
 
 class _Narrator implements Narrator {

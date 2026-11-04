@@ -8,15 +8,23 @@ import 'package:ramifica/core/widgets/ending_badge.dart';
 /// a later slice), so the profile view takes these in as data until a
 /// reachable source exists.
 class UnlockedEnding {
-  const UnlockedEnding({required this.storyId, required this.name, this.type});
+  const UnlockedEnding({
+    required this.storyId,
+    required this.name,
+    this.type,
+    this.badgeUrl,
+  });
 
   /// The story whose graph opens on tap (`/graph/{storyId}`).
   final String storyId;
 
   final String name;
 
-  /// `abierto`, `tragico`, or `secreto`; see [EndingBadge].
+  /// One of the nine ending types; see [EndingBadge].
   final String? type;
+
+  /// The unlocked prize image. Null hides the row thumbnail.
+  final String? badgeUrl;
 }
 
 /// Unlocked endings as rows: ending name plus [EndingBadge]. Tapping a row
@@ -72,6 +80,24 @@ class _Row extends StatelessWidget {
           ),
           child: Row(
             children: [
+              if (ending.badgeUrl != null) ...[
+                ClipRRect(
+                  borderRadius: .circular(8),
+                  child: Image.network(
+                    ending.badgeUrl!,
+                    key: const ValueKey('ending-thumbnail'),
+                    width: 40,
+                    height: 40,
+                    fit: .cover,
+                    errorBuilder: (context, error, stack) => const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Icon(Icons.emoji_events_outlined, size: 24),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: Text(
                   ending.name,

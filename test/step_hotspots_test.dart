@@ -255,6 +255,7 @@ void main() {
     Future<void> pumpMarker(
       WidgetTester tester, {
       required bool isEnding,
+      String? endingBadgeUrl,
     }) =>
         tester.pumpWidget(
           MaterialApp(
@@ -265,6 +266,7 @@ void main() {
                   choices: const [],
                   targets: const [],
                   isEnding: isEnding,
+                  endingBadgeUrl: endingBadgeUrl,
                   onAddOption: (_) {},
                 ),
               ),
@@ -311,6 +313,28 @@ void main() {
       expect(
         addButton.style?.backgroundColor?.resolve({}),
         RamificaColors.containerBase,
+      );
+    });
+
+    testWidgets('button shows the badge image instead of the trophy', (
+      tester,
+    ) async {
+      const badgeUrl = 'https://example.com/badge.png';
+      await pumpMarker(
+        tester,
+        isEnding: true,
+        endingBadgeUrl: badgeUrl,
+      );
+      await tester.pump();
+
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Image &&
+              w.image is NetworkImage &&
+              (w.image as NetworkImage).url == badgeUrl,
+        ),
+        findsOneWidget,
       );
     });
   });

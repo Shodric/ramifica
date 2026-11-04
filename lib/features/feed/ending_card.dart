@@ -12,6 +12,7 @@ class EndingCard extends StatelessWidget {
     required this.type,
     this.rewardCode,
     this.unlockedTitle,
+    this.badgeUrl,
     required this.onSeeMap,
     required this.onTryAnotherPath,
   });
@@ -26,6 +27,9 @@ class EndingCard extends StatelessWidget {
   /// The ending name announced as `Unlocked {title}`. Null hides the line.
   final String? unlockedTitle;
 
+  /// The unlocked prize image. Null hides the badge block. Display only.
+  final String? badgeUrl;
+
   final VoidCallback onSeeMap;
   final VoidCallback onTryAnotherPath;
 
@@ -36,6 +40,30 @@ class EndingCard extends StatelessWidget {
         mainAxisSize: .min,
         crossAxisAlignment: .start,
         children: [
+          if (badgeUrl != null) ...[
+            ClipRRect(
+              borderRadius: .circular(16),
+              child: Image.network(
+                badgeUrl!,
+                key: const ValueKey('ending-badge'),
+                width: 120,
+                height: 120,
+                fit: .cover,
+                errorBuilder: (context, error, stack) => const SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: Icon(Icons.emoji_events_outlined, size: 48),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Desbloqueaste $name',
+              key: const ValueKey('desbloqueaste-title'),
+              style: RamificaText.label,
+            ),
+            const SizedBox(height: 8),
+          ],
           Text(
             name,
             maxLines: 2,

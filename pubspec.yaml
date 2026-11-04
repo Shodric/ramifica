@@ -1,5 +1,5 @@
 name: ramifica
-description: "Vertical interactive video. A narrator asks which decision the protagonist should take, and you choose by holding a point on the scene for one second."
+description: "Vertical interactive video. A narrator asks which decision the protagonist should take, and you choose by holding a point on the scene for 1.5 seconds."
 homepage: https://spoty.dev
 # Application id: dev.spoty.ramifica. Author: spoty.dev.
 # Pub package names cannot contain dots, so `name` stays ramifica.

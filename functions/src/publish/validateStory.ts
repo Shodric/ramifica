@@ -189,7 +189,19 @@ const validateEnding = (node: ValidatableNode): string[] => {
   if (!node.endingName || node.endingName.trim() === "") {
     problems.push(`Ending ${node.nodeId} needs a name.`);
   }
-  if (!["abierto", "tragico", "secreto"].includes(node.endingType ?? "")) {
+  if (
+    ![
+      "open",
+      "tragic",
+      "secret",
+      "heroic",
+      "mysterious",
+      "bittersweet",
+      "dark",
+      "epic",
+      "incomplete",
+    ].includes(node.endingType ?? "")
+  ) {
     problems.push(`Ending ${node.nodeId} needs a valid type.`);
   }
   if (node.ttsText && node.ttsText.trim() !== "") {

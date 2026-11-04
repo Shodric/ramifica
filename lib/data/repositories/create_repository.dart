@@ -832,6 +832,32 @@ class CreateRepository {
     await callFunction('generateNodeVoice', {'storyId': story, 'nodeId': node});
   }
 
+  /// Asks for the ending badge via the `generateEndingBadge` callable and
+  /// returns its public URL. The server writes nothing; the caller stores
+  /// the URL on the node through the save path. [endingName]/[endingType]
+  /// are prompt hints — blank values are omitted. Blank ids or a payload
+  /// without `badgeUrl` throw [AppFailure.invalid] without touching the
+  /// network (ids) or after it (off-shape answers).
+  Future<String> generateEndingBadge({
+    required String storyId,
+    required String nodeId,
+    String? endingName,
+    String? endingType,
+  }) async {
+    final story = storyId.trim();
+    final node = nodeId.trim();
+    if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
+    final data = {'storyId': story, 'nodeId': node};
+    final name = endingName?.trim();
+    if (name != null && name.isNotEmpty) data['endingName'] = name;
+    final type = endingType?.trim();
+    if (type != null && type.isNotEmpty) data['endingType'] = type;
+    final payload = await callFunction('generateEndingBadge', data);
+    final url = payload['badgeUrl'];
+    if (url is! String || url.isEmpty) throw const AppFailure(.invalid);
+    return url;
+  }
+
   /// Uploads a picked video for one node to the trigger path
   /// `uploads/{uid}/{storyId}_{nodeId}_{takeId}.mp4|.mov` (backend
   /// contract: `onUploadFinalized` parses the filename — Firestore

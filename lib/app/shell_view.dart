@@ -111,6 +111,14 @@ class _ShellViewState extends State<ShellView> {
     auth.add(const PendingStoryConsumed());
   }
 
+  /// Content tab index for the `/profile/<tab>` deep link; 0 when the
+  /// route carries no tab.
+  int _profileTab(AppLocation location) {
+    final tab = location is ProfileLocation ? location.tab : null;
+    final index = AppRoutes.profileTabs.indexOf(tab ?? '');
+    return index < 0 ? 0 : index;
+  }
+
   void _scheduleRedirect() {
     final path = _redirect;
     _redirect = null;
@@ -152,7 +160,7 @@ class _ShellViewState extends State<ShellView> {
               const ExploreView(),
               const CreateView(pickVideo: pickBrowserVideo),
               GraphView(storyId: storyId),
-              const ProfileView(),
+              ProfileView(initialTab: _profileTab(widget.location)),
             ],
           ),
           bottomNavigationBar: widget.location is CreateCanvasLocation

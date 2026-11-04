@@ -1,6 +1,6 @@
 # Architecture
 
-Ramifica is a Flutter web PWA. A clip plays, then pauses while a narrator asks which decision the protagonist should take. The person chooses by holding a point on the scene for one second. The run is saved.
+Ramifica is a Flutter web PWA. A clip plays, then pauses while a narrator asks which decision the protagonist should take. The person chooses by holding a point on the scene for 1.5 seconds. The run is saved.
 
 This file is the client spec. Code, docs, and UI copy are English. Screen folders use the English names below. Public URLs keep the path segments in [Routes](#routes).
 
@@ -100,7 +100,7 @@ Two event transformers are enough:
 | `restartable` | A new action cancels the one in flight. | Open another story while the first is still loading. |
 | `droppable` | If one is in flight, drop the next. | A second `HoldCompleted` while Feed is `committing`. |
 
-The one-second circle is not an event per frame. The view animates it with an `AnimationController`. Pointer down sends `HoldStarted`. Releasing early sends `HoldCancelled`. Reaching one second sends `HoldCompleted`. The handler creates a `requestId` and, if the network fails, retries `commitChoice` with the same id. The server does not advance twice.
+The 1.5-second circle is not an event per frame. The view animates it with an `AnimationController`. Pointer down sends `HoldStarted`. Releasing early sends `HoldCancelled`. Reaching 1.5 seconds sends `HoldCompleted`. The handler creates a `requestId` and, if the network fails, retries `commitChoice` with the same id. The server does not advance twice.
 
 ## Folders
 
