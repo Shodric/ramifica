@@ -65,21 +65,26 @@ class ProfileHeader extends StatelessWidget {
                 Positioned(
                   left: 120,
                   right: 12,
-                  bottom: 0,
+                  bottom: 32,
                   child: _NameRow(name: name, verified: verified),
                 ),
+                if (tag.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Positioned(
+                    left: 120,
+                    right: 12,
+                    bottom: 12,
+                    child: Text(
+                      '@$tag',
+                      style: RamificaText.meta,
+                      maxLines: 1,
+                      overflow: .ellipsis,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          if (tag.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              '@$tag',
-              style: RamificaText.meta,
-              maxLines: 1,
-              overflow: .ellipsis,
-            ),
-          ],
           if (!isOwn) ...[
             const SizedBox(height: 16),
             _FollowCta(
