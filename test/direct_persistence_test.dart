@@ -13,7 +13,6 @@ Json readyNode({bool ending = false, bool secret = false}) => {
     nodeId: 'n',
     title: ending ? 'End' : 'Gate',
     isEnding: ending,
-    endingName: ending ? 'Freedom' : null,
     endingType: ending ? 'open' : null,
     visibility: secret ? 'secret' : 'visible',
   ).toJson(),
@@ -220,17 +219,16 @@ void main() {
       }, []);
       expect(appliedChild.nodes.first.title, 'Child title');
       expect(appliedChild.nodes.first.startImagePrompt, isNull);
-      // Endings ignore choices and keep only endingName.
+      // Endings ignore choices.
       final ending = await writer.applyScene(
         's',
         'end',
-        {'title': 'End title', 'endingName': 'Freedom!'},
+        {'title': 'End title'},
         [
           {'label': 'Should not branch'},
         ],
       );
       expect(ending.nodes.first.title, 'End title');
-      expect(ending.nodes.first.endingName, 'Freedom!');
       expect(ending.nodes.first.choices, isEmpty);
     },
   );
@@ -433,9 +431,9 @@ void main() {
       throwsA(isA<AppFailure>()),
     );
     expect(store.documents['stories/s'], isNotNull);
-    });
+  });
 
-test('validatePublication accepts every ending type of the taxonomy', () {
+  test('validatePublication accepts every ending type of the taxonomy', () {
     seedReady(store);
     final story = store.documents['stories/s']!;
     const types = [

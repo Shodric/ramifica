@@ -665,9 +665,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                       MediaQuery.paddingOf(context).bottom + 96,
                                   child: EndingCard(
                                     key: const ValueKey('ending-card'),
-                                    name:
-                                        playback.node.endingName ??
-                                        playback.node.title,
+                                    name: playback.node.title,
                                     type: playback.node.endingType,
                                     rewardCode: playback.node.rewardCode,
                                     unlockedTitle: state.sagaUnlocked?.title,

@@ -885,7 +885,6 @@ test("image prompts ground the still in story, line, and frame", () => {
   const node = {
     title: "Gate",
     ttsText: "The stones remember your name.",
-    endingName: null,
     videoPrompt: null,
   };
   const start = buildImagePrompt(story, node);
@@ -898,10 +897,10 @@ test("image prompts ground the still in story, line, and frame", () => {
 test("image prompts omit blanks and stay within budget", () => {
   const prompt = buildImagePrompt(
     {title: "T", synopsis: "x".repeat(500)},
-    {title: "", ttsText: null, endingName: "Fin", videoPrompt: "morph"}
+    {title: "", ttsText: null, videoPrompt: "morph"}
   );
   assert.doesNotMatch(prompt, /MOMENT/);
-  assert.match(prompt, /Fin/);
+  assert.doesNotMatch(prompt, /This is an ending/);
   assert.match(prompt, /CLIP CONTEXT: morph/);
   assert.ok(prompt.length <= 2000);
 });

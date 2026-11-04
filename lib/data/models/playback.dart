@@ -90,7 +90,7 @@ class EndingResult {
     return EndingResult(
       storyId: _optionalString(json['storyId']),
       nodeId: _optionalString(json['nodeId']),
-      name: _optionalString(json['endingName']),
+      name: _optionalString(json['title']),
       type: _optionalString(json['endingType']),
     );
   }
@@ -258,7 +258,6 @@ class PlaybackNode {
     this.ttsText,
     this.ttsAudioUrl,
     this.ttsDurationSeconds,
-    this.endingName,
     this.endingType,
     this.endingBadgeUrl,
     this.rewardCode,
@@ -276,7 +275,6 @@ class PlaybackNode {
       ttsText: _optionalString(json['ttsText']),
       ttsAudioUrl: _optionalString(json['ttsAudioUrl']),
       ttsDurationSeconds: _optionalDouble(json['ttsDurationSeconds']),
-      endingName: _optionalString(json['endingName']),
       endingType: _optionalString(json['endingType']),
       endingBadgeUrl: _optionalString(json['endingBadgeUrl']),
       rewardCode: _optionalString(json['rewardCode']),
@@ -297,7 +295,6 @@ class PlaybackNode {
   final String? ttsText;
   final String? ttsAudioUrl;
   final double? ttsDurationSeconds;
-  final String? endingName;
   final String? endingType;
   final String? endingBadgeUrl;
   final String? rewardCode;
@@ -315,7 +312,6 @@ class PlaybackNode {
         other.ttsText == ttsText &&
         other.ttsAudioUrl == ttsAudioUrl &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
-        other.endingName == endingName &&
         other.endingType == endingType &&
         other.endingBadgeUrl == endingBadgeUrl &&
         other.rewardCode == rewardCode;
@@ -333,7 +329,6 @@ class PlaybackNode {
     ttsText,
     ttsAudioUrl,
     ttsDurationSeconds,
-    endingName,
     endingType,
     endingBadgeUrl,
     rewardCode,

@@ -268,33 +268,34 @@ void main() {
     expect(h.children['legacy']!['title'], 'Authored orphan');
     expect(h.children, hasLength(2));
   });
-  test('null prompt events preserve values; empty strings clear all prompts and endingName', () async {
-    final h = Harness();
-    h.root = const DraftNode(
-      nodeId: 'root',
-      title: 'Scene',
-      startImagePrompt: 'S',
-      videoPrompt: 'V',
-      endingName: 'Name',
-    ).toJson();
-    final bloc = await h.open();
-    addTearDown(bloc.close);
-    bloc.add(const NodeFieldChanged(nodeId: 'root'));
-    await bloc.flushNode('root');
-    expect(h.root['videoPrompt'], 'V');
-    bloc.add(
-      const NodeFieldChanged(
+  test(
+    'null prompt events preserve values; empty strings clear all prompts',
+    () async {
+      final h = Harness();
+      h.root = const DraftNode(
         nodeId: 'root',
-        startImagePrompt: ' ',
-        videoPrompt: '',
-        endingName: '',
-      ),
-    );
-    await bloc.flushNode('root');
-    for (final field in ['startImagePrompt', 'videoPrompt', 'endingName']) {
-      expect(h.root[field], isNull);
-    }
-  });
+        title: 'Scene',
+        startImagePrompt: 'S',
+        videoPrompt: 'V',
+      ).toJson();
+      final bloc = await h.open();
+      addTearDown(bloc.close);
+      bloc.add(const NodeFieldChanged(nodeId: 'root'));
+      await bloc.flushNode('root');
+      expect(h.root['videoPrompt'], 'V');
+      bloc.add(
+        const NodeFieldChanged(
+          nodeId: 'root',
+          startImagePrompt: ' ',
+          videoPrompt: '',
+        ),
+      );
+      await bloc.flushNode('root');
+      for (final field in ['startImagePrompt', 'videoPrompt']) {
+        expect(h.root[field], isNull);
+      }
+    },
+  );
   test('P3 narration generation persists only the line and idles the previous voice', () async {
     final h = Harness();
     h.root = const DraftNode(
@@ -319,9 +320,7 @@ void main() {
     expect(bloc.hasUnsavedNodeEdits('root'), false);
   });
   test('compact scoped answers parse with missing keys as null', () {
-    final narration = GeneratedNodeText.fromJson({
-      'ttsText': 'You choose.',
-    });
+    final narration = GeneratedNodeText.fromJson({'ttsText': 'You choose.'});
     expect(narration.ttsText, 'You choose.');
     expect(narration.title, isNull);
     expect(narration.choices, isEmpty);

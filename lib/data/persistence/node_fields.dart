@@ -16,7 +16,6 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
     'title': node.title.trim(),
     'visibility': node.visibility,
     'isEnding': node.isEnding,
-    'endingName': clean(node.endingName),
     'endingType': clean(node.endingType),
     'endingBadgeUrl': clean(node.endingBadgeUrl),
     'ttsText': node.ttsText.trim(),

@@ -296,7 +296,6 @@ const seedDraft = async (db: MemDb): Promise<void> => {
   await db.doc("stories/story_draft/nodes/node_007").set({
     title: "The last gate",
     isEnding: true,
-    endingName: "Dawn",
     endingType: "open",
   });
   await db.doc("stories/story_pub").set({
@@ -455,17 +454,17 @@ test("badge without credentials fails before billing", async () => {
 });
 
 test("badge prompt is a textless shield themed by the ending", () => {
-  const prompt = buildBadgePrompt({endingName: "Dawn", endingType: "open"});
+  const prompt = buildBadgePrompt({title: "Dawn", endingType: "open"});
   assert.match(prompt, /shield|badge|insignia|emblem/i);
   assert.match(prompt, /transparent/i);
   assert.match(prompt, /no text/i);
   assert.match(prompt, /Dawn/);
-  const bare = buildBadgePrompt({endingName: null, endingType: null});
+  const bare = buildBadgePrompt({title: null, endingType: null});
   assert.match(bare, /transparent/i);
   assert.doesNotMatch(bare, /undefined/);
 });
 
-test("badge prompt prefers the call input over the stored ending", async () => {
+test("badge prompt reads the scene title from the stored node", async () => {
   const db = new MemDb();
   await seedDraft(db);
   const seen = freshSeen();
@@ -474,7 +473,7 @@ test("badge prompt prefers the call input over the stored ending", async () => {
     "u1",
     {
       storyId: "story_draft", nodeId: "node_007",
-      endingName: "Ashes", endingType: "tragic",
+      endingType: "tragic",
     },
     mockDeps(
       [{status: 200, payload: imagePayload(Buffer.from("x"))}],
@@ -482,7 +481,7 @@ test("badge prompt prefers the call input over the stored ending", async () => {
     )
   );
   assert.equal(seen.prompts.length, 1);
-  assert.match(seen.prompts[0], /Ashes/);
+  assert.match(seen.prompts[0], /The last gate/);
 });
 
 test("badge resize fits within 480px and never upscales", () => {

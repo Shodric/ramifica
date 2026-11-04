@@ -78,7 +78,7 @@ class StoryCard extends StatelessWidget {
 }
 
 /// Story titles use the display family (see theme: Montserrat 700 is only
-/// for the story title, the ending name, and the screen title).
+/// for the story title, the ending title, and the screen title).
 const _titleStyle = TextStyle(
   fontFamily: RamificaText.display,
   fontWeight: .w700,

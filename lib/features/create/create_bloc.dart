@@ -658,7 +658,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         {
           'title': p.title,
           'ttsText': p.ttsText,
-          'endingName': p.endingName,
           'startImagePrompt': p.startImagePrompt,
           'videoPrompt': p.videoPrompt,
         },
@@ -1146,7 +1145,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
       final url = await repository.generateEndingBadge(
         storyId: story.storyId,
         nodeId: event.nodeId,
-        endingName: node.endingName,
         endingType: node.endingType,
       );
       if (isClosed) return;
@@ -1747,7 +1745,6 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         fields: const [
           'title',
           'ttsText',
-          'endingName',
           'choices',
           'ttsStatus',
           'ttsAudioUrl',
@@ -2132,7 +2129,6 @@ DraftNode _applyProposal(
 ) {
   final title = proposal.title;
   final line = proposal.ttsText;
-  final ending = proposal.endingName;
   var choices = node.choices;
   if (proposal.choiceLabels.isNotEmpty) {
     choices = [
@@ -2150,12 +2146,6 @@ DraftNode _applyProposal(
         : null,
     ttsText: line != null && (regenerate || node.ttsText.trim().isEmpty)
         ? line
-        : null,
-    endingName:
-        node.isEnding &&
-            ending != null &&
-            (regenerate || (node.endingName?.trim().isEmpty ?? true))
-        ? () => ending
         : null,
     choices: choices,
   );
@@ -2183,10 +2173,6 @@ DraftNode _applyFields(DraftNode node, NodeFieldChanged event) {
   if (event.videoPrompt != null) {
     final cleaned = event.videoPrompt!.trim();
     next = next.copy(videoPrompt: () => cleaned.isEmpty ? null : cleaned);
-  }
-  if (event.endingName != null) {
-    final cleaned = event.endingName!.trim();
-    next = next.copy(endingName: () => cleaned.isEmpty ? null : cleaned);
   }
   if (event.sceneDirection != null) {
     final cleaned = event.sceneDirection!.trim();

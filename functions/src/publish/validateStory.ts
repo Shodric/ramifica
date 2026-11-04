@@ -13,7 +13,6 @@ export interface ValidatableNode {
   title: string;
   visibility: string;
   isEnding: boolean;
-  endingName?: string | null;
   endingType?: string | null;
   videoUrl?: string | null;
   videoStatus?: string | null;
@@ -185,9 +184,6 @@ const validateEnding = (node: ValidatableNode): string[] => {
   const problems: string[] = [];
   if (node.choices.length > 0) {
     problems.push(`Ending ${node.nodeId} must not have choices.`);
-  }
-  if (!node.endingName || node.endingName.trim() === "") {
-    problems.push(`Ending ${node.nodeId} needs a name.`);
   }
   if (
     ![

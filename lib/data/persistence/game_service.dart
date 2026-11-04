@@ -414,7 +414,7 @@ class ClientGameService {
         'ending': {
           'storyId': storyId,
           'nodeId': nodeId,
-          'endingName': node['endingName'],
+          'title': node['title'],
           'endingType': node['endingType'],
           'badgeUrl': ?badgeUrl,
         },

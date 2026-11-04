@@ -325,9 +325,6 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
     if (node.choices.isNotEmpty) {
       missing.add('Ending $id must not have choices.');
     }
-    if (node.endingName == null || node.endingName!.trim().isEmpty) {
-      missing.add('Ending $id needs a name.');
-    }
     if (!kEndingTypeCodes.contains(node.endingType ?? '')) {
       missing.add('Ending $id needs a valid type.');
     }

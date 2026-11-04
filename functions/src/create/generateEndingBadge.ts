@@ -104,7 +104,7 @@ export const generateEndingBadge = onCallSafe(
  * Testable core of `generateEndingBadge`.
  * @param {Db} db Firestore.
  * @param {string} uid Caller.
- * @param {unknown} data Raw `{storyId, nodeId, endingName?, endingType?}`.
+ * @param {unknown} data Raw `{storyId, nodeId, endingType?}`.
  * @param {EndingBadgeDeps} deps Injectable provider seams.
  * @return {Promise<GenerateEndingBadgeResult>} The badge URL.
  */
@@ -120,8 +120,7 @@ export const generateEndingBadgeWith = async (
   const nodeId = cleanId(fields.nodeId, "nodeId");
   const loaded = await loadDraftNode(db, uid, storyId, nodeId);
   const node = loaded.node;
-  const endingName =
-    optString(fields.endingName) ?? optString(node.endingName);
+  const title = optString(node.title);
   const endingType =
     optString(fields.endingType) ?? optString(node.endingType);
   const frameUrl = optString(node.videoFrameLastUrl);
@@ -129,7 +128,7 @@ export const generateEndingBadgeWith = async (
   try {
     raw = frameUrl === null ?
       await generateBadgeBytes(
-        buildBadgePrompt({endingName, endingType}),
+        buildBadgePrompt({title, endingType}),
         deps.fetchFn
       ) :
       await generateFramedBadgeBytes({
@@ -138,7 +137,7 @@ export const generateEndingBadgeWith = async (
         nodeId,
         rootNodeId: optString(loaded.story.rootNodeId),
         frameUrl,
-        endingName,
+        title,
         endingType,
         deps,
       });
@@ -161,14 +160,14 @@ export const generateEndingBadgeWith = async (
  * Fixed badge prompt: a legendary shield/trophy insignia with a
  * transparent background and no text, themed by the ending. Pure so
  * tests pin the copy without a Db.
- * @param {Object} args Ending name and type, when known.
+ * @param {Object} args Scene title and ending type, when known.
  * @return {string} The image prompt.
  */
 export const buildBadgePrompt = (args: {
-  endingName?: string | null;
+  title?: string | null;
   endingType?: string | null;
 }): string => {
-  const name = clip(args.endingName, 40);
+  const name = clip(args.title, 40);
   const type = clip(args.endingType, 24);
   const parts = [
     "Legendary trophy shield badge emblem, centered achievement " +
@@ -445,7 +444,7 @@ export const generateFramedBadgeBytes = async (args: {
   nodeId: string;
   rootNodeId: string | null;
   frameUrl: string;
-  endingName: string | null;
+  title: string | null;
   endingType: string | null;
   deps: EndingBadgeDeps;
 }): Promise<Buffer> => {
@@ -461,7 +460,7 @@ export const generateFramedBadgeBytes = async (args: {
   if (frame === null) {
     return generateBadgeBytes(
       buildBadgePrompt({
-        endingName: args.endingName,
+        title: args.title,
         endingType: args.endingType,
       }),
       args.deps.fetchFn
@@ -476,7 +475,7 @@ export const generateFramedBadgeBytes = async (args: {
     frameBase64: frame.toString("base64"),
     frameMimeType: sniffImageMime(frame),
     instructions: buildBadgeInstructions({
-      endingName: args.endingName,
+      title: args.title,
       endingType: args.endingType,
       chain,
     }),
@@ -581,11 +580,11 @@ const loadEndingChain = async (
  * @return {string} The instructions text.
  */
 export const buildBadgeInstructions = (args: {
-  endingName?: string | null;
+  title?: string | null;
   endingType?: string | null;
   chain?: ChainLink[];
 }): string => {
-  const name = clip(args.endingName, 40);
+  const name = clip(args.title, 40);
   const type = clip(args.endingType, 24);
   const kind = type === "" ? "EPIC" : type.toUpperCase();
   const mood = badgeMood(type);

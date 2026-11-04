@@ -36,7 +36,6 @@ export interface GenerateNodeTextResult {
   title?: string | null;
   ttsText?: string | null;
   choices?: GeneratedChoice[];
-  endingName?: string | null;
   startImagePrompt?: string | null;
   videoPrompt?: string | null;
 }
@@ -177,27 +176,26 @@ const systemPrompt = [
   "characters.",
   "For decision nodes propose one or two choices: each a label of 1-24 ",
   "characters naming the moment of choosing. Do not propose icons: a ",
-  "later decision step styles each choice. For ending nodes propose an ",
-  "ending name of 1-40 characters and no choices.",
+  "later decision step styles each choice. For ending nodes, propose no ",
+  "choices.",
   "Write in the same language as the story context; default to Spanish.",
   "Answer with a single JSON object only, no fences or commentary:",
   "{\"title\": string|null, \"ttsText\": string|null,",
-  "\"choices\": [{\"label\": string}], \"endingName\": string|null,",
+  "\"choices\": [{\"label\": string}],",
   "\"startImagePrompt\": string|null, \"videoPrompt\": string|null}.",
 ].join(" ");
 
-/** Info opens a node: title, narrator line, and ending name. */
+/** Info opens a node: title and narrator line. */
 const infoPrompt = [
   "Propose the opening text for one story node: a title of 1-40",
-  "characters, one narrator line of at most 280 characters, and for",
-  "ending nodes an ending name of 1-40 characters. The narrator line",
+  "characters and one narrator line of at most 280 characters. The",
+  "narrator line",
   "presents the scene in one short sentence, then closes with the",
   "question that mirrors the current options, addressing the player",
   "in the second person. For an ending, close it in the second",
   "person without inventing a choice or question.",
   "Match the story's language; default to Spanish.",
-  "Return only JSON: {\"title\": string|null, \"ttsText\": string,",
-  "\"endingName\": string|null}.",
+  "Return only JSON: {\"title\": string|null, \"ttsText\": string}.",
 ].join(" ");
 
 /** The start frame is the first still the player sees. */
@@ -361,7 +359,6 @@ export const generateNodeTextWith = async (
     return compactSection({
       title: proposal.title,
       ttsText: proposal.ttsText,
-      endingName: proposal.endingName,
     });
   }
   if (purpose === "startframe") {
@@ -391,7 +388,6 @@ const compactSection = (fields: {
   title?: string | null;
   ttsText?: string | null;
   choices?: Array<{label: string}>;
-  endingName?: string | null;
   startImagePrompt?: string | null;
   videoPrompt?: string | null;
 }): GenerateNodeTextResult => {
@@ -596,8 +592,6 @@ const sanitizeProposal = (
   const ttsText = clampText(fields.ttsText, maxTtsChars);
   const choices =
     isEnding === true ? [] : clampChoices(fields.choices);
-  const endingName =
-    isEnding === false ? null : clampText(fields.endingName, 40);
   const startImagePrompt =
     isChild ? null : clampText(fields.startImagePrompt, maxMediaPromptChars);
   const videoPrompt = clampText(fields.videoPrompt, maxMediaPromptChars);
@@ -605,7 +599,6 @@ const sanitizeProposal = (
     title,
     ttsText,
     choices,
-    endingName,
     startImagePrompt,
     videoPrompt,
   };

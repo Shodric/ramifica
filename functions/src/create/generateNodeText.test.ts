@@ -264,7 +264,6 @@ test("proposes decision text without writing", async () => {
           title: "The storm door",
           ttsText: "Thunder rolls. Do you enter, or climb?",
           choices: [{label: "Enter"}, {label: "Climb"}],
-          endingName: null,
         })
       ),
     }
@@ -275,7 +274,6 @@ test("proposes decision text without writing", async () => {
     {label: "Enter", icon: null, iconColor: null},
     {label: "Climb", icon: null, iconColor: null},
   ]);
-  assert.equal(result.endingName, null);
   assert.equal(result.startImagePrompt, null);
   assert.equal(result.videoPrompt, null);
   assert.equal(snapshot(db), before);
@@ -358,7 +356,6 @@ test("section purposes return only their fields, fast", async () => {
       prompt: "A storm arrives.",
       answer: {
         title: "The gate", ttsText: "You must choose.",
-        endingName: null, videoPrompt: "Unasked",
         choices: [{label: "Unasked"}],
       },
       maxTokens: 1024,
@@ -446,33 +443,6 @@ test("rejects unknown text purposes", async () => {
     (error as {code?: string}).code === "invalid-argument");
 });
 
-test("proposes an ending name for ending nodes", async () => {
-  const db = new MemDb();
-  await seedDraft(db);
-  const before = snapshot(db);
-  const result = await generateNodeTextWith(
-    db,
-    "u1",
-    {storyId: "story_draft", nodeId: "node_002"},
-    {
-      apiKey: "test-key",
-      fetchFn: stubFetch(
-        JSON.stringify({
-          title: "The quiet ridge",
-          ttsText: "The wind settles.",
-          choices: [],
-          endingName: "Dawn",
-        })
-      ),
-    }
-  );
-  assert.equal(result.endingName, "Dawn");
-  assert.deepEqual(result.choices, []);
-  assert.equal(result.startImagePrompt, null);
-  assert.equal(result.videoPrompt, null);
-  assert.equal(snapshot(db), before);
-});
-
 test("works without a nodeId for a new node", async () => {
   const db = new MemDb();
   await seedDraft(db);
@@ -505,7 +475,6 @@ test("clamps overlong provider fields", async () => {
           title: "x".repeat(100),
           ttsText: "y".repeat(1000),
           choices: [{label: "z".repeat(100)}, {label: "ok"}, {label: "extra"}],
-          endingName: null,
         })
       ),
     }
@@ -659,7 +628,6 @@ test("proposes full media prompts with styled choices on roots", async () => {
             {label: "Enter", icon: "door", iconColor: "cyan"},
             {label: "Climb", icon: "mountain", iconColor: "gold"},
           ],
-          endingName: null,
           startImagePrompt: "Wide 9:16 hall, door ajar.",
           videoPrompt: "Slow drift across the hall.",
         })
@@ -690,7 +658,6 @@ test("drops the start prompt on child nodes", async () => {
           title: "The fork",
           ttsText: "Two paths.",
           choices: [{label: "Left", icon: "forest", iconColor: "green"}],
-          endingName: null,
           startImagePrompt: "Should be dropped.",
           videoPrompt: "Kept clip.",
         })
@@ -719,7 +686,6 @@ test("drops choices on endings even when proposed", async () => {
           title: "The quiet ridge",
           ttsText: "The wind settles.",
           choices: [{label: "Stay", icon: "moon", iconColor: "blue"}],
-          endingName: "Dawn",
           startImagePrompt: "Should be dropped.",
           videoPrompt: "Slow drift to stillness.",
         })
@@ -727,7 +693,6 @@ test("drops choices on endings even when proposed", async () => {
     }
   );
   assert.deepEqual(result.choices, []);
-  assert.equal(result.endingName, "Dawn");
   assert.equal(result.startImagePrompt, null);
   assert.equal(result.videoPrompt, "Slow drift to stillness.");
 });
@@ -747,7 +712,6 @@ test("reads legacy proposals without prompts or styled choices", async () => {
           title: "The storm door",
           ttsText: "Thunder rolls.",
           choices: ["Enter", "Climb"],
-          endingName: null,
         })
       ),
     }
@@ -780,7 +744,6 @@ test("nulls unknown styling and clamps malformed proposals", async () => {
             {label: "Climb", icon: "mountain", iconColor: "gold"},
             {label: "Extra"},
           ],
-          endingName: null,
           startImagePrompt: "s".repeat(2500),
           videoPrompt: "v".repeat(2500),
         })

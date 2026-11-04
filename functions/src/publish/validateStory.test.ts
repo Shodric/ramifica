@@ -47,7 +47,6 @@ const ending = (overrides = {}): ValidatableNode => ({
   title: "The last door",
   visibility: "visible",
   isEnding: true,
-  endingName: "The door",
   endingType: "tragic",
   videoUrl: "https://example.com/end.mp4",
   videoStatus: "ready",
@@ -186,15 +185,13 @@ test("a child without a parent link is reported", () => {
   ]);
 });
 
-test("endings need a name, a type, and no choices", () => {
+test("endings need a type and no choices", () => {
   const bad = ending({
-    endingName: "",
-    endingType: "epic",
+    endingType: "xyz",
     choices: [goodChoice({choiceId: "choice_x", label: "Out"})],
   });
   assert.deepEqual(validateStory(story(), [node(), bad]), [
     "Ending node_002 must not have choices.",
-    "Ending node_002 needs a name.",
     "Ending node_002 needs a valid type.",
   ]);
 });

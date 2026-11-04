@@ -75,7 +75,6 @@ List<String> validatePublication(Json story, Map<String, Json> nodes) {
     final ending = n['isEnding'] == true;
     if (ending) {
       if (choices.isNotEmpty) problems.add('Ending $id must not have choices.');
-      if (!hasText(n['endingName'])) problems.add('Ending $id needs a name.');
       if (![
         'open',
         'tragic',
@@ -144,7 +143,6 @@ Json playbackDocument(String id, Json node, Map<String, Json> nodes) => {
   'ttsAudioUrl': node['ttsAudioUrl'],
   'ttsDurationSeconds': node['ttsDurationSeconds'],
   'videoFrameLastBlurData': node['videoFrameLastBlurData'] ?? fallbackBlur,
-  'endingName': node['endingName'],
   'endingType': node['endingType'],
   'endingBadgeUrl': node['endingBadgeUrl'],
   'thumbnailUrl': node['thumbnailUrl'],

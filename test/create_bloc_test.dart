@@ -119,7 +119,6 @@ void main() {
       expect(proposal.title, 'Spark title');
       expect(proposal.ttsText, startsWith('What should'));
       expect(proposal.choiceLabels, ['Enter', 'Climb']);
-      expect(proposal.endingName, isNull);
     });
 
     test('generateNodeText accepts plain-string choices', () async {
@@ -135,7 +134,6 @@ void main() {
             'Run',
             {'label': 'Hide'},
           ],
-          'endingName': null,
         },
       );
 
@@ -158,7 +156,6 @@ void main() {
           'title': null,
           'ttsText': '  ',
           'choices': [],
-          'endingName': null,
         },
       );
 
@@ -1798,7 +1795,6 @@ void main() {
         nodeId: 'node_9',
         title: 'Dawn',
         isEnding: true,
-        endingName: 'Dawn',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
         videoFrameLastUrl: 'https://example.com/f9.png',
@@ -2051,7 +2047,6 @@ void main() {
         nodeId: 'node_9',
         title: 'Dawn',
         isEnding: true,
-        endingName: 'Dawn',
         endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
@@ -2318,31 +2313,33 @@ void main() {
       expect(bloc.state.failure, 'One path must stay open.');
     });
 
-    test('cut toggles on unknown nodes, endings, and slots do nothing',
-        () async {
-      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
-      addTearDown(bloc.close);
-      bloc.add(const DraftOpened('story_1'));
-      await bloc.stream.firstWhere((state) => state.hasDraft);
-      final before = bloc.state.nodes;
+    test(
+      'cut toggles on unknown nodes, endings, and slots do nothing',
+      () async {
+        final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+        addTearDown(bloc.close);
+        bloc.add(const DraftOpened('story_1'));
+        await bloc.stream.firstWhere((state) => state.hasDraft);
+        final before = bloc.state.nodes;
 
-      bloc
-        ..add(const ChoiceCutToggled(nodeId: 'missing', slot: 'B'))
-        ..add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'C'))
-        ..add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc
+          ..add(const ChoiceCutToggled(nodeId: 'missing', slot: 'B'))
+          ..add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'C'))
+          ..add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      // Only the ending flip lands; every cut is ignored.
-      final node = bloc.state.nodes.firstWhere(
-        (candidate) => candidate.nodeId == 'node_1',
-      );
-      expect(node.cutSlots, isEmpty);
-      expect(node.isEnding, isTrue);
-      expect(bloc.state.failure, isNull);
-      expect(before.any((n) => n.nodeId == 'node_1' && n.isEnding), isFalse);
-    });
+        // Only the ending flip lands; every cut is ignored.
+        final node = bloc.state.nodes.firstWhere(
+          (candidate) => candidate.nodeId == 'node_1',
+        );
+        expect(node.cutSlots, isEmpty);
+        expect(node.isEnding, isTrue);
+        expect(bloc.state.failure, isNull);
+        expect(before.any((n) => n.nodeId == 'node_1' && n.isEnding), isFalse);
+      },
+    );
 
     test('marking final drops choices and cut marks', () async {
       final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
@@ -2780,7 +2777,6 @@ void main() {
         nodeId: 'node_9',
         title: 'Dawn',
         isEnding: true,
-        endingName: 'Dawn',
         endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
@@ -3228,7 +3224,6 @@ CreateRepository _repo(
             {'label': 'Enter'},
             {'label': 'Climb'},
           ],
-          'endingName': null,
         },
         _ => <String, dynamic>{},
       };

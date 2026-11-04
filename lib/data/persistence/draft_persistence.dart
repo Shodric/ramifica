@@ -287,17 +287,15 @@ class ClientDraftPersistence implements DraftPersistence {
       for (final name in [
         'title',
         'ttsText',
-        'endingName',
         'startImagePrompt',
         'videoPrompt',
       ]) {
         if (name == 'startImagePrompt' && !isRoot) {
           continue;
         }
-        if (name == 'endingName' && before['isEnding'] != true) continue;
         final value = fields[name];
         if (value is String && value.trim().isNotEmpty) {
-          final cap = name == 'title' || name == 'endingName'
+          final cap = name == 'title'
               ? 40
               : name == 'ttsText'
               ? 280
@@ -472,7 +470,6 @@ void validateAuthorNode(Json node) {
   }
 
   text('title', 40);
-  text('endingName', 40);
   text('ttsText', 1000);
   for (final key in ['startImagePrompt', 'videoPrompt', 'sceneDirection']) {
     text(key, 2000);

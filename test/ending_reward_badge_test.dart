@@ -13,7 +13,6 @@ Json _readyNode({bool ending = false}) => {
     nodeId: 'n',
     title: ending ? 'End' : 'Gate',
     isEnding: ending,
-    endingName: ending ? 'Freedom' : null,
     endingType: ending ? 'open' : null,
     visibility: ending ? 'secret' : 'visible',
   ).toJson(),
@@ -104,10 +103,7 @@ void main() {
 
     expect(jsonMap(result['ending'])['badgeUrl'], _badge);
     expect(jsonMap(result['reward'])['badgeUrl'], _badge);
-    expect(
-      store.documents['users/player/rewards/s_end']!['badgeUrl'],
-      _badge,
-    );
+    expect(store.documents['users/player/rewards/s_end']!['badgeUrl'], _badge);
   });
 
   test('ending outcome omits badgeUrl when the node has none', () async {

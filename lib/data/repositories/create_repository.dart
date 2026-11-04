@@ -51,14 +51,13 @@ class GeneratedChoice {
 /// Backend contract (functions/src/create/generateNodeText.ts): every key
 /// is always present; `choices` is always an array of
 /// `{label, icon, iconColor}` maps (plain-string labels and missing
-/// prompts parse too, for old responses); `endingName` is non-null only
+/// prompts parse too, for old responses).
 /// for ending nodes.
 class GeneratedNodeText {
   const GeneratedNodeText({
     this.title,
     this.ttsText,
     this.choices = const [],
-    this.endingName,
     this.startImagePrompt,
     this.videoPrompt,
   });
@@ -68,7 +67,6 @@ class GeneratedNodeText {
       title: _optionalString(json['title']),
       ttsText: _optionalString(json['ttsText']),
       choices: _optionalChoices(json['choices'] ?? json['choiceLabels']),
-      endingName: _optionalString(json['endingName']),
       startImagePrompt: _optionalString(json['startImagePrompt']),
       videoPrompt: _optionalString(json['videoPrompt']),
     );
@@ -85,9 +83,6 @@ class GeneratedNodeText {
   /// Proposed choice labels, in order. Compat accessor over [choices].
   List<String> get choiceLabels => [for (final choice in choices) choice.label];
 
-  /// Proposed ending name, for ending nodes only.
-  final String? endingName;
-
   /// Proposed S-frame (root) image prompt, or null when absent/legacy.
   final String? startImagePrompt;
 
@@ -99,7 +94,6 @@ class GeneratedNodeText {
       (title == null || title!.isEmpty) &&
       (ttsText == null || ttsText!.isEmpty) &&
       choices.isEmpty &&
-      (endingName == null || endingName!.isEmpty) &&
       (startImagePrompt == null || startImagePrompt!.isEmpty) &&
       (videoPrompt == null || videoPrompt!.isEmpty);
 }
@@ -417,7 +411,6 @@ class CreateRepository {
     {
       'title': proposal.title,
       'ttsText': proposal.ttsText,
-      'endingName': proposal.endingName,
       'startImagePrompt': proposal.startImagePrompt,
       'videoPrompt': proposal.videoPrompt,
     },
@@ -834,22 +827,19 @@ class CreateRepository {
 
   /// Asks for the ending badge via the `generateEndingBadge` callable and
   /// returns its public URL. The server writes nothing; the caller stores
-  /// the URL on the node through the save path. [endingName]/[endingType]
-  /// are prompt hints — blank values are omitted. Blank ids or a payload
+  /// the URL on the node through the save path. The server reads the
+  /// scene title from the node; blank [endingType] is omitted. Blank ids
   /// without `badgeUrl` throw [AppFailure.invalid] without touching the
   /// network (ids) or after it (off-shape answers).
   Future<String> generateEndingBadge({
     required String storyId,
     required String nodeId,
-    String? endingName,
     String? endingType,
   }) async {
     final story = storyId.trim();
     final node = nodeId.trim();
     if (story.isEmpty || node.isEmpty) throw const AppFailure(.invalid);
     final data = {'storyId': story, 'nodeId': node};
-    final name = endingName?.trim();
-    if (name != null && name.isNotEmpty) data['endingName'] = name;
     final type = endingType?.trim();
     if (type != null && type.isNotEmpty) data['endingType'] = type;
     final payload = await callFunction('generateEndingBadge', data);

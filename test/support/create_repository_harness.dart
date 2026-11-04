@@ -203,17 +203,15 @@ class _DraftHarness implements DraftPersistence {
     for (final name in [
       'title',
       'ttsText',
-      'endingName',
       'startImagePrompt',
       'videoPrompt',
     ]) {
       if (name == 'startImagePrompt' && !isRoot) {
         continue;
       }
-      if (name == 'endingName' && !node.isEnding) continue;
       final value = fields[name];
       if (value is String && value.trim().isNotEmpty) {
-        final cap = name == 'title' || name == 'endingName'
+        final cap = name == 'title'
             ? 40
             : name == 'ttsText'
             ? 280

@@ -80,28 +80,25 @@ void main() {
     }
   });
 
-  test(
-    'Script requires only a title; voice gates the line, not approval',
-    () {
-      const untitled = DraftNode(nodeId: 'n');
-      expect(
-        firstMissingForStep(step: 0, node: untitled, isRoot: true),
-        'a scene title (1-40 characters)',
-      );
-      const scene = DraftNode(nodeId: 'n', title: 'Title');
-      expect(firstMissingForStep(step: 0, node: scene, isRoot: true), isNull);
-      final written = scene.copy(ttsText: 'Will you enter or wait?');
-      expect(firstMissingForStep(step: 0, node: written, isRoot: true), isNull);
-      expect(
-        firstMissingForStep(step: 1, node: written, isRoot: true),
-        'a generated start frame',
-      );
-      expect(
-        firstMissingForStep(step: 2, node: written, isRoot: true),
-        'a generated voice',
-      );
-    },
-  );
+  test('Script requires only a title; voice gates the line, not approval', () {
+    const untitled = DraftNode(nodeId: 'n');
+    expect(
+      firstMissingForStep(step: 0, node: untitled, isRoot: true),
+      'a scene title (1-40 characters)',
+    );
+    const scene = DraftNode(nodeId: 'n', title: 'Title');
+    expect(firstMissingForStep(step: 0, node: scene, isRoot: true), isNull);
+    final written = scene.copy(ttsText: 'Will you enter or wait?');
+    expect(firstMissingForStep(step: 0, node: written, isRoot: true), isNull);
+    expect(
+      firstMissingForStep(step: 1, node: written, isRoot: true),
+      'a generated start frame',
+    );
+    expect(
+      firstMissingForStep(step: 2, node: written, isRoot: true),
+      'a generated voice',
+    );
+  });
 
   for (final width in [390.0, 1200.0]) {
     testWidgets('S3 edits narrator text and generates voice at width $width', (
@@ -348,34 +345,23 @@ void main() {
   );
 
   testWidgets(
-    'ending auto-proposal drops options and child start, preserves the name',
+    'ending auto-proposal drops options and child start, preserves the title',
     (tester) async {
-      String? changed;
       await mount(
         tester,
         StepScript(
-          node: const DraftNode(
-            nodeId: 'leaf',
-            isEnding: true,
-            endingName: 'Old',
-          ),
+          node: const DraftNode(nodeId: 'leaf', isEnding: true, title: 'Old'),
           isRoot: false,
           busy: false,
           showErrors: false,
-          onEndingNameChanged: (s) => changed = s,
           propose: (_, {purpose}) async => const GeneratedNodeText(
             ttsText: 'The end.',
-            endingName: 'AI',
+            title: 'AI',
             choices: [GeneratedChoice(label: 'Bad')],
             startImagePrompt: 'Bad',
           ),
         ),
       );
-      await tester.enterText(
-        find.byKey(const ValueKey('ending-name-leaf')),
-        'New',
-      );
-      expect(changed, 'New');
       await tester.enterText(
         find.byKey(const ValueKey('script-direction-leaf')),
         'The ending',
@@ -385,7 +371,7 @@ void main() {
       final proposal = await state.proposeDirection();
       await tester.pump();
       expect(proposal?.ttsText, 'The end.');
-      expect(proposal?.endingName, isNull);
+      expect(proposal?.title, isNull);
       expect(proposal?.choices, isEmpty);
       expect(proposal?.startImagePrompt, isNull);
       expect(find.text('Options'), findsNothing);

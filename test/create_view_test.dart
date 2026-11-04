@@ -447,7 +447,6 @@ void main() {
                     'title': 'Leaf',
                     'visibility': 'visible',
                     'isEnding': true,
-                    'endingName': 'Escape',
                   }),
                 ]
               : const [],
@@ -1449,7 +1448,6 @@ void main() {
           'title': 'Leaf',
           'visibility': 'secret',
           'isEnding': true,
-          'endingName': 'Escape',
           'endingType': 'open',
         }),
         MapEntry('node_3', {
@@ -2192,7 +2190,6 @@ void main() {
               'title': 'Dawn',
               'visibility': 'visible',
               'isEnding': true,
-              'endingName': 'Dawn',
               'endingType': 'open',
               'startFromNodeId': 'node_1',
               'startParentFrameHash': 'hash-f1',
@@ -2539,7 +2536,6 @@ List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
       'title': 'Leaf',
       'visibility': 'visible',
       'isEnding': true,
-      'endingName': 'Escape',
       'endingType': 'open',
       'videoStatus': 'idle',
       'startFromNodeId': 'node_1',
@@ -2574,7 +2570,6 @@ List<MapEntry<String, Map<String, dynamic>>> _defaultDocs() {
       'title': 'Leaf',
       'visibility': 'secret',
       'isEnding': true,
-      'endingName': 'Escape',
       'endingType': 'open',
     }),
   ];
@@ -2685,7 +2680,6 @@ CreateRepository _repo(
             {'label': 'Enter'},
             {'label': 'Climb'},
           ],
-          'endingName': null,
         },
         'generateStoryCover' => {
           'coverUrl': 'https://cdn.invalid/cover-1.webp',
