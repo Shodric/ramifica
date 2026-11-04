@@ -330,11 +330,13 @@ void main() {
     expect(bloc.state.playback!.node.nodeId, 'node_001');
     expect(bloc.state.muted, isFalse);
     expect(bloc.state.autoMuted, isFalse);
+    // Entering the feed restarts at the root, and asking for another
+    // path restarts again: both startRun calls carry restart.
     final restarts = [
       for (final call in calls)
         if (call.name == 'startRun' && call.data?['restart'] == true) call,
     ];
-    expect(restarts, hasLength(1));
+    expect(restarts, hasLength(2));
   });
 
   test('asking for the map from the card changes nothing', () async {

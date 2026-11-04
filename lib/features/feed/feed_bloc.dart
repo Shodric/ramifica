@@ -58,6 +58,7 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
                ),
        ) {
     on<StoryOpened>(_onOpened, transformer: restartable());
+    on<PlaybackReloadRequested>(_onReload, transformer: restartable());
     on<StorySwiped>(_onSwiped, transformer: restartable());
     on<PauseReached>(_onPause);
     on<UserGestured>(_onUserGestured);
@@ -116,8 +117,60 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     );
   }
 
+  /// Reloads the run current playback after the map moved it. Unlike
+  /// [_loadStory] this restarts nothing: the run keeps its history and
+  /// the feed opens wherever the pointer now sits.
+  Future<void> _onReload(
+    PlaybackReloadRequested event,
+    Emitter<FeedState> emit,
+  ) async {
+    if (_preview) return;
+    final runId = event.runId.trim();
+    if (runId.isEmpty) return;
+    _holdSealed = false;
+    _silence();
+    emit(
+      FeedState(
+        phase: .loading,
+        storyId: state.storyId,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
+    try {
+      final playback = await repository.loadPlayback(runId);
+      if (emit.isDone) return;
+      prefetcher.warm(playback);
+      final voice = playback.node.ttsAudioUrl?.trim();
+      if (voice != null && voice.isNotEmpty) {
+        unawaited(narrator.prepare(voice));
+      }
+      emit(
+        FeedState(
+          phase: playback.node.isEnding ? .ending : .playing,
+          storyId: playback.story.storyId,
+          runId: playback.runId,
+          playback: playback,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
+        ),
+      );
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(
+        FeedState(
+          phase: .failed,
+          storyId: state.storyId,
+          failure: error.phrase,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
+        ),
+      );
+    }
+  }
+
   /// Draws another published story at random, excluding the current one,
-  /// and opens it with the same resume rule. Only from `playing` or with
+  /// and opens it from its root. Only from `playing` or with
   /// the card visible; without another story, or without a catalog, it is
   /// ignored. Best-effort: a catalog failure keeps the current clip.
   Future<void> _onSwiped(StorySwiped event, Emitter<FeedState> emit) async {
@@ -146,19 +199,33 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     );
   }
 
-  /// Opens [storyId] (or lets the server pick when null) and parks on an
-  /// ending or plays otherwise. Shared by [StoryOpened] and [StorySwiped].
+  /// Opens [storyId] (or lets the server pick when null) with a fresh run
+  /// at the root, then parks on an ending or plays otherwise. Shared by
+  /// [StoryOpened] and [StorySwiped]. Mute is read back from the current
+  /// state on arrival, so a gesture that landed mid-load survives it.
   Future<void> _loadStory({
     required String? storyId,
     required Emitter<FeedState> emit,
   }) async {
-    final muted = state.muted;
-    final autoMuted = state.autoMuted;
     _holdSealed = false;
     _silence();
-    emit(FeedState(phase: .loading, storyId: storyId));
+    emit(
+      FeedState(
+        phase: .loading,
+        storyId: storyId,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
     try {
-      final started = await repository.startRun(storyId: storyId);
+      // Entering the feed always starts a fresh run at the root: a
+      // finished story starts over instead of landing on its last
+      // ending. A settled story never re-opens in session, so this
+      // only resets on a real entry.
+      final started = await repository.startRun(
+        storyId: storyId,
+        restart: true,
+      );
       if (emit.isDone) return;
       final playback = await repository.loadPlayback(started.runId);
       if (emit.isDone) return;
@@ -173,13 +240,21 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           storyId: playback.story.storyId,
           runId: playback.runId,
           playback: playback,
-          muted: muted,
-          autoMuted: autoMuted,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
         ),
       );
     } on AppFailure catch (error) {
       if (emit.isDone) return;
-      emit(FeedState(phase: .failed, storyId: storyId, failure: error.phrase));
+      emit(
+        FeedState(
+          phase: .failed,
+          storyId: storyId,
+          failure: error.phrase,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
+        ),
+      );
     }
   }
 
@@ -368,6 +443,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           storyId: state.storyId,
           runId: runId,
           failure: error.phrase,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
         ),
       );
     }
@@ -415,6 +492,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           storyId: state.storyId,
           runId: runId,
           failure: error.phrase,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
         ),
       );
     }
@@ -473,11 +552,16 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     if (_preview) return;
     if (state.phase != .ending) return;
     final storyId = state.storyId;
-    final muted = state.muted;
-    final autoMuted = state.autoMuted;
     _holdSealed = false;
     _silence();
-    emit(FeedState(phase: .loading, storyId: storyId));
+    emit(
+      FeedState(
+        phase: .loading,
+        storyId: storyId,
+        muted: state.muted,
+        autoMuted: state.autoMuted,
+      ),
+    );
     try {
       final started = await repository.startRun(
         storyId: storyId,
@@ -497,13 +581,21 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           storyId: playback.story.storyId,
           runId: playback.runId,
           playback: playback,
-          muted: muted,
-          autoMuted: autoMuted,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
         ),
       );
     } on AppFailure catch (error) {
       if (emit.isDone) return;
-      emit(FeedState(phase: .failed, storyId: storyId, failure: error.phrase));
+      emit(
+        FeedState(
+          phase: .failed,
+          storyId: storyId,
+          failure: error.phrase,
+          muted: state.muted,
+          autoMuted: state.autoMuted,
+        ),
+      );
     }
   }
 

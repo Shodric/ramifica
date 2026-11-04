@@ -69,8 +69,8 @@ final class HoldCompleted extends FeedEvent {
 }
 
 /// A vertical swipe. Draws another published story at random and opens it
-/// with the same resume rule. Ignored unless playing or the ending card
-/// is visible, and when there is no other story.
+/// from its root. Ignored unless playing or the ending card is visible,
+/// and when there is no other story.
 final class StorySwiped extends FeedEvent {
   const StorySwiped();
 }
@@ -83,4 +83,12 @@ final class OtherPathRequested extends FeedEvent {
 /// From the ending card. The view navigates to the map for this story.
 final class MapRequested extends FeedEvent {
   const MapRequested();
+}
+
+/// The map jumped the run to another scene. Reloads that run current
+/// playback without starting over.
+final class PlaybackReloadRequested extends FeedEvent {
+  const PlaybackReloadRequested(this.runId);
+
+  final String runId;
 }

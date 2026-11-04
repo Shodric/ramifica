@@ -35,7 +35,7 @@ void main() {
 
     expect(phases, [FeedPhase.loading, FeedPhase.playing]);
     expect(calls[0].name, 'startRun');
-    expect(calls[0].data, {'storyId': 'story_temple'});
+    expect(calls[0].data, {'storyId': 'story_temple', 'restart': true});
     expect(calls[1].name, 'loadPlayback');
     expect(calls[1].data, {'runId': 'run_1'});
     expect(bloc.state.runId, 'run_1');
@@ -47,6 +47,44 @@ void main() {
       bloc.state.playback!.choices.first.target!.videoUrl,
       'https://example.com/next.mp4',
     );
+  });
+
+  test('a map reload replays the run where it now sits', () async {
+    final calls = <_Call>[];
+    var loads = 0;
+    final bloc = FeedBloc(
+      repository: _runs(calls, (name, data) async {
+        if (name == 'startRun') {
+          return {
+            'runId': 'run_1',
+            'storyId': 'story_temple',
+            'status': 'active',
+          };
+        }
+        loads += 1;
+        return _playback(nodeId: loads == 1 ? 'node_001' : 'node_002');
+      }),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    expect(bloc.state.playback!.node.nodeId, 'node_001');
+
+    bloc.add(const PlaybackReloadRequested('run_1'));
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback?.node.nodeId == 'node_002',
+    );
+
+    expect(calls.map((call) => call.name), [
+      'startRun',
+      'loadPlayback',
+      'loadPlayback',
+    ]);
+    expect(bloc.state.runId, 'run_1');
+    expect(bloc.state.failure, isNull);
   });
 
   test('an ended run enters ending', () async {
@@ -83,6 +121,37 @@ void main() {
     expect(loads, 0);
   });
 
+  test('a retry after a failure keeps the sound on', () async {
+    var fail = false;
+    final bloc = FeedBloc(
+      repository: RunRepository(
+        execute: FunctionsClient(
+          call: (name, data) async {
+            if (fail) throw const AppFailure(.offline);
+            return _active(name, data);
+          },
+        ).call,
+      ),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    bloc.add(const MuteToggled());
+    await bloc.stream.firstWhere((state) => !state.muted);
+
+    fail = true;
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
+    expect(bloc.state.muted, isFalse);
+
+    fail = false;
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    expect(bloc.state.muted, isFalse);
+    expect(bloc.state.autoMuted, isFalse);
+  });
+
   test('a malformed playback is invalid', () async {
     final bloc = FeedBloc(
       repository: RunRepository(
@@ -116,8 +185,30 @@ void main() {
     bloc.add(const StoryOpened(storyId: '   '));
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
 
-    expect(calls.first.data, <String, dynamic>{});
+    expect(calls.first.data, {'restart': true});
     expect(bloc.state.storyId, 'story_featured');
+  });
+
+  test('re-entering the feed restarts instead of resuming', () async {
+    final calls = <_Call>[];
+    final bloc = FeedBloc(repository: _runs(calls, _active));
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+
+    // Entering the feed never resumes a previous run: a finished story
+    // starts over at its root instead of landing on its last ending.
+    final starts = [
+      for (final call in calls)
+        if (call.name == 'startRun') call,
+    ];
+    expect(starts, hasLength(2));
+    for (final start in starts) {
+      expect(start.data, {'storyId': 'story_temple', 'restart': true});
+    }
   });
 
   test('a second StoryOpened drops the first run', () async {
@@ -612,6 +703,7 @@ Map<String, dynamic> _playback({
   String storyId = 'story_temple',
   String status = 'active',
   bool ending = false,
+  String? nodeId,
 }) {
   return {
     'runId': runId,
@@ -622,7 +714,7 @@ Map<String, dynamic> _playback({
       'authorName': 'Alex Vance',
     },
     'node': {
-      'nodeId': ending ? 'node_end' : 'node_001',
+      'nodeId': nodeId ?? (ending ? 'node_end' : 'node_001'),
       'title': ending ? 'The last door' : 'The temple door',
       'isEnding': ending,
       'videoUrl': 'https://example.com/video.mp4',

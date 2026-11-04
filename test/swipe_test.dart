@@ -33,6 +33,26 @@ void main() {
     expect(bloc.state.endingSpeaking, isFalse);
   });
 
+  test('swipe starts the other story from its root', () async {
+    final calls = <_Call>[];
+    final bloc = _bloc(ids: ['story_a', 'story_b'], calls: calls);
+    addTearDown(bloc.close);
+    await _open(bloc, 'story_a');
+
+    bloc.add(const StorySwiped());
+    await bloc.stream.firstWhere(
+      (state) =>
+          state.phase == FeedPhase.playing &&
+          state.playback!.story.storyId == 'story_b',
+    );
+
+    final restarts = [
+      for (final call in calls)
+        if (call.name == 'startRun') call.data?['restart'],
+    ];
+    expect(restarts, [true, true]);
+  });
+
   test('swipe is ignored when it is the only story', () async {
     final calls = <_Call>[];
     final bloc = _bloc(ids: ['story_a'], calls: calls);
