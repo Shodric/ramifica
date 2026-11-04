@@ -342,6 +342,46 @@ void main() {
       );
       expect(find.byKey(const ValueKey('ending-badge-image')), findsOneWidget);
     });
+
+    testWidgets('badge preview swaps in live when generation lands', (
+      tester,
+    ) async {
+      final bloc = CreateBloc(repository: _repo(null, ending: true));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EndingSetupDialog(
+              nodeId: 'node_1',
+              bloc: bloc,
+              onBadgeRequested: () async {
+                bloc.add(const NodeEndingBadgeRequested('node_1'));
+                await bloc.stream.firstWhere(
+                  (state) => state.job == CreateJob.none,
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('ending-badge-placeholder')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Generate'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('ending-badge-placeholder')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('ending-badge-image')), findsOneWidget);
+    });
   });
 }
 

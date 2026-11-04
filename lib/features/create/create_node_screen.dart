@@ -920,6 +920,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                   _StepScroll(
                                     child: StepHotspots(
                                       node: node,
+                                      bloc: widget.bloc,
                                       busy: busy,
                                       showErrors: _showErrors[4],
                                       active: stepActive(4),

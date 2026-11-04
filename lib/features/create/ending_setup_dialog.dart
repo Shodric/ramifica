@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_bloc.dart';
+import 'package:ramifica/features/create/create_state.dart';
 
 /// English label per ending-type code, in [kEndingTypeCodes] order.
 const endingTypeLabels = <String, String>{
@@ -28,11 +30,18 @@ class EndingSetupDialog extends StatefulWidget {
     this.endingBadgeUrl,
     this.onEndingTypeChanged,
     this.onBadgeRequested,
+    this.bloc,
   });
 
   final String nodeId;
   final String? endingType;
   final String? endingBadgeUrl;
+
+  /// Live source for the badge preview. When set, the dialog listens to
+  /// the node's [endingBadgeUrl] and swaps the placeholder for the image
+  /// as soon as generation lands, without closing the popup. When null
+  /// the snapshot [endingBadgeUrl] renders statically.
+  final CreateBloc? bloc;
 
   /// Fires when the author picks a type code from the dropdown.
   final ValueChanged<String>? onEndingTypeChanged;
@@ -61,66 +70,94 @@ class _EndingSetupDialogState extends State<EndingSetupDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final current = widget.endingType;
+    final bloc = widget.bloc;
+    if (bloc == null) {
+      return AlertDialog(
+        title: const Text('Final scene'),
+        content: _body(widget.endingType, widget.endingBadgeUrl),
+        actions: _actions(context),
+      );
+    }
     return AlertDialog(
       title: const Text('Final scene'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: .stretch,
-          mainAxisSize: .min,
-          children: [
-            _badgePreview(),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              key: const ValueKey('ending-type-dropdown'),
-              initialValue: current != null && kEndingTypeCodes.contains(current)
-                  ? current
-                  : null,
-              hint: const Text('Ending type'),
-              items: [
-                for (final code in kEndingTypeCodes)
-                  DropdownMenuItem(
-                    value: code,
-                    child: Text(endingTypeLabels[code] ?? code),
-                  ),
-              ],
-              onChanged: widget.onEndingTypeChanged == null
-                  ? null
-                  : (code) {
-                      if (code != null) widget.onEndingTypeChanged!(code);
-                    },
-            ),
-          ],
-        ),
+      content: StreamBuilder<CreateState>(
+        stream: bloc.stream,
+        initialData: bloc.state,
+        builder: (context, snapshot) {
+          final live = snapshot.data?.nodes
+              .where((node) => node.nodeId == widget.nodeId);
+          final node = live == null || live.isEmpty ? null : live.first;
+          return _body(
+            node?.endingType ?? widget.endingType,
+            node?.endingBadgeUrl ?? widget.endingBadgeUrl,
+          );
+        },
       ),
-      actions: [
-        TextButton(
-          key: const ValueKey('ending-setup-close'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-        FilledButton(
-          key: const ValueKey('ending-badge-generate'),
-          onPressed: widget.onBadgeRequested == null || _generating
-              ? null
-              : _generate,
-          child: _generating
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Generate'),
-        ),
-      ],
+      actions: _actions(context),
     );
+  }
+
+  Widget _body(String? endingType, String? badgeUrl) {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: .stretch,
+        mainAxisSize: .min,
+        children: [
+          _badgePreview(badgeUrl),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            key: const ValueKey('ending-type-dropdown'),
+            initialValue:
+                endingType != null && kEndingTypeCodes.contains(endingType)
+                ? endingType
+                : null,
+            hint: const Text('Ending type'),
+            items: [
+              for (final code in kEndingTypeCodes)
+                DropdownMenuItem(
+                  value: code,
+                  child: Text(endingTypeLabels[code] ?? code),
+                ),
+            ],
+            onChanged: widget.onEndingTypeChanged == null
+                ? null
+                : (code) {
+                    if (code != null) widget.onEndingTypeChanged!(code);
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _actions(BuildContext context) {
+    return [
+      TextButton(
+        key: const ValueKey('ending-setup-close'),
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Close'),
+      ),
+      FilledButton(
+        key: const ValueKey('ending-badge-generate'),
+        onPressed: widget.onBadgeRequested == null || _generating
+            ? null
+            : _generate,
+        child: _generating
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text('Generate'),
+      ),
+    ];
   }
 
   /// Badge preview: always a square box on the placeholder background,
   /// so the generated image sits on the same surface instead of floating
   /// bare, and [BoxFit.contain] shows it whole without cropping.
-  Widget _badgePreview() {
-    final url = widget.endingBadgeUrl;
+  Widget _badgePreview(String? badgeUrl) {
+    final url = badgeUrl;
     final hasImage = url != null && url.isNotEmpty;
     return Center(
       child: ConstrainedBox(

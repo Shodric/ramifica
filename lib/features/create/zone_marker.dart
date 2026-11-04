@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/ending_setup_dialog.dart';
 
 /// Hold-zone editor over the node's LAST frame (the E image, which is what
@@ -45,6 +46,7 @@ class ZoneMarker extends StatefulWidget {
     this.endingBadgeUrl,
     this.onEndingTypeChanged,
     this.onEndingBadgeRequested,
+    this.bloc,
     this.onCutToggled,
     this.errorChoiceIds,
     this.focusChoiceId,
@@ -116,6 +118,11 @@ class ZoneMarker extends StatefulWidget {
   /// Runs the badge generation from the setup popup; the dialog shows a
   /// loader until the returned future completes.
   final Future<void> Function()? onEndingBadgeRequested;
+
+  /// Live source for the ending-setup popup. When set, the dialog listens
+  /// to the node's badge URL and swaps the placeholder for the image as
+  /// soon as generation lands, without closing the popup.
+  final CreateBloc? bloc;
 
   /// Long-press on a free slot cuts it; long-press on a cut slot
   /// restores it. Null disables the gesture.
@@ -1021,6 +1028,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
         endingBadgeUrl: widget.endingBadgeUrl,
         onEndingTypeChanged: widget.onEndingTypeChanged,
         onBadgeRequested: widget.onEndingBadgeRequested,
+        bloc: widget.bloc,
       ),
     );
   }

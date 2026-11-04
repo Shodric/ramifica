@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_bloc.dart';
 import 'package:ramifica/features/create/zone_marker.dart';
 
 /// S5 Options: hotspot header and the [ZoneMarker] preview, which holds
@@ -14,6 +15,7 @@ class StepHotspots extends StatefulWidget {
   const StepHotspots({
     super.key,
     required this.node,
+    this.bloc,
     required this.busy,
     required this.showErrors,
     this.isRoot = false,
@@ -40,6 +42,10 @@ class StepHotspots extends StatefulWidget {
   });
 
   final DraftNode node;
+
+  /// Live source forwarded to the ending-setup popup so the badge
+  /// preview swaps in as soon as generation lands.
+  final CreateBloc? bloc;
 
   /// Offstage steps skip the continue action so a single one mounts.
   final bool active;
@@ -132,6 +138,7 @@ class _StepHotspotsState extends State<StepHotspots> {
           key: _previewKey,
           child: ZoneMarker(
             nodeId: node.nodeId,
+            bloc: widget.bloc,
             choices: node.choices,
             targets: widget.targets,
             // Options sits after Clip: the backdrop is always the
