@@ -179,7 +179,35 @@ class _ProfileViewState extends State<ProfileView> {
           listener: _closeEditorOnSaved,
           child: BlocBuilder<ProfileBloc, ProfileState>(
             builder: (context, state) {
-              return Scaffold(body: SafeArea(child: _body(context, state)));
+              final showActions =
+                  state.phase == ProfilePhase.loaded && state.isOwn && !_editing;
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: RamificaColors.surface,
+                  surfaceTintColor: Colors.transparent,
+                  elevation: 0,
+                  title: const Text('Profile', style: RamificaText.screenTitle),
+                  actions: [
+                    if (showActions) ...[
+                      IconButton(
+                        key: const Key('profileEditButton'),
+                        tooltip: 'Edit profile',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => setState(() => _editing = true),
+                      ),
+                      IconButton(
+                        key: const Key('profileSignOutButton'),
+                        tooltip: 'Sign out',
+                        icon: const Icon(Icons.logout),
+                        onPressed: () => context.read<ProfileBloc>().add(
+                          const SignOutRequested(),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                body: SafeArea(child: _body(context, state)),
+              );
             },
           ),
         ),

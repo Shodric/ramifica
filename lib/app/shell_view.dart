@@ -157,13 +157,16 @@ class _ShellViewState extends State<ShellView> {
                 enabled: state.tab == .feed,
                 child: FeedView(storyId: state.storyId),
               ),
-              const ExploreView(),
-              const CreateView(pickVideo: pickBrowserVideo),
               GraphView(storyId: storyId),
+              const CreateView(pickVideo: pickBrowserVideo),
+              const ExploreView(),
               ProfileView(initialTab: _profileTab(widget.location)),
             ],
           ),
-          bottomNavigationBar: widget.location is CreateCanvasLocation
+          // The feed is fullscreen: no navbar there, swipe right exits to
+          // the tree instead. Every other section keeps the navbar.
+          bottomNavigationBar:
+              widget.location is CreateCanvasLocation || state.tab == .feed
               ? null
               : NavigationBarTheme(
                   data: NavigationBarThemeData(

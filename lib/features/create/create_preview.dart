@@ -171,6 +171,7 @@ Playback _draftPlayback(DraftNode node, DraftStory? story, String? authorName) {
       ttsAudioUrl: node.ttsAudioUrl,
       ttsDurationSeconds: node.ttsDurationSeconds,
       endingType: node.endingType,
+      endingBadgeUrl: node.endingBadgeUrl,
     ),
     choices: [
       for (final choice in node.choices)

@@ -1,4 +1,4 @@
-enum ShellTab { feed, explore, create, graph, profile }
+enum ShellTab { feed, graph, create, explore, profile }
 
 class ShellState {
   const ShellState({this.tab = .feed, this.storyId});

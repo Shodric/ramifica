@@ -1,7 +1,5 @@
 import 'support/fake_media_platform.dart';
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -194,7 +192,6 @@ void main() {
           body: SingleChildScrollView(
             child: StepFrames(
               node: DraftNode(nodeId: 'n'),
-              isRoot: true,
               busy: true,
               generatingWhich: 'start',
               phase: 'saving',
