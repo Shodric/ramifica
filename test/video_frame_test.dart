@@ -84,5 +84,86 @@ void main() {
       );
       expect(video.radius(0.12), closeTo(46.8, 1e-9));
     });
+
+    test('useStage splits phones from wide screens', () {
+      expect(VideoFrame.useStage(const Size(390, 844)), isFalse);
+      expect(VideoFrame.useStage(const Size(600, 800)), isFalse);
+      expect(VideoFrame.useStage(const Size(601, 800)), isTrue);
+      expect(VideoFrame.useStage(const Size(800, 600)), isTrue);
+      expect(VideoFrame.useStage(const Size(1920, 1080)), isTrue);
+    });
+
+    test('contain centers a 9:16 clip on a wide screen', () {
+      const video = VideoFrame.contain(Size(1200, 800));
+      expect(video.width, 450);
+      expect(video.height, 800);
+      expect(video.left, 375);
+      expect(video.top, 0);
+      expect(
+        video.point(0.25, 0.55),
+        offsetMoreOrLessEquals(const Offset(487.5, 440)),
+      );
+      expect(video.radius(0.12), closeTo(54, 1e-9));
+    });
+
+    test('contain letterboxes instead of cropping', () {
+      const screens = [
+        Size(390, 844),
+        Size(800, 600),
+        Size(1200, 800),
+        Size(1920, 1080),
+        Size(768, 1024),
+      ];
+      for (final screen in screens) {
+        final video = VideoFrame.contain(screen);
+        // The whole clip stays on screen: no negative edges, no overflow.
+        expect(video.left, greaterThanOrEqualTo(0));
+        expect(video.top, greaterThanOrEqualTo(0));
+        expect(
+          video.left + video.width,
+          lessThanOrEqualTo(screen.width + 1e-9),
+        );
+        expect(
+          video.top + video.height,
+          lessThanOrEqualTo(screen.height + 1e-9),
+        );
+        // One side always fills the screen: as large as complete allows.
+        final fillsWidth = (video.width - screen.width).abs() < 1e-9;
+        final fillsHeight = (video.height - screen.height).abs() < 1e-9;
+        expect(fillsWidth || fillsHeight, isTrue);
+      }
+    });
+
+    test('contain maps the editor crop onto a landscape source', () {
+      const video = VideoFrame.contain(
+        Size(1200, 800),
+        sourceSize: Size(1920, 1080),
+      );
+      expect(video.width, 1200);
+      expect(video.height, closeTo(675, 1e-9));
+      expect(video.left, 0);
+      expect(video.top, closeTo(62.5, 1e-9));
+      // The centered 9:16 crop keeps the frame center on screen center.
+      expect(
+        video.point(0.5, 0.5),
+        offsetMoreOrLessEquals(const Offset(600, 400)),
+      );
+      expect(video.radius(0.12), closeTo(45.5625, 1e-9));
+    });
+
+    test('contain falls back to 9:16 without a decoded size', () {
+      const invalid = VideoFrame.contain(
+        Size(1200, 800),
+        sourceSize: Size.zero,
+      );
+      const missing = VideoFrame.contain(Size(1200, 800));
+      expect(invalid.width, missing.width);
+      expect(invalid.height, missing.height);
+      expect(invalid.left, missing.left);
+      expect(
+        invalid.point(0.25, 0.55),
+        offsetMoreOrLessEquals(missing.point(0.25, 0.55)),
+      );
+    });
   });
 }
