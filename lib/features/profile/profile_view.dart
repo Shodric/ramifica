@@ -13,8 +13,6 @@ import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
 import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
-import 'package:ramifica/features/profile/install_guide.dart';
-import 'package:ramifica/features/profile/install_guide_banner.dart';
 import 'package:ramifica/features/profile/profile_bloc.dart';
 import 'package:ramifica/features/profile/profile_event.dart';
 import 'package:ramifica/features/profile/profile_header.dart';
@@ -192,7 +190,9 @@ class _ProfileViewState extends State<ProfileView> {
           child: BlocBuilder<ProfileBloc, ProfileState>(
             builder: (context, state) {
               final showActions =
-                  state.phase == ProfilePhase.loaded && state.isOwn && !_editing;
+                  state.phase == ProfilePhase.loaded &&
+                  state.isOwn &&
+                  !_editing;
               return Scaffold(
                 appBar: AppBar(
                   backgroundColor: RamificaColors.surface,
@@ -236,17 +236,9 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Widget _body(BuildContext context, ProfileState state) {
-    final showGuide =
-        widget.showInstallGuide?.call() ?? shouldShowInstallGuide();
     return ListView(
       padding: const .all(16),
       children: [
-        const Text('Profile', style: RamificaText.screenTitle),
-        const SizedBox(height: 16),
-        if (showGuide) ...[
-          InstallGuideBanner(shouldShow: () => showGuide),
-          const SizedBox(height: 16),
-        ],
         switch (state.phase) {
           .loading => const Center(child: CircularProgressIndicator()),
           .failed => Center(
@@ -316,25 +308,6 @@ class _ProfileViewState extends State<ProfileView> {
           Text(
             state.failure!,
             style: RamificaText.body.copyWith(color: RamificaColors.error),
-          ),
-        ],
-        if (state.isOwn && !editing) ...[
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              OutlinedButton(
-                key: const Key('profileEditButton'),
-                onPressed: () => setState(() => _editing = true),
-                child: const Text('Edit profile'),
-              ),
-              const SizedBox(width: 12),
-              TextButton(
-                key: const Key('profileSignOutButton'),
-                onPressed: () =>
-                    context.read<ProfileBloc>().add(const SignOutRequested()),
-                child: const Text('Sign out'),
-              ),
-            ],
           ),
         ],
         const SizedBox(height: 16),
@@ -438,8 +411,7 @@ class _ProfileViewState extends State<ProfileView> {
   /// Production endings source: the viewer's unlocked rows mapped to
   /// display models, skipping the unreadable ones.
   static Future<List<UnlockedEnding>> _fetchUnlockedEndings() async {
-    final rows = await createFirebaseRunRepository()
-        .fetchUnlockedEndingRows();
+    final rows = await createFirebaseRunRepository().fetchUnlockedEndingRows();
     return UnlockedEnding.listFromRows(rows);
   }
 
