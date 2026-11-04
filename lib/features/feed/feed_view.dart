@@ -63,6 +63,10 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// Accumulated vertical drag, reset on each new drag. A slow long drag
   /// past 64 px counts as a swipe, like a fast fling does.
   double _dragDy = 0;
+
+  /// Accumulated horizontal drag, same 64 px rule. A rightward swipe
+  /// exits the feed to the open story's tree.
+  double _dragDx = 0;
   Size? _previewVideoSize;
 
   /// Whether the clip was hidden when the current tap pressed down. Read
@@ -297,6 +301,29 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                             if (!fling && !drag) return;
                             bloc.add(const StorySwiped());
                           },
+                          // Swipe right exits the fullscreen feed to the
+                          // tree of the story on screen. Same path as the
+                          // rail's "See map" pill, so previews stay put.
+                          onHorizontalDragStart: (_) {
+                            _dragDx = 0;
+                            if (_pointer != null) {
+                              _pointer = null;
+                              bloc.add(const HoldCancelled());
+                            }
+                          },
+                          onHorizontalDragUpdate: (details) {
+                            _dragDx += details.primaryDelta ?? 0;
+                          },
+                          onHorizontalDragEnd: (details) {
+                            _pointer = null;
+                            final fling = (details.primaryVelocity ?? 0) >= 200;
+                            final drag = _dragDx >= 64;
+                            _dragDx = 0;
+                            if (widget.preview) return;
+                            if (!fling && !drag) return;
+                            bloc.add(const MapRequested());
+                            _openMap(context, state.storyId);
+                          },
                           child: Stack(
                             fit: .expand,
                             children: [
@@ -379,12 +406,17 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                   child: Align(
                                     alignment: .centerLeft,
                                     child: AnimatedOpacity(
-                                      opacity: state.phase == .playing ? 1 : 0,
+                                      opacity:
+                                          state.phase == .playing ||
+                                                  state.phase == .ending
+                                              ? 1
+                                              : 0,
                                       duration: const Duration(
                                         milliseconds: 200,
                                       ),
                                       child: IgnorePointer(
-                                        ignoring: state.phase != .playing,
+                                        ignoring: state.phase != .playing &&
+                                            state.phase != .ending,
                                         child: StoryChip(
                                           title: playback.story.title,
                                           author:
@@ -658,9 +690,14 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                   ),
                                 ),
                               if (showCard)
+                                // Stops before the right rail (right: 8, 56
+                                // wide at most) keeping the same 24 outer gap
+                                // as the left edge, so the card flexes with
+                                // the screen width instead of sliding under
+                                // the rail buttons.
                                 Positioned(
                                   left: 24,
-                                  right: 24,
+                                  right: 8 + 56 + 24,
                                   bottom:
                                       MediaQuery.paddingOf(context).bottom + 96,
                                   child: EndingCard(
@@ -672,16 +709,6 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     rewardCode: playback.node.rewardCode,
                                     unlockedTitle: state.sagaUnlocked?.title,
                                     badgeUrl: playback.node.endingBadgeUrl,
-                                    onSeeMap: () {
-                                      if (widget.preview) return;
-                                      bloc.add(const MapRequested());
-                                      _openMap(context, state.storyId);
-                                    },
-                                    onTryAnotherPath: () {
-                                      if (!widget.preview) {
-                                        bloc.add(const OtherPathRequested());
-                                      }
-                                    },
                                   ),
                                 ),
                             ],

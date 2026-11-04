@@ -4,7 +4,7 @@ import 'package:ramifica/core/widgets/ending_badge.dart';
 import 'package:ramifica/core/widgets/glass_panel.dart';
 
 /// Card over the last frame of an ending. Name, badge, the reward code
-/// (when the ending granted one), see map, try another path.
+/// (when the ending granted one). Actions live on the right rail.
 class EndingCard extends StatelessWidget {
   const EndingCard({
     super.key,
@@ -13,8 +13,10 @@ class EndingCard extends StatelessWidget {
     this.rewardCode,
     this.unlockedTitle,
     this.badgeUrl,
-    required this.onSeeMap,
-    required this.onTryAnotherPath,
+    // Kept optional so existing callers still compile; the card no longer
+    // renders its own buttons because the right rail covers the actions.
+    this.onSeeMap,
+    this.onTryAnotherPath,
   });
 
   final String name;
@@ -30,8 +32,8 @@ class EndingCard extends StatelessWidget {
   /// The unlocked prize image. Null hides the badge block. Display only.
   final String? badgeUrl;
 
-  final VoidCallback onSeeMap;
-  final VoidCallback onTryAnotherPath;
+  final VoidCallback? onSeeMap;
+  final VoidCallback? onTryAnotherPath;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +42,7 @@ class EndingCard extends StatelessWidget {
         mainAxisSize: .min,
         crossAxisAlignment: .start,
         children: [
-          if (badgeUrl != null) ...[
+          if (badgeUrl?.isNotEmpty ?? false) ...[
             ClipRRect(
               borderRadius: .circular(16),
               child: Image.network(
@@ -55,12 +57,6 @@ class EndingCard extends StatelessWidget {
                   child: Icon(Icons.emoji_events_outlined, size: 48),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Desbloqueaste $name',
-              key: const ValueKey('desbloqueaste-title'),
-              style: RamificaText.label,
             ),
             const SizedBox(height: 8),
           ],
@@ -90,24 +86,6 @@ class EndingCard extends StatelessWidget {
                 style: RamificaText.body,
               ),
           ],
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: onSeeMap,
-                  child: const Text('See map'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: onTryAnotherPath,
-                  child: const Text('Try another path'),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
