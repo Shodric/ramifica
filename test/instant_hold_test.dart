@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ramifica/core/cue_clock.dart';
 import 'package:ramifica/core/functions_client.dart';
@@ -11,6 +13,8 @@ import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
 import 'package:ramifica/features/feed/feed_state.dart';
+import 'package:ramifica/features/feed/feed_view.dart';
+import 'package:ramifica/features/feed/node_video.dart';
 
 const _png =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8'
@@ -323,6 +327,31 @@ void main() {
     ]);
   });
 
+  testWidgets('releasing after an instant arrival does not pause', (
+    tester,
+  ) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock: clock);
+    addTearDown(() => _closeBloc(tester, bloc));
+    await _showWindow(tester, bloc, clock);
+
+    final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
+    await tester.pump();
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.holding);
+    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.playback!.node.nodeId, 'node_003');
+
+    // The hold's own release resolves a tap; the fresh clip must ignore it.
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(bloc.state.phase, FeedPhase.playing);
+    expect(bloc.state.userPaused, isFalse);
+  });
+
   test('playback parses the scene table and defaults it empty', () {
     final playback = Playback.fromJson(_playback());
     expect(playback.nodes.keys, unorderedEquals(['node_001', 'node_002', 'node_003']));
@@ -346,6 +375,85 @@ void main() {
 Future<void> _open(FeedBloc bloc) async {
   bloc.add(const StoryOpened(storyId: 'story_temple'));
   await bloc.stream.firstWhere((state) => state.phase == FeedPhase.playing);
+}
+
+Future<void> _showWindow(
+  WidgetTester tester,
+  FeedBloc bloc,
+  _Clock clock,
+) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: BlocProvider.value(
+        value: bloc,
+        child: FeedView(clipPlayer: _Clip()),
+      ),
+    ),
+  );
+  bloc.add(const StoryOpened(storyId: 'story_temple'));
+  await tester.pumpAndSettle();
+  bloc.add(const PauseReached());
+  await tester.pumpAndSettle();
+  clock.fire();
+  await tester.pumpAndSettle();
+}
+
+Offset _ring(WidgetTester tester, String choiceId) {
+  return tester.getCenter(find.byKey(ValueKey('ring-$choiceId')));
+}
+
+Future<void> _closeBloc(WidgetTester tester, FeedBloc bloc) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  var closed = false;
+  final closing = bloc.close().then((_) => closed = true);
+  for (var i = 0; i < 30 && !closed; i++) {
+    await tester.pump();
+    await tester.runAsync(() async {});
+  }
+  expect(closed, isTrue);
+  await closing;
+}
+
+class _Clip implements ClipPlayer {
+  @override
+  bool ready = false;
+  final _listeners = <VoidCallback>[];
+
+  @override
+  bool get ended => false;
+
+  @override
+  Future<void> open({
+    required Uri url,
+    required bool muted,
+    required bool play,
+  }) async {
+    ready = true;
+    for (final listener in List<VoidCallback>.of(_listeners)) {
+      listener();
+    }
+  }
+
+  @override
+  Future<void> setMuted(bool muted) async {}
+
+  @override
+  void pause() {}
+
+  @override
+  void resume() {}
+
+  @override
+  void addListener(VoidCallback listener) => _listeners.add(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _listeners.remove(listener);
+
+  @override
+  Widget buildView() => const SizedBox.expand();
+
+  @override
+  void dispose() {}
 }
 
 Future<void> _toHolding(FeedBloc bloc, _Clock clock, String choiceId) async {

@@ -76,6 +76,14 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// refreshes it on its way down, so a stale value cannot survive.
   bool _hiddenAtDown = false;
 
+  /// Swallows the tap of a tracked hold's release. The finger that held a
+  /// zone resolves its down+up as a tap on release; with instant arrival
+  /// the next clip already plays by then, so without this the hold would
+  /// pause it. Set by the release catcher for the tracked pointer only
+  /// (plain taps never set it) and consumed by the next tap, which always
+  /// runs after the pointer-up dispatch.
+  bool _consumeTap = false;
+
   /// Whether the clip was still auto-muted when the current tap pressed
   /// down. The down already turned the sound on through `UserGestured`,
   /// so the mute press of that same tap skips its toggle instead of
@@ -296,7 +304,9 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                           onTap: () {
                             final woke = _hiddenAtDown;
                             _hiddenAtDown = false;
-                            if (!woke) bloc.add(const VideoTapped());
+                            final held = _consumeTap;
+                            _consumeTap = false;
+                            if (!woke && !held) bloc.add(const VideoTapped());
                           },
                           // A hold never moves, so a vertical drag is never a hold.
                           // The bloc still gates: speaking, window, holding,
@@ -719,6 +729,9 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                       _downPositions.remove(pointer);
                                       if (pointer != _pointer) return;
                                       _pointer = null;
+                                      // The hold's own release: never a pause
+                                      // toggle, completed or cancelled.
+                                      _consumeTap = true;
                                       bloc.add(const HoldCancelled());
                                     },
                                   ),
