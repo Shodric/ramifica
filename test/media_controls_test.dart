@@ -194,7 +194,6 @@ void main() {
           body: SingleChildScrollView(
             child: StepFrames(
               node: DraftNode(nodeId: 'n'),
-              isRoot: true,
               busy: true,
               generatingWhich: 'start',
               phase: 'saving',
