@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -73,6 +75,10 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   final _downPositions = <int, Offset>{};
   Size? _previewVideoSize;
 
+  /// Decoded size of the active staged clip. Ignored once the story changes.
+  String? _stageStoryId;
+  Size? _stageVideoSize;
+
   /// Whether the clip was hidden when the current tap pressed down. Read
   /// synchronously on pointer down and consumed on tap up, so the tap
   /// that wakes a hidden clip never toggles the pause. Every tap
@@ -93,16 +99,22 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// muting back. Refreshed on every down, like [_hiddenAtDown].
   bool _autoMutedAtDown = false;
 
+  /// Down position of the tap that may toggle pause. Letterbox hits on a
+  /// wide stage are ignored; the phone frame has no margin.
+  Offset? _tapLocal;
+
   /// Shows the resume flash. Set on the paused-to-playing edge and
   /// cleared 600ms later; [_flashToken] drops stale timers when taps
   /// come faster than that.
   bool _playFlash = false;
   int _flashToken = 0;
+  Timer? _playFlashTimer;
 
   void _flashPlay() {
     final token = ++_flashToken;
     setState(() => _playFlash = true);
-    Future.delayed(const Duration(milliseconds: 600), () {
+    _playFlashTimer?.cancel();
+    _playFlashTimer = Timer(const Duration(milliseconds: 600), () {
       if (!mounted || token != _flashToken) return;
       setState(() => _playFlash = false);
     });
@@ -214,6 +226,14 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
     setState(() => _previewVideoSize = size);
   }
 
+  void _onStageVideoSize(String storyId, Size size) {
+    if (_stageStoryId == storyId && size == _stageVideoSize) return;
+    setState(() {
+      _stageStoryId = storyId;
+      _stageVideoSize = size;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -229,6 +249,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _playFlashTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -360,14 +381,27 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                         : 'Feed ${widget.storyId}',
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final video = widget.preview
-                            ? VideoFrame.fitWidth(
-                                constraints.biggest,
-                                sourceSize:
-                                    _previewVideoSize ??
-                                    widget.previewVideoSize,
-                              )
-                            : VideoFrame(constraints.biggest);
+                        final screen = constraints.biggest;
+                        final staged =
+                            !widget.preview && VideoFrame.useStage(screen);
+                        VideoFrame frameFor(bool activeClip, String storyId) {
+                          if (widget.preview) {
+                            return VideoFrame.fitWidth(
+                              screen,
+                              sourceSize:
+                                  _previewVideoSize ?? widget.previewVideoSize,
+                            );
+                          }
+                          if (!staged) return VideoFrame(screen);
+                          final decoded = activeClip && _stageStoryId == storyId
+                              ? _stageVideoSize
+                              : null;
+                          return VideoFrame.contain(
+                            screen,
+                            sourceSize: decoded,
+                          );
+                        }
+
                         final heldId = state.holdChoiceId;
                         var holdX = 0.0;
                         var holdY = 0.0;
@@ -394,19 +428,40 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                               ? RamificaColors.hotspot
                               : RamificaColors.nodeActive,
                         );
+                        final activeFrame = frameFor(
+                          playback != null,
+                          playback?.story.storyId ?? '',
+                        );
+                        final stageRect = Rect.fromLTWH(
+                          activeFrame.left,
+                          activeFrame.top,
+                          activeFrame.width,
+                          activeFrame.height,
+                        );
                         return GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           // A tap on the video toggles the pause while the clip
                           // is playing; the bloc ignores it anywhere else, so
                           // hotspots, narration, and the ending card are safe.
                           // The tap that wakes a hidden clip is consumed here
-                          // and never reaches the bloc as a toggle.
+                          // and never reaches the bloc as a toggle. On a wide
+                          // stage, the letterbox is not the video.
+                          onTapDown: (details) {
+                            _tapLocal = details.localPosition;
+                          },
                           onTap: () {
                             final woke = _hiddenAtDown;
                             _hiddenAtDown = false;
                             final held = _consumeTap;
                             _consumeTap = false;
-                            if (!woke && !held) bloc.add(const VideoTapped());
+                            final position = _tapLocal;
+                            if (woke || held) return;
+                            if (staged &&
+                                (position == null ||
+                                    !stageRect.contains(position))) {
+                              return;
+                            }
+                            bloc.add(const VideoTapped());
                           },
                           // No vertical drag handlers here: the pager below
                           // owns vertical swipes natively (1:1 drag with
@@ -475,35 +530,58 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                         state.phase == .ending;
                                     final railShown =
                                         !activeClip || !zonesVisible;
+                                    final video = frameFor(
+                                      activeClip,
+                                      clip.story.storyId,
+                                    );
+                                    final player = _ReelPlayer(
+                                      playback: clip,
+                                      active: active,
+                                      play: play,
+                                      restAtEnd:
+                                          activeClip && state.phase != .playing,
+                                      muted: state.muted,
+                                      fit: widget.preview
+                                          ? BoxFit.fitWidth
+                                          : staged
+                                          ? BoxFit.contain
+                                          : BoxFit.cover,
+                                      player:
+                                          !loop &&
+                                              page.story.storyId == _clipStoryId
+                                          ? widget.clipPlayer
+                                          : null,
+                                      onVideoSizeChanged:
+                                          widget.preview && activeClip
+                                          ? _onPreviewVideoSize
+                                          : staged && activeClip
+                                          ? (size) => _onStageVideoSize(
+                                              clip.story.storyId,
+                                              size,
+                                            )
+                                          : null,
+                                      onEnded: () {
+                                        if (!activeClip) return;
+                                        bloc.add(const PauseReached());
+                                      },
+                                    );
                                     return Stack(
                                       fit: .expand,
                                       children: [
-                                        _ReelPlayer(
-                                          playback: clip,
-                                          active: active,
-                                          play: play,
-                                          restAtEnd:
-                                              activeClip &&
-                                              state.phase != .playing,
-                                          muted: state.muted,
-                                          fit: widget.preview
-                                              ? BoxFit.fitWidth
-                                              : BoxFit.cover,
-                                          player:
-                                              !loop &&
-                                                  page.story.storyId ==
-                                                      _clipStoryId
-                                              ? widget.clipPlayer
-                                              : null,
-                                          onVideoSizeChanged:
-                                              widget.preview && activeClip
-                                              ? _onPreviewVideoSize
-                                              : null,
-                                          onEnded: () {
-                                            if (!activeClip) return;
-                                            bloc.add(const PauseReached());
-                                          },
-                                        ),
+                                        if (staged)
+                                          const ColoredBox(
+                                            color: RamificaColors.surface,
+                                          ),
+                                        if (staged)
+                                          Positioned(
+                                            left: video.left,
+                                            top: video.top,
+                                            width: video.width,
+                                            height: video.height,
+                                            child: player,
+                                          )
+                                        else
+                                          player,
                                         const Positioned(
                                           left: 0,
                                           top: 0,
@@ -684,12 +762,17 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                             ),
                                           ),
                                         Positioned(
-                                          right: 8,
+                                          left: staged
+                                              ? video.left + video.width + 12
+                                              : null,
+                                          right: staged ? null : 8,
                                           top: MediaQuery.paddingOf(context)
                                               .top,
                                           bottom: 88,
                                           child: Align(
-                                            alignment: .bottomRight,
+                                            alignment: staged
+                                                ? .bottomLeft
+                                                : .bottomRight,
                                             // The whole right rail fades out while the
                                             // choice zones are up: creator, map, like,
                                             // comment, save, and mute. Neighbor pages

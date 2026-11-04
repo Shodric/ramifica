@@ -71,11 +71,11 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<PreviewCueStarted>(_onPreviewCueStarted);
     on<HoldStarted>(_onHold);
     on<HoldCancelled>(_onCancel);
-    on<HoldCompleted>(_onHeld, transformer: droppable());
+    on<HoldCompleted>(_onHeld, transformer: _droppable());
     on<BackgroundCommitAcked>(_onAcked);
     on<BackgroundCommitInvalid>(_onInvalidAck);
     on<OtherPathRequested>(_onOtherPath, transformer: restartable());
-    on<MapRequested>(_onMap, transformer: droppable());
+    on<MapRequested>(_onMap, transformer: _droppable());
     final voice = previewPlayback?.node.ttsAudioUrl?.trim();
     if (voice != null && voice.isNotEmpty) {
       unawaited(this.narrator.prepare(voice));
@@ -1252,6 +1252,57 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 }
 
 String _uuidRequestId() => const Uuid().v4();
+
+/// Drops a new event while the previous one is still running.
+///
+/// `package:bloc_concurrency`'s droppable closes its controller from the
+/// source done-callback and then cancels that same subscription, so
+/// [Bloc.close] never finishes. Closing after that callback returns avoids
+/// the deadlock.
+EventTransformer<E> _droppable<E>() {
+  return (events, mapper) {
+    late StreamSubscription<E> source;
+    StreamSubscription<E>? inner;
+    var sourceDone = false;
+    late StreamController<E> controller;
+
+    controller = StreamController<E>(
+      sync: true,
+      onCancel: () {
+        final pending = inner?.cancel();
+        if (sourceDone) return pending ?? Future<void>.value();
+        return Future.wait<void>([
+          if (pending != null) pending,
+          source.cancel(),
+        ]);
+      },
+    );
+
+    source = events.listen(
+      (event) {
+        if (inner != null) return;
+        inner = mapper(event).listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: () {
+            inner = null;
+            if (sourceDone && !controller.isClosed) controller.close();
+          },
+        );
+      },
+      onError: controller.addError,
+      onDone: () {
+        sourceDone = true;
+        if (inner != null || controller.isClosed) return;
+        scheduleMicrotask(() {
+          if (!controller.isClosed) controller.close();
+        });
+      },
+    );
+
+    return controller.stream;
+  };
+}
 
 /// One queued hold. The future settles exactly once: the legacy path
 /// awaits it, while local holds swallow it and listen for ack events.
