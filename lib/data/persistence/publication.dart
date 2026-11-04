@@ -59,15 +59,6 @@ List<String> validatePublication(Json story, Map<String, Json> nodes) {
       if (n['startImageStatus'] != 'ready') {
         problems.add('Node $id needs a ready start image.');
       }
-    } else {
-      final parent = nodes[n['startFromNodeId']];
-      if (parent == null) {
-        problems.add('Node $id is missing its parent link.');
-      } else if (!hasText(n['startParentFrameHash']) ||
-          !hasText(parent['videoFrameLastHash']) ||
-          n['startParentFrameHash'] != parent['videoFrameLastHash']) {
-        problems.add('Node $id is out of sync with its parent.');
-      }
     }
     final choices = [
       for (final c in n['choices'] as List? ?? const []) jsonMap(c),

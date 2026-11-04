@@ -41,10 +41,10 @@ export interface ValidatableStory {
 /**
  * Publishing checklist from the game rules. Pure: takes the story doc and
  * its nodes, returns one message per missing piece, empty when it can go
- * `published`. `videoFrameLastHash` is caller-computed (sha of the
- * current last-frame bytes), not a Firestore field; it anchors the
- * desync check.
+ * `published`. Structure-only: parent-frame hashes are generation
+ * metadata and never block publishing.
  * @param {ValidatableStory} story Story doc.
+ * @param {ValidatableNode[]} nodes All nodes of the story.
  * @param {ValidatableNode[]} nodes All nodes of the story.
  * @return {string[]} One message per missing piece.
  */
@@ -84,17 +84,14 @@ export const validateStory = (
   }
 
   for (const node of nodes) {
-    problems.push(
-      ...validateNode(node, byId, node.nodeId === story.rootNodeId)
-    );
+    problems.push(...validateNode(node, byId));
   }
   return problems;
 };
 
 const validateNode = (
   node: ValidatableNode,
-  byId: Map<string, ValidatableNode>,
-  isRoot: boolean
+  byId: Map<string, ValidatableNode>
 ): string[] => {
   const problems: string[] = [];
   if (node.title.trim() === "" || node.title.length > 40) {
@@ -106,7 +103,7 @@ const validateNode = (
   if (node.videoStatus !== "ready" || !node.videoUrl) {
     problems.push(`Node ${node.nodeId} needs a ready video.`);
   }
-  problems.push(...validateFrames(node, byId, isRoot));
+  problems.push(...validateFrames(node));
   if (node.isEnding) {
     problems.push(...validateEnding(node));
   } else {
@@ -115,39 +112,13 @@ const validateNode = (
   return problems;
 };
 
-const validateFrames = (
-  node: ValidatableNode,
-  byId: Map<string, ValidatableNode>,
-  isRoot: boolean
-): string[] => {
-  if (node.videoSource === "upload") {
-    return node.videoFrameLastUrl ?
-      [] :
-      [`Node ${node.nodeId} needs its extracted last frame.`];
-  }
-  if (isRoot) {
+const validateFrames = (node: ValidatableNode): string[] => {
+  if (node.videoSource !== "upload") {
     return [];
   }
-  const problems: string[] = [];
-  if (!node.startFromNodeId) {
-    problems.push(`Node ${node.nodeId} is missing its parent link.`);
-    return problems;
-  }
-  const parent = byId.get(node.startFromNodeId);
-  if (!parent) {
-    problems.push(`Node ${node.nodeId} points to a missing parent.`);
-    return problems;
-  }
-  if (!node.startParentFrameHash) {
-    problems.push(`Node ${node.nodeId} is missing its parent frame hash.`);
-  } else if (!parent.videoFrameLastHash) {
-    problems.push(
-      `Node ${node.nodeId} cannot verify sync: parent frame hash missing.`
-    );
-  } else if (node.startParentFrameHash !== parent.videoFrameLastHash) {
-    problems.push(`Node ${node.nodeId} is out of sync with its parent.`);
-  }
-  return problems;
+  return node.videoFrameLastUrl
+    ? []
+    : [`Node ${node.nodeId} needs its extracted last frame.`];
 };
 
 const validateDecision = (
