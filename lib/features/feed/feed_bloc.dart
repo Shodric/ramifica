@@ -312,12 +312,12 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   void _onHold(HoldStarted event, Emitter<FeedState> emit) {
     if (_preview) {
       // The preview shows its zones early, once the cue starts, so a
-      // hold may begin mid-narration too. The feed only holds at window.
+      // hold may begin mid-narration too, like in the feed.
       final zonesUp =
           (state.phase == .speaking && state.previewCueStarted) ||
           state.phase == .window;
       if (!zonesUp) return;
-    } else if (state.phase != .window) {
+    } else if (state.phase != .window && state.phase != .speaking) {
       return;
     }
     final choice = _choice(event.choiceId);
@@ -326,6 +326,8 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
   }
 
   void _onCancel(HoldCancelled event, Emitter<FeedState> emit) {
+    // A cancelled mid-narration hold lands in the window: the grab
+    // already cut the cue, so there is nothing to resume.
     if (state.phase != .holding || _holdSealed) return;
     _holdSealed = false;
     _preloadChoiceTargets();
@@ -527,9 +529,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
 
   void _startHold(PlaybackChoice choice, Emitter<FeedState> emit) {
     _holdSealed = false;
-    // A preview hold may begin mid-narration; grabbing a choice cuts it.
-    // The feed only holds once the cue is done, so this is a no-op there.
-    if (_preview) _silence();
+    // A hold may begin mid-narration; grabbing a choice cuts the cue.
+    // At window nothing is playing, so this is a no-op there.
+    _silence();
     final url = choice.target?.videoUrl.trim();
     if (url != null && url.isNotEmpty) prefetcher.promote(url);
     emit(

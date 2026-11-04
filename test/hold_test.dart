@@ -178,6 +178,56 @@ void main() {
     );
   });
 
+  testWidgets('hotspots appear with the narration and hold mid-voice', (
+    tester,
+  ) async {
+    final clock = _Clock();
+    final bloc = _bloc(clock);
+    addTearDown(bloc.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider.value(
+          value: bloc,
+          child: FeedView(clipPlayer: _Clip()),
+        ),
+      ),
+    );
+    bloc.add(const StoryOpened(storyId: 'story_temple'));
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.playing);
+    expect(find.byType(ChoiceZone), findsNothing);
+
+    // The muted cue runs on the narration timer: zones rise with it,
+    // enabled, instead of waiting for the window.
+    bloc.add(const PauseReached());
+    await _pumpUntil(tester, () => bloc.state.phase == FeedPhase.speaking);
+    expect(find.byType(ChoiceZone), findsNWidgets(2));
+    expect(
+      tester
+          .widget<ChoiceZone>(find.byKey(const ValueKey('choice_ridge')))
+          .enabled,
+      isTrue,
+    );
+
+    // A mid-narration grab cuts the cue and holds like at window; a
+    // stray cue end landing mid-hold changes nothing.
+    final gesture = await tester.startGesture(_ring(tester, 'choice_ridge'));
+    await tester.pump();
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.holding);
+    expect(bloc.state.holdChoiceId, 'choice_ridge');
+    expect(clock.scheduled, isNull);
+    bloc.add(const VoiceFinished());
+    await tester.pump();
+    expect(bloc.state.phase, FeedPhase.holding);
+
+    // Releasing lands in the window with the zones still up.
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(bloc.state.phase, FeedPhase.window);
+    expect(bloc.state.holdChoiceId, isNull);
+    expect(find.byType(ChoiceZone), findsNWidgets(2));
+  });
+
   testWidgets('the window shows each label under its ring', (tester) async {
     final clock = _Clock();
     final bloc = _bloc(clock, voice: false);

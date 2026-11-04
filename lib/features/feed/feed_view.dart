@@ -205,13 +205,13 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                   !state.endingSpeaking &&
                   playback.node.isEnding;
               // The choice zones are up. The engagement rail hides while
-              // they show, in both feed and preview; mute and map stay.
+              // they show, in both feed and preview; mute and map stay. Zones rise
+              // with the narration and stay through the window.
               final zonesVisible =
                   playback != null &&
                   !playback.node.isEnding &&
-                  ((widget.preview &&
-                          state.phase == .speaking &&
-                          state.previewCueStarted) ||
+                  ((state.phase == .speaking &&
+                          (!widget.preview || state.previewCueStarted)) ||
                       state.phase == .window ||
                       state.phase == .holding);
               return Listener(
@@ -408,14 +408,15 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     child: AnimatedOpacity(
                                       opacity:
                                           state.phase == .playing ||
-                                                  state.phase == .ending
-                                              ? 1
-                                              : 0,
+                                              state.phase == .ending
+                                          ? 1
+                                          : 0,
                                       duration: const Duration(
                                         milliseconds: 200,
                                       ),
                                       child: IgnorePointer(
-                                        ignoring: state.phase != .playing &&
+                                        ignoring:
+                                            state.phase != .playing &&
                                             state.phase != .ending,
                                         child: StoryChip(
                                           title: playback.story.title,
@@ -468,7 +469,8 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                         ? ((state.phase == .speaking &&
                                                   state.previewCueStarted) ||
                                               state.phase == .window)
-                                        : state.phase == .window,
+                                        : state.phase == .window ||
+                                              state.phase == .speaking,
                                     icon: choice.icon,
                                     iconColor: choice.iconColor,
                                     index: i,

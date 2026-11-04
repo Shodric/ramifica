@@ -50,8 +50,8 @@ final class PreviewCueStarted extends FeedEvent {
   const PreviewCueStarted();
 }
 
-/// A finger pressed a zone during the window (or mid-narration in the
-/// editor preview, whose zones show once the cue starts).
+/// A finger pressed a zone during the narration or the window that
+/// follows it.
 final class HoldStarted extends FeedEvent {
   const HoldStarted(this.choiceId);
 
