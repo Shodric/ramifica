@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/persistence/document_store.dart';
 import 'package:ramifica/data/persistence/draft_persistence.dart';
