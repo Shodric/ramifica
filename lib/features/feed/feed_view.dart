@@ -543,8 +543,8 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                   child: Align(
                                     alignment: .bottomRight,
                                     // The whole right rail fades out while the
-                                    // choice zones are up: map, like, comment,
-                                    // save, and mute.
+                                    // choice zones are up: creator, map, like,
+                                    // comment, save, and mute.
                                     child: AnimatedOpacity(
                                       key: const ValueKey('action-rail'),
                                       opacity: zonesVisible ? 0 : 1,
@@ -556,52 +556,63 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                         child: Column(
                                           mainAxisSize: .min,
                                           children: [
-                                            // Stitch right-rail map entry: icon-only
-                                            // glass pill. No counts, no drawer;
-                                            // opens the map.
+                                            // Creator avatar above the map entry. It
+                                            // opens `/profile/<uid>` with the
+                                            // creator's stories and endings.
+                                            // Hidden while the uid is unknown.
                                             const SizedBox(height: 12),
-                                            Tooltip(
-                                              message: 'See map',
-                                              child: GestureDetector(
-                                                onTap: () {
-                                                  if (widget.preview) return;
-                                                  bloc.add(
-                                                    const MapRequested(),
-                                                  );
-                                                  _openMap(
-                                                    context,
-                                                    state.storyId,
-                                                  );
-                                                },
-                                                child: Container(
-                                                  width: 44,
-                                                  height: 44,
-                                                  decoration: BoxDecoration(
-                                                    shape: BoxShape.circle,
-                                                    color: const Color(
-                                                      0xD82A292F,
-                                                    ),
-                                                    border: Border.all(
-                                                      color: const Color(
-                                                        0x4D00F2FE,
-                                                      ),
-                                                    ),
-                                                    boxShadow: const [
-                                                      BoxShadow(
-                                                        color: Color(
-                                                          0x6600F2FE,
-                                                        ),
-                                                        blurRadius: 14,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: const Icon(
-                                                    Icons.map_outlined,
-                                                    color: Color(0xFFE0FDFF),
-                                                    size: 22,
-                                                  ),
+                                            if ((state
+                                                        .playback
+                                                        ?.story
+                                                        .authorId ??
+                                                    '')
+                                                .isNotEmpty) ...[
+                                              _RailAction(
+                                                key: const ValueKey(
+                                                  'rail-creator',
+                                                ),
+                                                tooltip: 'Creator',
+                                                label: 'Creator',
+                                                icon: Icons.person,
+                                                iconColor:
+                                                    RamificaColors.textPrimary,
+                                                imageUrl: state
+                                                    .playback
+                                                    ?.story
+                                                    .authorPhotoUrl,
+                                                onTap: () => _openCreator(
+                                                  context,
+                                                  state
+                                                      .playback
+                                                      ?.story
+                                                      .authorId,
+                                                  widget.preview,
                                                 ),
                                               ),
+                                              const SizedBox(height: 12),
+                                            ],
+                                            // Map entry, same shape and label
+                                            // as the other rail actions.
+                                            _RailAction(
+                                              key: const ValueKey('rail-map'),
+                                              tooltip: 'See map',
+                                              label: 'Map',
+                                              icon: Icons.map_outlined,
+                                              iconColor: const Color(
+                                                0xFFE0FDFF,
+                                              ),
+                                              iconSize: 22,
+                                              glow: true,
+                                              onTap: () {
+                                                if (widget.preview) return;
+                                                bloc.add(
+                                                  const MapRequested(),
+                                                );
+                                                _openMap(
+                                                  context,
+                                                  state.storyId,
+                                                );
+                                              },
                                             ),
                                             // Engagement actions: like, comment,
                                             // save. They toggle locally until the
@@ -774,6 +785,7 @@ class _RailAction extends StatelessWidget {
     required this.iconColor,
     this.iconSize = 24,
     this.glow = false,
+    this.imageUrl,
     required this.onTap,
   });
 
@@ -783,6 +795,9 @@ class _RailAction extends StatelessWidget {
   final Color iconColor;
   final double iconSize;
   final bool glow;
+
+  /// A profile photo shown instead of [icon]. Null or blank keeps the icon.
+  final String? imageUrl;
   final VoidCallback onTap;
 
   @override
@@ -811,7 +826,12 @@ class _RailAction extends StatelessWidget {
                       ]
                     : null,
               ),
-              child: Icon(icon, color: iconColor, size: iconSize),
+              child: _RailCircle(
+                icon: icon,
+                iconColor: iconColor,
+                iconSize: iconSize,
+                imageUrl: imageUrl,
+              ),
             ),
             const SizedBox(height: 2),
             Text(
@@ -824,6 +844,40 @@ class _RailAction extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The rail circle contents: a profile photo when [imageUrl] is set, the
+/// icon otherwise. A broken photo falls back to the icon.
+class _RailCircle extends StatelessWidget {
+  const _RailCircle({
+    required this.icon,
+    required this.iconColor,
+    required this.iconSize,
+    this.imageUrl,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final double iconSize;
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl?.trim();
+    if (url == null || url.isEmpty) {
+      return Icon(icon, color: iconColor, size: iconSize);
+    }
+    return ClipOval(
+      child: Image.network(
+        url,
+        width: 44,
+        height: 44,
+        fit: .cover,
+        errorBuilder: (context, error, stack) =>
+            Icon(icon, color: iconColor, size: iconSize),
       ),
     );
   }
@@ -874,5 +928,17 @@ void _openMap(BuildContext context, String? storyId) {
     // Widget tests mount FeedView without the shell. ProviderNotFoundException
     // implements Exception, not FlutterError. The MapRequested event above
     // keeps the contract; navigation needs the real app.
+  }
+}
+
+void _openCreator(BuildContext context, String? authorId, bool preview) {
+  // Previews stay put, like the rail's "See map" entry.
+  if (preview) return;
+  final uid = authorId?.trim();
+  if (uid == null || uid.isEmpty) return;
+  try {
+    AppNavigation.read(context).go(AppRoutes.profileOf(uid));
+  } on FlutterError {
+    // Widget tests mount FeedView without the router.
   }
 }

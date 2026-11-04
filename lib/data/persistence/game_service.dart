@@ -247,6 +247,8 @@ class ClientGameService {
         'storyId': storyId,
         'title': story['title'],
         'authorName': story['authorName'] ?? 'Unknown',
+        'authorId': story['authorId'],
+        'authorPhotoUrl': story['authorPhotoUrl'],
       },
       'node': {
         ...node,

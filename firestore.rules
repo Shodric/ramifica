@@ -136,7 +136,8 @@ service cloud.firestore {
         && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'title', 'synopsis', 'coverUrl', 'tags', 'updatedAt', 'revision',
-          'status', 'activePublicationId', 'publishedAt', 'authorName'])
+          'status', 'activePublicationId', 'publishedAt', 'authorName',
+          'authorPhotoUrl'])
         && (request.resource.data.status == 'draft'
           || (request.resource.data.status == 'published'
             && request.resource.data.activePublicationId is string
