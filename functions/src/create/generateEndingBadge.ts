@@ -497,7 +497,7 @@ export const generateFramedBadgeBytes = async (args: {
  * @param {string} url Signed frame URL.
  * @return {Promise<Buffer | null>} The frame bytes, or null.
  */
-const downloadFrameBytes = async (
+export const downloadFrameBytes = async (
   url: string
 ): Promise<Buffer | null> => {
   try {
@@ -515,7 +515,7 @@ const downloadFrameBytes = async (
  * @param {Buffer} bytes Frame bytes.
  * @return {string} The mime type.
  */
-const sniffImageMime = (bytes: Buffer): string => {
+export const sniffImageMime = (bytes: Buffer): string => {
   if (
     bytes.length >= 4 &&
     bytes[0] === 0x89 && bytes[1] === 0x50 &&

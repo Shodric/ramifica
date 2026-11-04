@@ -1163,6 +1163,12 @@ void main() {
         open.videoGateMessage(rootless),
         'Generate the start frame to generate video.',
       );
+
+      const referenced = DraftNode(
+        nodeId: 'node_1',
+        startImageReferenceUrl: 'https://storage.invalid/r.jpg',
+      );
+      expect(open.videoGateMessage(referenced), isNull);
     });
 
     test('desync flags only stale child video', () {
@@ -2183,7 +2189,7 @@ void main() {
       expect(missing, contains('Node node_1 needs its extracted last frame.'));
       expect(
         missingForNode(node: node, isRoot: true),
-        contains('Node node_1 needs a ready start image.'),
+        isNot(contains('Node node_1 needs a ready start image.')),
       );
       expect(missing, contains('Node node_1 needs one or two choices.'));
       expect(missing, contains('Node node_1 needs a narrator line.'));

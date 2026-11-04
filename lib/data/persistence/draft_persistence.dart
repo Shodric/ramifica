@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/draft_node.dart';
@@ -79,9 +80,18 @@ class ClientDraftPersistence implements DraftPersistence {
   @override
   Stream<List<DraftNode>> watchNodes(String storyId) =>
       store.watch('stories/${documentId(storyId)}/nodes').map((docs) {
-        final nodes = [
-          for (final doc in docs) DraftNode.fromMap(doc.key, doc.value),
-        ];
+        final nodes = <DraftNode>[];
+        for (final doc in docs) {
+          try {
+            nodes.add(DraftNode.fromMap(doc.key, doc.value));
+          } catch (error) {
+            // One poison doc must never break live sync for the draft.
+            // Skip it loudly; the next snapshot retries. Catches broadly
+            // on purpose: on web a malformed snapshot value throws
+            // TypeError, not AppFailure.
+            debugPrint('watchNodes: skipping ${doc.key}: $error');
+          }
+        }
         remember(storyId, nodes);
         return nodes;
       });
@@ -95,7 +105,7 @@ class ClientDraftPersistence implements DraftPersistence {
     final storyId = store.newId('stories');
     final root = DraftNode(
       nodeId: store.newId('stories/$storyId/nodes'),
-      visibility: 'secret',
+      visibility: 'visible',
     );
     final story = DraftStory(
       storyId: storyId,
@@ -231,7 +241,7 @@ class ClientDraftPersistence implements DraftPersistence {
       final child = existing == null
           ? DraftNode(
               nodeId: childId,
-              visibility: 'secret',
+              visibility: 'visible',
               startFromNodeId: parentId,
               requestId: key,
             )

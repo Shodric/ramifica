@@ -62,11 +62,9 @@ List<String> validatePublication(Json story, Map<String, Json> nodes) {
     if (!hasText(n['videoFrameLastUrl'])) {
       problems.add('Node $id needs its extracted last frame.');
     }
-    if (id == root) {
-      if (n['startImageStatus'] != 'ready') {
-        problems.add('Node $id needs a ready start image.');
-      }
-    }
+    // No start-image requirement: the root clip may start straight from
+    // the author's reference still, and every later clip inherits the
+    // previous clip's extracted last frame, never a still.
     final choices = [
       for (final c in n['choices'] as List? ?? const []) jsonMap(c),
     ];

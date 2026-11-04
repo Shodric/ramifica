@@ -80,6 +80,19 @@ void main() {
   tearDown(() {
     store.close();
   });
+  test('watchNodes skips malformed docs instead of breaking live sync', () async {
+    seedReady(store);
+    store.documents['stories/s/nodes/poison'] = {'title': 123};
+    final nodes = await writer.watchNodes('s').first;
+    expect(
+      nodes.map((node) => node.nodeId),
+      containsAll(['root', 'end']),
+    );
+    expect(
+      nodes.map((node) => node.nodeId),
+      isNot(contains('poison')),
+    );
+  });
   test('story and root commit together with no reconstruction reads', () async {
     final (story, root) = await writer.createDraft('author', 'Story');
     expect(store.commits, 1);

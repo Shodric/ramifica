@@ -180,8 +180,9 @@ class CreateState {
   /// extracted last frame as S).
   String? videoGateMessage(DraftNode node) {
     if (isRoot(node.nodeId)) {
-      if (node.startImageStatus != 'ready' ||
-          node.startImageSourceUrl == null) {
+      if ((node.startImageStatus != 'ready' ||
+              node.startImageSourceUrl == null) &&
+          (node.startImageReferenceUrl ?? '').isEmpty) {
         return 'Generate the start frame to generate video.';
       }
       return null;
@@ -318,9 +319,8 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
   if (node.videoFrameLastUrl == null) {
     missing.add('Node $id needs its extracted last frame.');
   }
-  if (isRoot && node.startImageStatus != 'ready') {
-    missing.add('Node $id needs a ready start image.');
-  }
+  // No start-image requirement (mirrors validatePublication): the root
+  // clip may start straight from the author's reference still.
   if (node.isEnding) {
     if (node.choices.isNotEmpty) {
       missing.add('Ending $id must not have choices.');

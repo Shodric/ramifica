@@ -63,4 +63,38 @@ void main() {
     expect(find.byKey(const ValueKey('ending-badge')), findsNothing);
     expect(find.textContaining('Desbloqueaste'), findsNothing);
   });
+
+  testWidgets('EndingCard truncates a long name without overflowing', (
+    tester,
+  ) async {
+    const longName =
+        'Un nombre de final extremadamente largo que seguro ocupa mas de dos '
+        'lineas en una tarjeta estrecha con insignia al lado y debe truncarse';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 300,
+              child: EndingCard(
+                name: longName,
+                type: 'epic',
+                badgeUrl: 'https://media/badge.png',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byType(EndingCard)).width,
+      lessThanOrEqualTo(300.0),
+    );
+    final text = tester.widget<Text>(find.text(longName));
+    expect(text.maxLines, 2);
+    expect(text.overflow, TextOverflow.ellipsis);
+  });
 }

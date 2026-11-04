@@ -293,17 +293,27 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
     final merged = <DraftNode>[];
     for (final node in remote) {
       final local = _node(node.nodeId);
-      merged.add(
-        local != null && _isDirty(node.nodeId)
-            ? DraftNode.fromMap(node.nodeId, {
-                ...node.toJson(),
-                for (final entry
-                    in (_dirtyFields[node.nodeId] ?? <String, int>{}).entries)
-                  if (entry.value > (_savedGeneration[node.nodeId] ?? 0))
-                    entry.key: local.toJson()[entry.key],
-              })
-            : node,
-      );
+      if (local == null || !_isDirty(node.nodeId)) {
+        merged.add(node);
+        continue;
+      }
+      try {
+        merged.add(
+          DraftNode.fromMap(node.nodeId, {
+            ...node.toJson(),
+            for (final entry
+                in (_dirtyFields[node.nodeId] ?? <String, int>{}).entries)
+              if (entry.value > (_savedGeneration[node.nodeId] ?? 0))
+                entry.key: local.toJson()[entry.key],
+          }),
+        );
+      } catch (error) {
+        // A poison merge must never break live sync for the draft: keep
+        // the local echo (unsaved edits stay visible) and retry the
+        // overlay on the next snapshot.
+        debugPrint('_mergeReload: keeping local ${node.nodeId}: $error');
+        merged.add(local);
+      }
     }
     final ids = remote.map((node) => node.nodeId).toSet();
     merged.addAll(

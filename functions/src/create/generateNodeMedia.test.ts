@@ -497,6 +497,34 @@ test("root video needs its own S ready, unapproved or not", async () => {
   );
 });
 
+test("root video without a generated S falls back to the reference still",
+  async () => {
+    const db = new MemDb();
+    await seedDraft(db);
+    await db.doc("stories/story_draft/nodes/node_001").set(
+      {
+        startImageStatus: "idle", startHash: null, startImageSourceUrl: null,
+        startImageReferenceUrl: "https://cdn.example/ref.png",
+      },
+      {merge: true}
+    );
+    let seenUrl = "";
+    const result = await generateNodeVideoWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_001"},
+      mockDeps({
+        requestVideo: async ({startUrl}) => {
+          seenUrl = startUrl;
+          return {jobId: "job-ref"};
+        },
+      })
+    );
+    assert.equal(seenUrl, "https://cdn.example/ref.png");
+    assert.equal(result.videoStatus, "pending");
+    assert.equal(result.videoJobId, "job-ref");
+  });
+
 test("video inherits the parent clip's last frame as S and records " +
     "a pending job", async () => {
   const db = new MemDb();
@@ -885,6 +913,7 @@ test("image prompts ground the still in story, line, and frame", () => {
   const node = {
     title: "Gate",
     ttsText: "The stones remember your name.",
+    endingName: null,
     videoPrompt: null,
   };
   const start = buildImagePrompt(story, node);
@@ -897,10 +926,10 @@ test("image prompts ground the still in story, line, and frame", () => {
 test("image prompts omit blanks and stay within budget", () => {
   const prompt = buildImagePrompt(
     {title: "T", synopsis: "x".repeat(500)},
-    {title: "", ttsText: null, videoPrompt: "morph"}
+    {title: "", ttsText: null, endingName: "Fin", videoPrompt: "morph"}
   );
   assert.doesNotMatch(prompt, /MOMENT/);
-  assert.doesNotMatch(prompt, /This is an ending/);
+  assert.match(prompt, /Fin/);
   assert.match(prompt, /CLIP CONTEXT: morph/);
   assert.ok(prompt.length <= 2000);
 });
@@ -928,6 +957,117 @@ test("image generation falls back to the story-grounded prompt", async () => {
   assert.match(seen, /The stones remember your name/);
   assert.match(seen, /Opening frame/);
 });
+
+test("image with a reference guides the still via the reference path",
+  async () => {
+    const db = new MemDb();
+    await seedDraft(db);
+    await db.doc("stories/story_draft/nodes/node_001").set(
+      {startImageReferenceUrl: "https://cdn.example/ref.png"},
+      {merge: true}
+    );
+    let plainCalled = false;
+    const seen: Array<{
+      prompt: string; referenceBase64: string; referenceMimeType: string;
+    }> = [];
+    const result = await generateNodeImageWith(
+      db,
+      "u1",
+      {storyId: "story_draft", nodeId: "node_001", which: "start"},
+      mockDeps({
+        imageGen: async () => {
+          plainCalled = true;
+          return {bytes: Buffer.from("plain-still")};
+        },
+        downloadReference: async (url: string) => {
+          assert.equal(url, "https://cdn.example/ref.png");
+          return Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00]);
+        },
+        referenceImageGen: async (args) => {
+          seen.push(args);
+          return {bytes: Buffer.from("guided-still")};
+        },
+      })
+    );
+    assert.equal(plainCalled, false);
+    assert.equal(seen.length, 1);
+    assert.equal(
+      seen[0].referenceBase64,
+      Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00]).toString("base64")
+    );
+    assert.equal(seen[0].referenceMimeType, "image/png");
+    assert.match(seen[0].prompt, /The temple/);
+    assert.ok(result.imageUrl?.startsWith("https://cdn.example/"));
+  });
+
+test("image without a reference uses the plain path unchanged", async () => {
+  const db = new MemDb();
+  await seedDraft(db);
+  let referenceCalled = false;
+  let downloadCalled = false;
+  let seenPrompt = "";
+  await generateNodeImageWith(
+    db,
+    "u1",
+    {storyId: "story_draft", nodeId: "node_001", which: "start"},
+    mockDeps({
+      imageGen: async (prompt: string) => {
+        seenPrompt = prompt;
+        return {bytes: Buffer.from("plain-still")};
+      },
+      downloadReference: async () => {
+        downloadCalled = true;
+        return Buffer.from("ref");
+      },
+      referenceImageGen: async () => {
+        referenceCalled = true;
+        return {bytes: Buffer.from("guided-still")};
+      },
+    })
+  );
+  assert.equal(downloadCalled, false);
+  assert.equal(referenceCalled, false);
+  assert.match(seenPrompt, /The temple/);
+});
+
+test("image falls back to the plain path when the reference fails",
+  async () => {
+    for (const failingDeps of [
+      {downloadFails: true, referenceFails: false},
+      {downloadFails: false, referenceFails: true},
+    ]) {
+      const db = new MemDb();
+      await seedDraft(db);
+      await db.doc("stories/story_draft/nodes/node_001").set(
+        {startImageReferenceUrl: "https://cdn.example/ref.png"},
+        {merge: true}
+      );
+      let plainCalls = 0;
+      const result = await generateNodeImageWith(
+        db,
+        "u1",
+        {storyId: "story_draft", nodeId: "node_001", which: "start"},
+        mockDeps({
+          imageGen: async () => {
+            plainCalls += 1;
+            return {bytes: Buffer.from("plain-still")};
+          },
+          downloadReference: async () => {
+            if (failingDeps.downloadFails) throw new Error("blob gone");
+            return Buffer.from("ref-bytes");
+          },
+          referenceImageGen: async () => {
+            if (failingDeps.referenceFails) {
+              throw new Error("provider is down");
+            }
+            return {bytes: Buffer.from("guided-still")};
+          },
+        })
+      );
+      assert.equal(plainCalls, 1);
+      assert.equal(result.imageStatus, "ready");
+    }
+  });
 
 test("image metadata and hash refer to normalized bytes and " +
     "advance draft revision", async () => {

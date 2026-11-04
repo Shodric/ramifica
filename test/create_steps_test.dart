@@ -102,6 +102,13 @@ void main() {
       firstMissingForStep(step: 1, node: written, isRoot: true),
       'a generated start frame',
     );
+    final referenced = written.copy(
+      startImageReferenceUrl: () => 'https://storage.invalid/r.jpg',
+    );
+    expect(
+      firstMissingForStep(step: 1, node: referenced, isRoot: true),
+      isNull,
+    );
     expect(
       firstMissingForStep(step: 2, node: written, isRoot: true),
       'a generated voice',

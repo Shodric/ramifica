@@ -47,7 +47,9 @@ String? firstMissingForStep({
       }
       return null;
     case 1:
-      if (isRoot && node.startImageStatus != 'ready') {
+      if (isRoot &&
+          node.startImageStatus != 'ready' &&
+          (node.startImageReferenceUrl ?? '').isEmpty) {
         return 'a generated start frame';
       }
       return null;

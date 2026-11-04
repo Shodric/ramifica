@@ -25,7 +25,12 @@ import {
 } from "../media/openrouter";
 import {
   generateImageMeta,
+  generateImageWithReferenceMeta,
 } from "../media/meta";
+import {
+  downloadFrameBytes as downloadBadgeFrameBytes,
+  sniffImageMime as sniffBadgeImageMime,
+} from "./generateEndingBadge";
 import {
   NormalizedStill, NormalizedVideo, normalizeStill, normalizeGeneratedVideo,
 } from "../media/processVideo";
@@ -47,6 +52,20 @@ export interface StillResult {
 /** Injectable still provider: prompt in, PNG bytes out. */
 export interface ImageGenFn {
   (prompt: string): Promise<StillResult>;
+}
+
+/** Injectable reference still provider: prompt plus reference in, bytes out. */
+export interface ReferenceImageGenFn {
+  (args: {
+    prompt: string;
+    referenceBase64: string;
+    referenceMimeType: string;
+  }): Promise<StillResult>;
+}
+
+/** Injectable reference downloader: signed URL in, bytes or null. */
+export interface ReferenceDownloadFn {
+  (url: string): Promise<Buffer | null>;
 }
 
 /** Injectable still uploader: bytes in, public URL out. */
@@ -99,6 +118,8 @@ export interface VideoStoreFn {
 /** Injectable seams so tests run without GPU, Storage, or OpenRouter. */
 export interface NodeMediaDeps {
   imageGen?: ImageGenFn;
+  referenceImageGen?: ReferenceImageGenFn;
+  downloadReference?: ReferenceDownloadFn;
   uploadStill?: StillUploadFn;
   requestVideo?: VideoRequestFn;
   checkVideo?: VideoCheckFn;
@@ -244,7 +265,7 @@ export const generateNodeImageWith = async (
   }
   await markImagePending(db, storyId, nodeId, which, prompt);
   try {
-    const raw = (await gen(prompt)).bytes;
+    const raw = await generateStillBytes({node, prompt, deps, gen});
     await writeMedia(db, storyId, nodeId, {generationPhase: "processing"});
     const result = await (deps.normalizeImage ?? normalizeStill)(raw);
     const bytes = result.bytes;
@@ -266,6 +287,66 @@ export const generateNodeImageWith = async (
       `Still generation failed: ${(error as Error).message}`
     );
   }
+};
+
+/**
+ * Still bytes for the node S: reference-guided when the node carries a
+ * `startImageReferenceUrl`, plain prompt otherwise. Any download or
+ * reference-path failure falls back to the plain path so reference use
+ * never breaks what already works.
+ * @param {Object} args Node fields, prompt, deps, and default provider.
+ * @return {Promise<Buffer>} The raw still bytes.
+ */
+const generateStillBytes = async (args: {
+  node: {[field: string]: unknown};
+  prompt: string;
+  deps: NodeMediaDeps;
+  gen: ImageGenFn;
+}): Promise<Buffer> => {
+  const referenceUrl = optString(args.node.startImageReferenceUrl);
+  if (referenceUrl === null) {
+    return (await args.gen(args.prompt)).bytes;
+  }
+  try {
+    const download =
+      args.deps.downloadReference ?? downloadBadgeFrameBytes;
+    const reference = await download(referenceUrl);
+    if (reference === null) {
+      return (await args.gen(args.prompt)).bytes;
+    }
+    const generate =
+      args.deps.referenceImageGen ?? defaultReferenceImageGen();
+    if (generate === null) return (await args.gen(args.prompt)).bytes;
+    return (await generate({
+      prompt: args.prompt,
+      referenceBase64: reference.toString("base64"),
+      referenceMimeType: sniffBadgeImageMime(reference),
+    })).bytes;
+  } catch {
+    return (await args.gen(args.prompt)).bytes;
+  }
+};
+
+
+/**
+ * Default reference still provider: Meta responses API guided by the
+ * node's reference image, else null so the caller falls back to the
+ * plain prompt path instead of billing what it cannot reach.
+ * @return {ReferenceImageGenFn | null} The provider, or null.
+ */
+const defaultReferenceImageGen = (): ReferenceImageGenFn | null => {
+  const kind = imageProviderKind();
+  if (kind !== "meta") return null;
+  const config = metaConfig();
+  return async ({prompt, referenceBase64, referenceMimeType}) => ({
+    bytes: await generateImageWithReferenceMeta({
+      apiKey: config.apiKey,
+      model: config.imageModel,
+      frameBase64: referenceBase64,
+      frameMimeType: referenceMimeType,
+      instructions: prompt,
+    }),
+  });
 };
 
 /**
@@ -306,14 +387,23 @@ export const generateNodeVideoWith = async (
   if (isRoot) {
     const hash = optString(node.startHash);
     const url = optString(node.startImageSourceUrl);
-    if (node.startImageStatus !== "ready" || hash === null || url === null) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Generate the start frame before requesting video."
-      );
+    if (node.startImageStatus === "ready" && hash !== null && url !== null) {
+      fromHash = hash;
+      fromUrl = url;
+    } else {
+      // No generated S yet: fall back to the author's reference still as
+      // the clip's first frame. The hash derives from the URL so the
+      // stored job echoes a stable `videoFromHash`.
+      const referenceUrl = optString(node.startImageReferenceUrl);
+      if (referenceUrl === null) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Generate the start frame before requesting video."
+        );
+      }
+      fromHash = sha8(Buffer.from(referenceUrl, "utf8"));
+      fromUrl = referenceUrl;
     }
-    fromHash = hash;
-    fromUrl = url;
   } else {
     const parentId = optString(node.startFromNodeId);
     if (parentId === null) {
@@ -536,6 +626,7 @@ export const buildImagePrompt = (
   const synopsis = clip(story.synopsis, 300).replace(/[.\s]+$/, "");
   const scene = clip(node.title, 60) || "Untitled scene";
   const line = clip(node.ttsText, 280);
+  const ending = clip(node.endingName, 40);
   const clipContext = clip(node.videoPrompt, 200);
   const frame = "Opening frame: wide establishing composition, " +
     "subject entering, room for the scene to unfold.";
@@ -545,7 +636,7 @@ export const buildImagePrompt = (
     `STORY: "${storyTitle}"${synopsis === "" ? "" : ` — ${synopsis}`}.`,
     `SCENE: "${scene}".`,
     ...(line === "" ? [] : [`MOMENT (narrator line): "${line}".`]),
-    ...(node.isEnding === true ? [`This is an ending: "${scene}".`] : []),
+    ...(ending === "" ? [] : [`This is an ending: "${ending}".`]),
     `FRAME: ${frame}`,
     ...(clipContext === "" ? [] : [`CLIP CONTEXT: ${clipContext}.`]),
   ];

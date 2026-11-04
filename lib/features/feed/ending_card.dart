@@ -60,21 +60,24 @@ class EndingCard extends StatelessWidget {
               ),
             ),
           ],
-          Column(
-            spacing: 8,
-            crossAxisAlignment: .start,
-            children: [
-              EndingBadge(type: type),
-              Text(
-                name,
-                maxLines: 2,
-                overflow: .ellipsis,
-                style: RamificaText.screenTitle.copyWith(
-                  fontSize: 22,
-                  height: 28 / 22,
+          Expanded(
+            child: Column(
+              spacing: 8,
+              mainAxisSize: .min,
+              crossAxisAlignment: .start,
+              children: [
+                EndingBadge(type: type),
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: .ellipsis,
+                  style: RamificaText.screenTitle.copyWith(
+                    fontSize: 22,
+                    height: 28 / 22,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),

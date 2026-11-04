@@ -45,7 +45,6 @@ export interface ValidatableStory {
  * metadata and never block publishing.
  * @param {ValidatableStory} story Story doc.
  * @param {ValidatableNode[]} nodes All nodes of the story.
- * @param {ValidatableNode[]} nodes All nodes of the story.
  * @return {string[]} One message per missing piece.
  */
 export const validateStory = (
@@ -116,9 +115,10 @@ const validateFrames = (node: ValidatableNode): string[] => {
   if (node.videoSource !== "upload") {
     return [];
   }
-  return node.videoFrameLastUrl
-    ? []
-    : [`Node ${node.nodeId} needs its extracted last frame.`];
+  if (node.videoFrameLastUrl) {
+    return [];
+  }
+  return [`Node ${node.nodeId} needs its extracted last frame.`];
 };
 
 const validateDecision = (
