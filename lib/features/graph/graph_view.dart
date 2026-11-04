@@ -28,12 +28,17 @@ class GraphView extends StatefulWidget {
     this.runId,
     this.repository,
     this.onExplore,
+    this.onCreatorOpen,
   });
 
   final String storyId;
   final String? runId;
   final GraphRepository? repository;
   final VoidCallback? onExplore;
+
+  /// Creator avatar tap with the author uid. Tests inject this; null
+  /// navigates to the creator profile.
+  final void Function(String authorId)? onCreatorOpen;
 
   @override
   State<GraphView> createState() => _GraphViewState();
@@ -156,6 +161,10 @@ class _GraphViewState extends State<GraphView> {
             orphans: draftOrphansFromStubs(state.stubs),
             rootNodeId: draftRootIdFromStubs(state.stubs),
             currentNodeId: state.currentNodeId,
+            creatorPhotoUrl: state.storyAuthorPhotoUrl,
+            creatorName: state.storyAuthorName,
+            creatorAuthorId: state.storyAuthorId,
+            onCreatorTap: (uid) => _openCreator(context, uid),
             onSelect: (id) => context.read<GraphBloc>().add(NodeSelected(id)),
             transformationController: _viewer,
           ),
@@ -184,6 +193,21 @@ class _GraphViewState extends State<GraphView> {
     }
     try {
       AppNavigation.read(context).go(AppRoutes.explore);
+    } on FlutterError {
+      // Widget tests mount GraphView without the router.
+    }
+  }
+
+  void _openCreator(BuildContext context, String authorId) {
+    final open = widget.onCreatorOpen;
+    if (open != null) {
+      open(authorId);
+      return;
+    }
+    final uid = authorId.trim();
+    if (uid.isEmpty) return;
+    try {
+      AppNavigation.read(context).go(AppRoutes.profileOf(uid));
     } on FlutterError {
       // Widget tests mount GraphView without the router.
     }

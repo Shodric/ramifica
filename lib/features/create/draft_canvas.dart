@@ -14,6 +14,19 @@ const _hGap = 220.0;
 const _vGap = 320.0;
 const _pad = 120.0;
 
+/// Root-to-creator distance and avatar radius on the read-only map. The
+/// whole tree shifts down by [_creatorGap], so the avatar center lands on
+/// the freed top band exactly above the root card.
+const _creatorGap = 248.0;
+const _creatorAvatarRadius = 28.0;
+
+/// Avatar-to-root connector length and name pill bounds. The pill rides
+/// the connector midpoint like a mid-edge choice badge.
+const _creatorConnectorHeight =
+    _creatorGap - _creatorAvatarRadius - createCardHeight / 2;
+const _creatorNameMaxWidth = 160.0;
+const _creatorNameHeight = 26.0;
+
 /// One drawn edge. [returns] marks a cycle: the child sits on the same or
 /// a higher layer, so the edge curves back instead of dropping down.
 class DraftEdge {
@@ -412,6 +425,10 @@ class DraftCanvas extends StatelessWidget {
     this.openNodeId,
     this.rootNodeId,
     this.currentNodeId,
+    this.creatorPhotoUrl,
+    this.creatorName,
+    this.creatorAuthorId,
+    this.onCreatorTap,
     this.onSelect,
     this.onAdd,
     required this.transformationController,
@@ -426,6 +443,17 @@ class DraftCanvas extends StatelessWidget {
   /// Run position on the read-only map: its card keeps the You-are-here
   /// pill. Null (the editor) marks nothing.
   final String? currentNodeId;
+
+  /// Story creator shown as a circular parent node above the root card.
+  /// Both null (the editor) draws no avatar.
+  final String? creatorPhotoUrl;
+  final String? creatorName;
+
+  /// Creator uid for the avatar tap. Blank disables the tap.
+  final String? creatorAuthorId;
+
+  /// Avatar tap with the creator uid. Null is display-only.
+  final ValueChanged<String>? onCreatorTap;
 
   /// Node tap. Null disables card taps for the read-only map.
   final ValueChanged<String>? onSelect;
@@ -467,12 +495,35 @@ class DraftCanvas extends StatelessWidget {
     }
     final add = onAdd;
     final virtualIds = {for (final mini in minis) mini.id};
-    final positions = <String, Offset>{
+    var positions = <String, Offset>{
       for (final node in nodes)
         if (shown(node.nodeId) && layout.positions.containsKey(node.nodeId))
           node.nodeId: layout.positions[node.nodeId]!,
       for (final mini in minis) mini.id: layout.positions[mini.id]!,
     };
+    // Creator parent node: only the read-only map passes creator data.
+    // The tree shifts down one band so the circular avatar lands on the
+    // freed top space, centered above the root card like a parent node.
+    final creatorPhoto = creatorPhotoUrl?.trim() ?? '';
+    final creatorLabel = creatorName?.trim() ?? '';
+    final creatorUid = creatorAuthorId?.trim() ?? '';
+    final creatorTap = onCreatorTap;
+    final VoidCallback? avatarTap =
+        creatorTap != null && creatorUid.isNotEmpty
+        ? () => creatorTap(creatorUid)
+        : null;
+    Offset? creatorCenter;
+    if (creatorPhoto.isNotEmpty || creatorLabel.isNotEmpty) {
+      final rootPos = (rootNodeId != null ? positions[rootNodeId] : null) ??
+          _topmostPosition(positions);
+      if (rootPos != null) {
+        positions = {
+          for (final entry in positions.entries)
+            entry.key: entry.value + const Offset(0, _creatorGap),
+        };
+        creatorCenter = Offset(rootPos.dx, rootPos.dy);
+      }
+    }
     // First incoming edge wins the parent: merges attach to one side.
     final parentOf = <String, String>{};
     for (final edge in layout.edges) {
@@ -489,7 +540,10 @@ class DraftCanvas extends StatelessWidget {
       if (here.dx > there.dx + 1) return .centerRight;
       return .center;
     }
-    final size = layout.size;
+    final creator = creatorCenter;
+    final size = creator == null
+        ? layout.size
+        : Size(layout.size.width, layout.size.height + _creatorGap);
     return InteractiveViewer(
       transformationController: transformationController,
       minScale: 0.25,
@@ -510,6 +564,40 @@ class DraftCanvas extends StatelessWidget {
                 nodes: nodes,
               ),
             ),
+            if (creator != null) ...[
+              Positioned(
+                left: creator.dx - 1,
+                top: creator.dy + _creatorAvatarRadius,
+                width: 2,
+                height: _creatorConnectorHeight,
+                child: Container(
+                  color: RamificaColors.textSecondary.withValues(alpha: 0.6),
+                ),
+              ),
+              Positioned(
+                left: creator.dx - _creatorAvatarRadius,
+                top: creator.dy - _creatorAvatarRadius,
+                child: _CreatorAvatar(
+                  photoUrl: creatorPhoto,
+                  name: creatorLabel,
+                  onTap: avatarTap,
+                ),
+              ),
+              if (creatorLabel.isNotEmpty)
+                Positioned(
+                  left: creator.dx - _creatorNameMaxWidth / 2,
+                  top:
+                      creator.dy +
+                      _creatorAvatarRadius +
+                      _creatorConnectorHeight / 2 -
+                      _creatorNameHeight / 2,
+                  width: _creatorNameMaxWidth,
+                  height: _creatorNameHeight,
+                  child: Center(
+                    child: _CreatorNameBadge(name: creatorLabel),
+                  ),
+                ),
+            ],
             for (final node in nodes)
               if (positions.containsKey(node.nodeId))
                 Positioned(
@@ -576,6 +664,20 @@ class DraftCanvas extends StatelessWidget {
   }
 }
 
+/// Highest shown position, ties breaking leftmost: the root fallback for
+/// the creator avatar when the canvas carries no explicit root id.
+Offset? _topmostPosition(Map<String, Offset> positions) {
+  Offset? top;
+  for (final pos in positions.values) {
+    if (top == null ||
+        pos.dy < top.dy ||
+        (pos.dy == top.dy && pos.dx < top.dx)) {
+      top = pos;
+    }
+  }
+  return top;
+}
+
 /// Choice index of the parent choice leading along [edge], for the legacy
 /// icon fallback in [choiceIconData]. Unknown links read as the first.
 int _badgeIndex(List<DraftNode> nodes, DraftEdge edge) {
@@ -628,6 +730,96 @@ class _EdgeBadge extends StatelessWidget {
                 ? Colors.black87
                 : Colors.white,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Circular creator photo above the root card: the story author drawn
+/// as a parent node. Photo only; otherwise (and on load error) a static
+/// person icon. Tapping opens the creator profile when [onTap] is set.
+class _CreatorAvatar extends StatelessWidget {
+  const _CreatorAvatar({
+    required this.photoUrl,
+    required this.name,
+    this.onTap,
+  });
+
+  final String photoUrl;
+  final String name;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const fallback = Icon(
+      Icons.person,
+      size: 28,
+      color: RamificaColors.textPrimary,
+    );
+    final label = name.isEmpty ? 'Story creator' : 'Story by $name';
+    return Semantics(
+      label: label,
+      image: true,
+      button: onTap != null,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: .opaque,
+        child: Tooltip(
+          message: label,
+          child: Container(
+            key: const ValueKey('creator-avatar'),
+            width: _creatorAvatarRadius * 2,
+            height: _creatorAvatarRadius * 2,
+            decoration: BoxDecoration(
+              shape: .circle,
+              color: RamificaColors.nodeLocked,
+              border: Border.all(color: RamificaColors.hotspot, width: 2),
+            ),
+            child: ClipOval(
+              child: photoUrl.isEmpty
+                  ? const Center(child: fallback)
+                  : Image.network(
+                      photoUrl,
+                      width: _creatorAvatarRadius * 2,
+                      height: _creatorAvatarRadius * 2,
+                      fit: .cover,
+                      errorBuilder: (_, _, _) =>
+                          const Center(child: fallback),
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Creator full name riding the avatar-to-root connector midpoint,
+/// mirroring the mid-edge choice badges. Display-only: the avatar
+/// already announces the name.
+class _CreatorNameBadge extends StatelessWidget {
+  const _CreatorNameBadge({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        key: const ValueKey('creator-name'),
+        constraints: const BoxConstraints(maxWidth: _creatorNameMaxWidth),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: RamificaColors.containerHighest,
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: RamificaColors.glassBorder),
+        ),
+        child: Text(
+          name,
+          maxLines: 1,
+          overflow: .ellipsis,
+          style: RamificaText.labelSM,
         ),
       ),
     );

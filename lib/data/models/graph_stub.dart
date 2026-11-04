@@ -57,6 +57,7 @@ class GraphStub {
     this.thumbnailUrl,
     this.imageBlurData,
     this.endingType,
+    this.endingBadgeUrl,
     this.choiceCount = 0,
     this.childIds = const [],
     this.choices = const [],
@@ -73,6 +74,7 @@ class GraphStub {
       thumbnailUrl: _optionalString(json['thumbnailUrl']),
       imageBlurData: _optionalString(json['imageBlurData']),
       endingType: _optionalString(json['endingType']),
+      endingBadgeUrl: _optionalString(json['endingBadgeUrl']),
       choiceCount: _optionalCount(json['choiceCount']),
       childIds: childIds == null
           ? const []
@@ -89,6 +91,7 @@ class GraphStub {
   final String? thumbnailUrl;
   final String? imageBlurData;
   final String? endingType;
+  final String? endingBadgeUrl;
   final int choiceCount;
   final List<String> childIds;
   final List<GraphChoice> choices;
@@ -107,6 +110,7 @@ class GraphStub {
         other.thumbnailUrl == thumbnailUrl &&
         other.imageBlurData == imageBlurData &&
         other.endingType == endingType &&
+        other.endingBadgeUrl == endingBadgeUrl &&
         other.choiceCount == choiceCount &&
         _sameStrings(other.childIds, childIds) &&
         _sameChoices(other.choices, choices);
@@ -122,6 +126,7 @@ class GraphStub {
     thumbnailUrl,
     imageBlurData,
     endingType,
+    endingBadgeUrl,
     choiceCount,
     Object.hashAll(childIds),
     Object.hashAll(choices),
@@ -136,6 +141,9 @@ class GraphStubsResult {
     required this.currentNodeId,
     this.storyTitle,
     this.storyCoverUrl,
+    this.storyAuthorId,
+    this.storyAuthorName,
+    this.storyAuthorPhotoUrl,
   });
 
   factory GraphStubsResult.fromJson(Map<String, dynamic> json) {
@@ -154,6 +162,15 @@ class GraphStubsResult {
       storyCoverUrl: storyMap == null
           ? null
           : _optionalString(storyMap['coverUrl']),
+      storyAuthorId: storyMap == null
+          ? null
+          : _optionalString(storyMap['authorId']),
+      storyAuthorName: storyMap == null
+          ? null
+          : _optionalString(storyMap['authorName']),
+      storyAuthorPhotoUrl: storyMap == null
+          ? null
+          : _optionalString(storyMap['authorPhotoUrl']),
     );
   }
 
@@ -161,6 +178,9 @@ class GraphStubsResult {
   final String currentNodeId;
   final String? storyTitle;
   final String? storyCoverUrl;
+  final String? storyAuthorId;
+  final String? storyAuthorName;
+  final String? storyAuthorPhotoUrl;
 
   @override
   bool operator ==(Object other) {
@@ -168,6 +188,9 @@ class GraphStubsResult {
         other.currentNodeId == currentNodeId &&
         other.storyTitle == storyTitle &&
         other.storyCoverUrl == storyCoverUrl &&
+        other.storyAuthorId == storyAuthorId &&
+        other.storyAuthorName == storyAuthorName &&
+        other.storyAuthorPhotoUrl == storyAuthorPhotoUrl &&
         _sameStubs(other.nodes, nodes);
   }
 
@@ -177,6 +200,9 @@ class GraphStubsResult {
     currentNodeId,
     storyTitle,
     storyCoverUrl,
+    storyAuthorId,
+    storyAuthorName,
+    storyAuthorPhotoUrl,
   );
 }
 

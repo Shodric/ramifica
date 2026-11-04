@@ -38,9 +38,10 @@ class EndingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GlassPanel(
-      child: Column(
+      child: Row(
+        spacing: 8,
         mainAxisSize: .min,
-        crossAxisAlignment: .start,
+        crossAxisAlignment: .end,
         children: [
           if (badgeUrl?.isNotEmpty ?? false) ...[
             ClipRRect(
@@ -58,19 +59,23 @@ class EndingCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
           ],
-          Text(
-            name,
-            maxLines: 2,
-            overflow: .ellipsis,
-            style: RamificaText.screenTitle.copyWith(
-              fontSize: 22,
-              height: 28 / 22,
-            ),
+          Column(
+            spacing: 8,
+            crossAxisAlignment: .start,
+            children: [
+              EndingBadge(type: type),
+              Text(
+                name,
+                maxLines: 2,
+                overflow: .ellipsis,
+                style: RamificaText.screenTitle.copyWith(
+                  fontSize: 22,
+                  height: 28 / 22,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          EndingBadge(type: type),
         ],
       ),
     );

@@ -21,7 +21,10 @@ class EndingBadge extends StatelessWidget {
       ),
       child: Padding(
         padding: const .symmetric(horizontal: 10, vertical: 4),
-        child: Text(_label, style: RamificaText.meta.copyWith(color: _color)),
+        child: Text(
+          '$_label final',
+          style: RamificaText.meta.copyWith(color: _color),
+        ),
       ),
     );
   }

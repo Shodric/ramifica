@@ -40,7 +40,7 @@ export const projectNode = (
     ...Object.fromEntries(["title", "videoUrl", "durationSeconds",
       "videoWidth", "videoHeight",
       "ttsText", "ttsAudioUrl", "ttsDurationSeconds",
-      "endingType", "endingBadgeUrl", "thumbnailUrl"]
+      "endingType", "endingBadgeUrl", "thumbnailUrl", "videoFrameLastUrl"]
       .map((key) => [key, node[key] ?? null])),
     isEnding: node.isEnding === true, visibility: node.visibility ?? "visible",
     videoFrameLastBlurData: node.videoFrameLastBlurData ??
@@ -50,6 +50,7 @@ export const projectNode = (
   const map = node.visibility === "secret" ? {secret: true} : {
     secret: false, title: node.title ?? null, isEnding: node.isEnding === true,
     thumbnailUrl: node.thumbnailUrl ?? null,
+    videoFrameLastBlurData: node.videoFrameLastBlurData ?? fallbackBlur,
     childIds: choices.map((c) => c.targetNodeId),
   };
   const stats = {
@@ -71,7 +72,8 @@ export interface MigrationOptions {
 }
 export interface MigrationReport {
   storyId: string;
-  status: "inspect" | "migrated" | "already-current" | "conflict";
+  status: "inspect" | "migrated" | "already-current" | "conflict" |
+    "backfilled";
   nodes: number;
   metadataUpdates: number;
   warnings: string[];
@@ -162,7 +164,55 @@ export const migrateStory = async (
     return report;
   }
   if (typeof story.activePublicationId === "string") {
-    report.status = "already-current";
+    const active = ref.collection("publications")
+      .doc(story.activePublicationId);
+    const activeSnap = await active.get();
+    const activeData = activeSnap.data();
+    if (!activeSnap.exists) {
+      report.warnings.push(
+        "Active publication is missing; republish the story."
+      );
+      return report;
+    }
+    if (Number(activeData?.migrationVersion ?? 0) >= 2) {
+      report.status = "already-current";
+      return report;
+    }
+    // Backfill HQ frame URL into bodies and blur data into map docs so
+    // the map shows high-quality thumbnails for observed nodes.
+    const backfill: Array<[admin.firestore.DocumentReference, Fields]> = [];
+    const bodies: Fields = {};
+    for (const [id, node] of nodes) {
+      const frame = node.videoFrameLastUrl;
+      if (typeof frame === "string" && frame) {
+        bodies[`nodes.${id}.videoFrameLastUrl`] = frame;
+        backfill.push([active.collection("nodes").doc(id),
+          {videoFrameLastUrl: frame}]);
+      } else {
+        report.warnings.push(`Node ${id}: no HQ frame to backfill.`);
+      }
+      const blur = node.videoFrameLastBlurData;
+      if (typeof blur === "string" && blur) {
+        backfill.push([active.collection("map").doc(id),
+          {videoFrameLastBlurData: blur}]);
+      }
+    }
+    if (!options.apply) {
+      report.warnings.push(
+        "Active publication needs the HQ backfill; rerun with --apply."
+      );
+      return report;
+    }
+    bodies.migrationVersion = 2;
+    await active.update(bodies);
+    for (let start = 0; start < backfill.length; start += 400) {
+      const batch = db.batch();
+      for (const [target, data] of backfill.slice(start, start + 400)) {
+        batch.set(target, data, {merge: true});
+      }
+      await batch.commit();
+    }
+    report.status = "backfilled";
     return report;
   }
   if (!nodes.has(story.rootNodeId) || !nodes.size) {

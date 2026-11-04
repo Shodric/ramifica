@@ -35,6 +35,7 @@ class CreateNodeCard extends StatelessWidget {
   final bool isRoot;
   final bool isOpen;
   final bool isOrphan;
+
   /// Null renders the card without tap handling (read-only map).
   final VoidCallback? onTap;
 
@@ -66,122 +67,123 @@ class CreateNodeCard extends StatelessWidget {
                   ]
                 : null,
           ),
-          child: Column(
-            crossAxisAlignment: .stretch,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: .expand,
-                  children: [
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(13),
-                      ),
-                      child: Container(
-                        color: RamificaColors.containerHigh,
-                        child: CreateNodeThumb(
-                          url: thumbnail,
-                          blurData: node.videoFrameLastBlurData,
-                        ),
-                      ),
-                    ),
-                    if (isOpen)
-                      const Positioned(
-                        top: 6,
-                        left: 6,
-                        child: _Pill('Editing'),
-                      ),
-                    if (isRoot)
-                      const Positioned(
-                        top: 6,
-                        right: 6,
-                        child: _Pill('Root Node'),
-                      ),
-                    if (node.endingBadgeUrl != null &&
-                        node.endingBadgeUrl!.isNotEmpty)
-                      Positioned(
-                        right: 6,
-                        bottom: 6,
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: RamificaColors.inputFill,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: RamificaColors.glassBorder,
-                            ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(7),
-                            child: Image.network(
-                              node.endingBadgeUrl!,
-                              fit: .contain,
-                              errorBuilder: (_, _, _) => const Icon(
-                                Icons.emoji_events,
-                                size: 16,
-                                color: RamificaColors.rewardGold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(13),
-                ),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(13),
+            child: Stack(
+              children: [
+                // Full-bleed cover: the footer glass blurs the image
+                // itself, not the canvas behind the card.
+                Positioned.fill(
                   child: Container(
-                    color: RamificaColors.containerHigh.withValues(alpha: 0.65),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    child: Column(
-                      mainAxisSize: .min,
-                      crossAxisAlignment: .start,
-                      children: [
-                        Text(
-                          slotPath.isEmpty
-                              ? 'Scene $sceneIndex'
-                              : 'Scene $sceneIndex - $slotPath',
-                          style: RamificaText.caption.copyWith(
-                            color: RamificaColors.textSecondary,
-                          ),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                title,
-                                maxLines: 1,
-                                overflow: .ellipsis,
-                                style: RamificaText.body.copyWith(
-                                  color: RamificaColors.textPrimary,
-                                ),
-                              ),
-                            ),
-                            if (node.secret)
-                              const Padding(
-                                padding: EdgeInsets.only(left: 4),
-                                child: Icon(
-                                  Icons.lock_outline,
-                                  size: 12,
-                                  color: RamificaColors.textSecondary,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
+                    color: RamificaColors.containerHigh,
+                    child: CreateNodeThumb(
+                      url: thumbnail,
+                      blurData: node.videoFrameLastBlurData,
                     ),
                   ),
                 ),
-              ),
-            ],
+                if (isOpen)
+                  const Positioned(top: 6, left: 6, child: _Pill('Editing')),
+                if (isRoot)
+                  const Positioned(top: 6, right: 6, child: _Pill('Root Node')),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Stack(
+                    clipBehavior: .none,
+                    children: [
+                      ClipRRect(
+                        borderRadius: .only(
+                          bottomLeft: .circular(13),
+                          bottomRight: .circular(13),
+                        ),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                          child: Container(
+                            color: RamificaColors.containerHigh.withValues(
+                              alpha: 0.65,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            child: Column(
+                              mainAxisSize: .min,
+                              crossAxisAlignment: .start,
+                              children: [
+                                Text(
+                                  slotPath.isEmpty
+                                      ? 'Scene $sceneIndex'
+                                      : 'Scene $sceneIndex - $slotPath',
+                                  style: RamificaText.caption.copyWith(
+                                    color: RamificaColors.textSecondary,
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        title,
+                                        maxLines: 1,
+                                        overflow: .ellipsis,
+                                        style: RamificaText.body.copyWith(
+                                          color: RamificaColors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (node.secret)
+                                      const Padding(
+                                        padding: EdgeInsets.only(left: 4),
+                                        child: Icon(
+                                          Icons.lock_outline,
+                                          size: 12,
+                                          color: RamificaColors.textSecondary,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Earned ending badge straddling the image/footer
+                      // seam: half over the image, half over the footer.
+                      if (node.endingBadgeUrl != null &&
+                          node.endingBadgeUrl!.isNotEmpty)
+                        Positioned(
+                          right: 8,
+                          top: -28,
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: RamificaColors.inputFill,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: RamificaColors.glassBorder,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(7),
+                              child: Image.network(
+                                node.endingBadgeUrl!,
+                                fit: .contain,
+                                errorBuilder: (_, _, _) => const Icon(
+                                  Icons.emoji_events,
+                                  size: 16,
+                                  color: RamificaColors.rewardGold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

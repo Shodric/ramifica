@@ -144,6 +144,7 @@ Json playbackDocument(String id, Json node, Map<String, Json> nodes) => {
   'endingType': node['endingType'],
   'endingBadgeUrl': node['endingBadgeUrl'],
   'thumbnailUrl': node['thumbnailUrl'],
+  'videoFrameLastUrl': node['videoFrameLastUrl'],
   'choices': [
     for (final raw in node['choices'] as List? ?? const [])
       _playbackChoice(jsonMap(raw), nodes),
@@ -181,6 +182,8 @@ Json mapDocument(Json node) => node['visibility'] == 'secret'
         'title': node['title'],
         'isEnding': node['isEnding'] == true,
         'thumbnailUrl': node['thumbnailUrl'],
+        'videoFrameLastBlurData':
+            node['videoFrameLastBlurData'] ?? fallbackBlur,
         'childIds': [
           for (final c in node['choices'] as List? ?? const [])
             jsonMap(c)['targetNodeId'],

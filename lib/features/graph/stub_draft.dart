@@ -2,9 +2,10 @@ import 'package:ramifica/data/models/draft_node.dart';
 import 'package:ramifica/data/models/graph_stub.dart';
 
 /// Display projection of map stubs onto draft nodes so the map reuses
-/// the create hub canvas. Titles, endings, locks, and edges survive;
-/// run-only state (visited, play counts) has no hub equivalent and the
-/// current node is marked separately through the canvas current id.
+/// the create hub canvas. Titles, endings, earned badges, locks, and
+/// edges survive; run-only state (visited, play counts) has no hub
+/// equivalent and the current node is marked separately through the
+/// canvas current id.
 List<DraftNode> draftNodesFromStubs(List<GraphStub> stubs) {
   return [
     for (final stub in stubs)
@@ -14,6 +15,9 @@ List<DraftNode> draftNodesFromStubs(List<GraphStub> stubs) {
         visibility: stub.locked ? 'secret' : 'visible',
         isEnding: stub.isEnding,
         endingType: stub.endingType,
+        // Seen-only from the backend: locked endings carry no badge, so
+        // the card overlay below doubles as the unlocked mark.
+        endingBadgeUrl: stub.endingBadgeUrl,
         // The map carries one image per node; the hub card renders it
         // as the frame.
         videoFrameLastUrl: stub.thumbnailUrl,

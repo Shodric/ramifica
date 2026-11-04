@@ -455,6 +455,9 @@ void main() {
     expect(stubs['story'], {
       'title': 'The temple secret',
       'coverUrl': 'https://cover/c.png',
+      'authorId': 'author',
+      'authorName': 'Author',
+      'authorPhotoUrl': null,
     });
     expect(root['choices'].single['icon'], 'key');
     expect(root['choices'].single['iconColor'], 'gold');

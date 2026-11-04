@@ -587,10 +587,17 @@ class ClientGameService {
           'nodeId': doc.key,
           'title': body?['title'] ?? doc.value['title'],
           'isEnding': body?['isEnding'] ?? doc.value['isEnding'] ?? false,
-          'thumbnailUrl': body?['thumbnailUrl'] ?? doc.value['thumbnailUrl'],
-          // Seen nodes only (body is null otherwise): the hub card image.
-          'imageBlurData': body?['videoFrameLastBlurData'],
+          // HQ frame for seen nodes only (body is null otherwise).
+          'thumbnailUrl':
+              body?['videoFrameLastUrl'] ?? body?['thumbnailUrl'],
+          // Blur preview for locked nodes comes from the player map doc.
+          'imageBlurData': body?['videoFrameLastBlurData'] ??
+              doc.value['videoFrameLastBlurData'],
           'endingType': seen && body != null ? body['endingType'] : null,
+          // Earned badge only: unseen endings never reveal it.
+          'endingBadgeUrl': seen && body != null
+              ? body['endingBadgeUrl']
+              : null,
           'visited': seen,
           'secret': secret,
           'childIds': seen
@@ -620,7 +627,13 @@ class ClientGameService {
     return {
       'nodes': results,
       'currentNodeId': run['currentNodeId'],
-      'story': {'title': story['title'], 'coverUrl': story['coverUrl']},
+      'story': {
+        'title': story['title'],
+        'coverUrl': story['coverUrl'],
+        'authorId': story['authorId'],
+        'authorName': story['authorName'],
+        'authorPhotoUrl': story['authorPhotoUrl'],
+      },
     };
   }
 

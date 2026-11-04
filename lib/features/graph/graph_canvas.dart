@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
@@ -331,7 +333,35 @@ class _CardThumbnail extends StatelessWidget {
         semanticLabel: stub.locked ? 'Locked' : 'No image',
       ),
     );
-    if (url.isEmpty) return placeholder;
+    if (url.isEmpty) {
+      final blur = _decodeBlur(stub.imageBlurData);
+      if (blur == null) return placeholder;
+      final image = Image.memory(
+        blur,
+        width: width,
+        height: height,
+        fit: .cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stack) => placeholder,
+      );
+      if (!stub.locked) return image;
+      return Stack(
+        children: [
+          image,
+          Positioned.fill(
+            child: Container(
+              color: .fromARGB(90, 0, 0, 0),
+              child: const Icon(
+                Icons.lock,
+                size: 20,
+                color: Colors.white,
+                semanticLabel: 'Locked',
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     return Image.network(
       url,
       width: width,
@@ -339,6 +369,18 @@ class _CardThumbnail extends StatelessWidget {
       fit: .cover,
       errorBuilder: (context, error, stack) => placeholder,
     );
+  }
+}
+
+Uint8List? _decodeBlur(String? source) {
+  if (source == null || source.isEmpty) return null;
+  try {
+    final comma = source.indexOf(',');
+    final payload = comma < 0 ? source : source.substring(comma + 1);
+    if (payload.isEmpty) return null;
+    return base64Decode(payload);
+  } catch (_) {
+    return null;
   }
 }
 

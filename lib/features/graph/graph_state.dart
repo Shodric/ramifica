@@ -9,6 +9,9 @@ class GraphState {
     this.runId,
     this.storyTitle,
     this.storyCoverUrl,
+    this.storyAuthorId,
+    this.storyAuthorName,
+    this.storyAuthorPhotoUrl,
     this.stubs = const [],
     this.currentNodeId,
     this.selectedId,
@@ -21,6 +24,9 @@ class GraphState {
   final String? runId;
   final String? storyTitle;
   final String? storyCoverUrl;
+  final String? storyAuthorId;
+  final String? storyAuthorName;
+  final String? storyAuthorPhotoUrl;
   final List<GraphStub> stubs;
   final String? currentNodeId;
   final String? selectedId;
@@ -56,6 +62,9 @@ class GraphState {
     String? Function()? runId,
     String? Function()? storyTitle,
     String? Function()? storyCoverUrl,
+    String? Function()? storyAuthorId,
+    String? Function()? storyAuthorName,
+    String? Function()? storyAuthorPhotoUrl,
     List<GraphStub>? stubs,
     String? Function()? currentNodeId,
     String? Function()? selectedId,
@@ -70,6 +79,15 @@ class GraphState {
       storyCoverUrl: storyCoverUrl == null
           ? this.storyCoverUrl
           : storyCoverUrl(),
+      storyAuthorId: storyAuthorId == null
+          ? this.storyAuthorId
+          : storyAuthorId(),
+      storyAuthorName: storyAuthorName == null
+          ? this.storyAuthorName
+          : storyAuthorName(),
+      storyAuthorPhotoUrl: storyAuthorPhotoUrl == null
+          ? this.storyAuthorPhotoUrl
+          : storyAuthorPhotoUrl(),
       stubs: stubs ?? this.stubs,
       currentNodeId: currentNodeId == null
           ? this.currentNodeId
@@ -88,6 +106,9 @@ class GraphState {
         other.runId == runId &&
         other.storyTitle == storyTitle &&
         other.storyCoverUrl == storyCoverUrl &&
+        other.storyAuthorId == storyAuthorId &&
+        other.storyAuthorName == storyAuthorName &&
+        other.storyAuthorPhotoUrl == storyAuthorPhotoUrl &&
         _sameStubs(other.stubs, stubs) &&
         other.currentNodeId == currentNodeId &&
         other.selectedId == selectedId &&
@@ -102,6 +123,9 @@ class GraphState {
     runId,
     storyTitle,
     storyCoverUrl,
+    storyAuthorId,
+    storyAuthorName,
+    storyAuthorPhotoUrl,
     Object.hashAll(stubs),
     currentNodeId,
     selectedId,
