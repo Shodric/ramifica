@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ramifica/features/create/video_picker.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:ramifica/app/feed_graph_pager.dart';
 import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/app/shell_bloc.dart';
@@ -15,8 +16,6 @@ import 'package:ramifica/features/create/create_view.dart';
 import 'package:ramifica/features/explore/explore_view.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
 import 'package:ramifica/features/feed/feed_event.dart';
-import 'package:ramifica/features/feed/feed_view.dart';
-import 'package:ramifica/features/graph/graph_view.dart';
 import 'package:ramifica/features/profile/profile_view.dart';
 
 class ShellView extends StatefulWidget {
@@ -147,17 +146,20 @@ class _ShellViewState extends State<ShellView> {
   Widget build(BuildContext context) {
     return BlocBuilder<ShellBloc, ShellState>(
       builder: (context, state) {
-        final storyId = state.storyId ?? '';
         return Scaffold(
           extendBody: true,
+          // The feed and the tree page like cards: a leftward drag
+          // reveals the tree 1:1 and snaps on release. The pager owns
+          // that axis, so the feed keeps only its vertical story swipe.
           body: IndexedStack(
-            index: state.tab.index,
+            index: switch (state.tab) {
+              .feed || .graph => 0,
+              .create => 1,
+              .explore => 2,
+              .profile => 3,
+            },
             children: [
-              TickerMode(
-                enabled: state.tab == .feed,
-                child: FeedView(storyId: state.storyId),
-              ),
-              GraphView(storyId: storyId),
+              FeedGraphPager(storyId: state.storyId),
               const CreateView(pickVideo: pickBrowserVideo),
               const ExploreView(),
               ProfileView(initialTab: _profileTab(widget.location)),
