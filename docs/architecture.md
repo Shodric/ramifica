@@ -114,7 +114,8 @@ lib/
     shell_bloc.dart             // Active tab and open story. Lives above the IndexedStack.
     shell_event.dart            // TabSelected, StoryOpenRequested.
     shell_state.dart            // Tab index and open storyId.
-    shell_view.dart             // Tab bar and IndexedStack. Pauses Feed when that tab is left.
+    shell_view.dart             // Tab bar, IndexedStack, and the feed/tree pager. Pauses Feed when that tab is left.
+    feed_graph_pager.dart       // PageView of feed + tree, synced both ways with ShellBloc.
   core/                         // Shared by two or more screens. No game rules.
     widgets/
       story_card.dart           // Cover, title, author. Explore and Profile.
@@ -125,6 +126,7 @@ lib/
       status_pill.dart          // idle, running, ready, failed. Create.
       empty_state.dart          // One sentence and, when needed, a button.
       failure_text.dart         // The phrase the bloc already emitted, with retry.
+      you_are_here_pill.dart    // Static marker above the current node card. Map and hub.
     prefetcher.dart             // Warms mp4 in the HTTP cache. Not a bloc.
     web_audio.dart              // AudioContext and decodeAudioData for the narrator.
     functions_client.dart       // Calls Cloud Functions.
@@ -153,18 +155,20 @@ lib/
       explore_view.dart         // Scrolling column. The tab bar belongs to the shell.
       campaign_card.dart        // StoryCard plus the brand label.
     graph/
-      graph_bloc.dart           // Stubs, open sheet, and the you-are-here node.
+      graph_bloc.dart           // Stubs and the you-are-here node.
       graph_event.dart          // GraphRequested, NodeSelected, ContinueRequested, ApproachRequested, RewindRequested.
       graph_state.dart          // Stubs, currentNodeId, selectedId, error phrase.
-      graph_view.dart           // Canvas plus the sheet.
-      graph_canvas.dart         // Pan, zoom, and edges. CustomPainter.
-      node_sheet.dart           // Visited node, with percents.
+      graph_view.dart           // Hub canvas without actions. Stubs project via stub_draft.
+      graph_canvas.dart         // Pan, zoom, and edges. CustomPainter. Legacy: the map tab uses the hub canvas.
+      node_sheet.dart           // Visited node, with percents. Legacy: the map tab has no sheet.
+      stub_draft.dart           // Map stubs projected onto draft nodes for the hub canvas.
+      scene_info_card.dart      // Selected scene name over the two-option share line.
     create/
       create_bloc.dart          // Draft, open node, and the job in flight.
       create_event.dart         // DraftRequested, generations, approvals, ZonesSaved, PublishRequested.
       create_state.dart         // Story, nodes, open node, job, and what is missing.
       create_view.dart          // Draft canvas plus the inspector.
-      draft_canvas.dart         // Draft nodes and arrows, secrets included.
+      draft_canvas.dart         // Draft nodes and arrows, secrets included. Also renders the read-only map.
       node_inspector.dart       // Prompts, S, E, clip, line, voice, and StatusPill.
       frame_compare.dart        // S and E of the same node.
       zone_marker.dart          // The finger marks the circle on the last frame.
@@ -195,7 +199,7 @@ lib/
       run_repository.dart       // startRun, loadPlayback, commitChoice.
       catalog_repository.dart   // Published stories and active campaigns.
       follow_repository.dart    // follows/{uid}/authors.
-      graph_repository.dart     // graphStubs, rewindRun, playApproach.
+      graph_repository.dart     // graphStubs, rewindRun, playApproach, jumpToNode.
       create_repository.dart    // Nodes, generations, uploads/, zones, delete, publish.
       profile_repository.dart   // Profile, sagas, unlocked endings.
 ```
@@ -215,13 +219,13 @@ Issue titles that still say Acceso, Explorar, Grafo, Crear, or Perfil mean the E
 
 Other blocs are created with `BlocProvider` on their tab.
 
-`ShellView` is one `IndexedStack` of the five tabs. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase.
+`ShellView` is one `IndexedStack` of four slots: a feed/tree pager plus Create, Explore, and Profile. The pager is a `PageView` (tree, then feed) synced both ways with `ShellBloc`: settling on a page selects its tab, and an external tab selection jumps instantly. The router keeps that page mounted and writes the path, so changing tabs does not recreate Feed. `TickerMode` stops Feed's tickers while another tab is selected. Coming back stays on the same phase.
 
 On a signed-in feed route, the shell sends `StoryOpened` once. `FeedBloc` lives above the shell. It calls `startRun`, then `loadPlayback` for that run. `startRun` returns `runId`, `storyId`, and `status` (`active` or `ended`). The client does not send `restart` from this event. An `active` playback enters `playing`. An `ended` playback enters `ending`. An `AppFailure` enters `failed` with that phrase. `StoryOpened` is restartable. While the same story is already `playing`, `speaking`, `window`, `holding`, `committing`, or `ending`, opening that feed route again does not send another `StoryOpened`. The repository methods so far are `startRun`, `loadPlayback`, and `commitChoice`.
 
 `StorySwiped` draws another published story at random, excluding the current one, and opens it with the same resume rule (`CatalogRepository.publishedStoryIds`, drawn in memory in this slice). It is only accepted from `playing` or with the ending card visible (`ending` without `endingSpeaking`); speaking, window, holding, committing, and the closing line ignore it. With no other story, or with no catalog, it is ignored. A catalog failure keeps the current clip. `StorySwiped` is restartable. When the open story changes, the view moves the route to `/story/{id}` so the shell and the URL follow; the shell's same-story guard skips any reload.
 
- While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. Turning sound on resumes the audio context from that tap. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. The voice file is decoded when the node opens. With sound, Web Audio plays it and hides the line. While muted, `ttsText` sits in the lower third for `ttsDurationSeconds`. `VoiceFinished` then enters `window`. The window shows one `ChoiceZone` per exit — the author's picked icon inside the ring, its label under the ring — and stays open until the player holds one. A pointer down sends `HoldStarted`. `HoldPortal` grows from that point for one second, filled with the current node's `videoFrameLastBlurData`. Zones map 0..1 frame coordinates through the 9:16 cover rect, and a full-screen release catcher ends the tracked pointer's hold anywhere; other fingers cannot cancel it. Releasing early sends `HoldCancelled` and the circle shrinks back to the window. `HoldCompleted` seals the hold, keeps the portal full, and calls `commitChoice` with a fresh `requestId`. A lost network sends the same `requestId` once more. An `invalid` answer falls back to `loadPlayback` and continues from the real node. The destination clip then starts from its first frame, or parks on the ending when the run ended. Leaving the Feed tab pauses the clip. An `ended` run does not play the clip or the line. The first-gesture unmute comes later.
+ While `playing`, `FeedView` stacks `NodeVideo`, `StoryChip`, and `MuteButton`. The mp4 starts muted (`autoMuted`) so the browser can autoplay, with `playsinline` and no native controls. `MuteToggled` flips `muted` and clears `autoMuted`. Turning sound on resumes the audio context from that tap. `NodeVideo` reports the first frame. Its `ended` event sends `PauseReached`, which moves `playing` to `speaking` and leaves the last frame up. The chip fades out over 200 ms. The voice file is decoded when the node opens. With sound, Web Audio plays it and hides the line. While muted, `ttsText` sits in the lower third for `ttsDurationSeconds`. `VoiceFinished` then enters `window`. Zones rise with the narration and stay through the window: one `ChoiceZone` per exit — the author's picked icon inside the ring, its label under the ring — and stays open until the player holds one. A pointer down sends `HoldStarted`. `HoldPortal` grows from that point for one second, filled with the current node's `videoFrameLastBlurData`. Zones map 0..1 frame coordinates through the 9:16 cover rect, and a full-screen release catcher ends the tracked pointer's hold anywhere; other fingers cannot cancel it. Releasing early sends `HoldCancelled` and the circle shrinks back to the window. `HoldCompleted` seals the hold, keeps the portal full, and calls `commitChoice` with a fresh `requestId`. A lost network sends the same `requestId` once more. An `invalid` answer falls back to `loadPlayback` and continues from the real node. The destination clip then starts from its first frame, or parks on the ending when the run ended. Leaving the Feed tab pauses the clip. An `ended` run does not play the clip or the line. The first-gesture unmute comes later.
 
 Tab order: Feed, Explore, Create (center button, no label), Map, Profile. The bar is a `NavigationBar` drawn over the body.
 
@@ -239,7 +243,7 @@ Path URLs, from `usePathUrlStrategy()` in `main.dart`. No hash. Hosting rewrites
 | `/profile` | `ShellView` on Profile | Same |
 | `/create` | `ShellView` on Create | Same |
 
-The tabs stay one `IndexedStack`. The URL picks the tab and the story. Changing tabs updates the URL and does not recreate Feed.
+The tabs stay one `IndexedStack` (feed and tree share one slot as a pager). The URL picks the tab and the story. Changing tabs updates the URL and does not recreate Feed.
 
 An external link opens `/story/{storyId}`. With no session, the view stores the id in `sessionStorage` (`pendingStoryId`), sends `PendingStorySaved` to `AuthBloc`, and shows Access. With a session, it sends `StoryOpenRequested` to `ShellBloc`. That bloc switches to Feed and `FeedBloc` receives `StoryOpened`.
 
