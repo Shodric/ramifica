@@ -75,6 +75,12 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
   /// refreshes it on its way down, so a stale value cannot survive.
   bool _hiddenAtDown = false;
 
+  /// Whether the clip was still auto-muted when the current tap pressed
+  /// down. The down already turned the sound on through `UserGestured`,
+  /// so the mute press of that same tap skips its toggle instead of
+  /// muting back. Refreshed on every down, like [_hiddenAtDown].
+  bool _autoMutedAtDown = false;
+
   /// Shows the resume flash. Set on the paused-to-playing edge and
   /// cleared 600ms later; [_flashToken] drops stale timers when taps
   /// come faster than that.
@@ -220,6 +226,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                 // overrides a manual mute. Also resumes a hidden-parked clip.
                 onPointerDown: (_) {
                   _hiddenAtDown = bloc.state.hiddenPaused;
+                  _autoMutedAtDown = bloc.state.autoMuted;
                   bloc.narrator.unlock();
                   bloc.add(const UserGestured());
                 },
@@ -647,10 +654,15 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                                 () => _saved = !_saved,
                                               ),
                                             ),
+                                            const SizedBox(height: 12),
                                             MuteButton(
                                               muted: state.muted,
                                               autoMuted: state.autoMuted,
                                               onPressed: () {
+                                                // This tap already turned the
+                                                // sound on through UserGestured;
+                                                // toggling would mute it back.
+                                                if (_autoMutedAtDown) return;
                                                 if (state.muted) {
                                                   bloc.narrator.unlock();
                                                 }
