@@ -91,6 +91,35 @@ class CreateNodeCard extends StatelessWidget {
                         right: 6,
                         child: _Pill('Root Node'),
                       ),
+                    if (node.endingBadgeUrl != null &&
+                        node.endingBadgeUrl!.isNotEmpty)
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: RamificaColors.inputFill,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: RamificaColors.glassBorder,
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(7),
+                            child: Image.network(
+                              node.endingBadgeUrl!,
+                              fit: .contain,
+                              errorBuilder: (_, _, _) => const Icon(
+                                Icons.emoji_events,
+                                size: 16,
+                                color: RamificaColors.rewardGold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),

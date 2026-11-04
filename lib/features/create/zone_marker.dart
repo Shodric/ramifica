@@ -998,19 +998,45 @@ class _ZoneMarkerState extends State<ZoneMarker> {
             color: RamificaColors.containerBase,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Center(
+          child: Center(
             child: Row(
               mainAxisSize: .min,
               children: [
-                Icon(
-                  Icons.emoji_events,
-                  size: 20,
-                  color: RamificaColors.rewardGold,
-                ),
-                SizedBox(width: 8),
-                Text('Final scene', style: RamificaText.label),
+                _endingBadgeThumb(),
+                const SizedBox(width: 8),
+                const Text('Final scene', style: RamificaText.label),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Leading mark for the final-scene button: the generated badge
+  /// image when one exists, otherwise the trophy glyph.
+  Widget _endingBadgeThumb() {
+    final url = widget.endingBadgeUrl;
+    if (url == null || url.isEmpty) {
+      return const Icon(
+        Icons.emoji_events,
+        size: 20,
+        color: RamificaColors.rewardGold,
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 28,
+        height: 28,
+        color: RamificaColors.inputFill,
+        child: Image.network(
+          url,
+          fit: .contain,
+          errorBuilder: (_, _, _) => const Icon(
+            Icons.emoji_events,
+            size: 20,
+            color: RamificaColors.rewardGold,
           ),
         ),
       ),
