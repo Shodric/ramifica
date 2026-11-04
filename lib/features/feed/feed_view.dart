@@ -571,8 +571,18 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                                 key: const ValueKey(
                                                   'rail-creator',
                                                 ),
-                                                tooltip: 'Creator',
-                                                label: 'Creator',
+                                                tooltip: _creatorName(
+                                                  state
+                                                      .playback
+                                                      ?.story
+                                                      .authorName,
+                                                ),
+                                                label: _creatorLabel(
+                                                  state
+                                                      .playback
+                                                      ?.story
+                                                      .authorName,
+                                                ),
                                                 icon: Icons.person,
                                                 iconColor:
                                                     RamificaColors.textPrimary,
@@ -929,6 +939,19 @@ void _openMap(BuildContext context, String? storyId) {
     // implements Exception, not FlutterError. The MapRequested event above
     // keeps the contract; navigation needs the real app.
   }
+}
+
+/// Full author name for the creator button tooltip. Falls back to
+/// 'Creator' while the name is unknown.
+String _creatorName(String? authorName) {
+  final clean = (authorName ?? '').trim();
+  return clean.isEmpty ? 'Creator' : clean;
+}
+
+/// Rail label for the creator button: the author name cut to 10 letters.
+String _creatorLabel(String? authorName) {
+  final name = _creatorName(authorName);
+  return name.length > 10 ? name.substring(0, 10) : name;
 }
 
 void _openCreator(BuildContext context, String? authorId, bool preview) {
