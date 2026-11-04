@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
+import 'package:ramifica/app/shell_bloc.dart';
+import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
@@ -86,6 +88,30 @@ class ProfileView extends StatefulWidget {
   State<ProfileView> createState() => _ProfileViewState();
 }
 
+/// Re-requests the own creations whenever the shell lands on the
+/// profile tab: the shell keeps every tab mounted, so drafts fetched
+/// once would never show a publish made on Create. Mounts without a
+/// [ShellBloc] (widget tests) render the child as-is.
+class _RefreshOnProfileTab extends StatelessWidget {
+  const _RefreshOnProfileTab({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    try {
+      context.read<ShellBloc>();
+    } catch (_) {
+      return child;
+    }
+    return BlocListener<ShellBloc, ShellState>(
+      listenWhen: (previous, next) =>
+          previous.tab != ShellTab.profile && next.tab == ShellTab.profile,
+      listener: (context, _) =>
+          context.read<ProfileBloc>().add(const ProfileDraftsRequested()),
+      child: child,
+    );
+  }
+}
+
 class _ProfileViewState extends State<ProfileView> {
   ProfileBloc? _bloc;
   var _editing = false;
@@ -117,15 +143,14 @@ class _ProfileViewState extends State<ProfileView> {
     // page instead of throwing. Production initializes Firebase in main
     // before this tab builds, like FeedView's missing-bloc fallback.
     try {
-      _bloc =
-          ProfileBloc(
-            auth: createFirebaseAuthRepository(),
-            users: FirestoreUserDirectory(),
-            follows: createFirebaseFollowRepository(),
-            fetchAuthorStories:
-                widget.fetchAuthorStories ??
-                createFirebaseCreateRepository().fetchAuthorStories,
-          )..add(ProfileRequested(authorId: widget.authorId));
+      _bloc = ProfileBloc(
+        auth: createFirebaseAuthRepository(),
+        users: FirestoreUserDirectory(),
+        follows: createFirebaseFollowRepository(),
+        fetchAuthorStories:
+            widget.fetchAuthorStories ??
+            createFirebaseCreateRepository().fetchAuthorStories,
+      )..add(ProfileRequested(authorId: widget.authorId));
       // Own profile only: foreign viewers never see these drafts.
       if (widget.authorId == null) {
         _bloc!.add(const ProfileDraftsRequested());
@@ -149,12 +174,14 @@ class _ProfileViewState extends State<ProfileView> {
     }
     return BlocProvider.value(
       value: bloc,
-      child: BlocListener<ProfileBloc, ProfileState>(
-        listener: _closeEditorOnSaved,
-        child: BlocBuilder<ProfileBloc, ProfileState>(
-          builder: (context, state) {
-            return Scaffold(body: SafeArea(child: _body(context, state)));
-          },
+      child: _RefreshOnProfileTab(
+        child: BlocListener<ProfileBloc, ProfileState>(
+          listener: _closeEditorOnSaved,
+          child: BlocBuilder<ProfileBloc, ProfileState>(
+            builder: (context, state) {
+              return Scaffold(body: SafeArea(child: _body(context, state)));
+            },
+          ),
         ),
       ),
     );
@@ -297,7 +324,11 @@ class _ProfileViewState extends State<ProfileView> {
             endings: widget.unlockedEndings,
             onOpen: (storyId) => _openEnding(context, storyId),
           ),
-        if (_tab == 2) _CreationsCard(drafts: state.drafts, onOpen: (id) => _openDraft(context, id)),
+        if (_tab == 2)
+          _CreationsCard(
+            drafts: state.drafts,
+            onOpen: (id) => _openDraft(context, id),
+          ),
       ],
     );
   }
@@ -764,7 +795,10 @@ class _CreationsCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.video_library_outlined, color: RamificaColors.hotspot),
+              const Icon(
+                Icons.video_library_outlined,
+                color: RamificaColors.hotspot,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -822,9 +856,7 @@ class _CreationRow extends StatelessWidget {
           padding: const .all(12),
           child: Row(
             children: [
-              Expanded(
-                child: Text(title, style: RamificaText.labelSM),
-              ),
+              Expanded(child: Text(title, style: RamificaText.labelSM)),
               Text(
                 draft.status == 'published' ? 'Published' : 'Draft',
                 style: RamificaText.meta,
@@ -842,4 +874,3 @@ class _CreationRow extends StatelessWidget {
     );
   }
 }
-

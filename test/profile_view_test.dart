@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ramifica/app/shell_bloc.dart';
+import 'package:ramifica/app/shell_event.dart';
+import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/data/models/user.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
@@ -44,6 +48,39 @@ void main() {
       expect(find.byKey(const Key('profileSignOutButton')), findsOneWidget);
       expect(find.byKey(const Key('profileFollowButton')), findsNothing);
       expect(bloc.added, isEmpty);
+    });
+
+    testWidgets('entering the profile tab re-requests the creations', (
+      tester,
+    ) async {
+      final bloc = _stub(
+        const ProfileState(
+          phase: ProfilePhase.loaded,
+          uid: 'u_me',
+          authorId: 'u_me',
+          isOwn: true,
+        ),
+      );
+      addTearDown(bloc.close);
+      final shell = ShellBloc();
+      addTearDown(shell.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BlocProvider.value(
+              value: shell,
+              child: ProfileView(bloc: bloc, showInstallGuide: () => false),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(bloc.added, isEmpty);
+
+      shell.add(const TabSelected(ShellTab.profile));
+      await tester.pumpAndSettle();
+
+      expect(bloc.added.whereType<ProfileDraftsRequested>(), hasLength(1));
     });
 
     testWidgets('foreign profile shows a follow button and no editor', (

@@ -582,6 +582,7 @@ void main() {
         );
 
         expect(published.publishedStoryId, 'story_1');
+        expect(published.story?.status, 'published');
         expect(published.failure, isNull);
       },
     );

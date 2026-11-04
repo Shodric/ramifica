@@ -2100,6 +2100,34 @@ void main() {
       expect(published, 'story_1');
     });
 
+    testWidgets('publish CTA hides for a published story', (tester) async {
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async =>
+              'story_1',
+          fetchStoryDoc: (_) async => {
+            'authorId': 'uid_1',
+            'title': 'Temple',
+            'synopsis': '',
+            'status': 'published',
+            'rootNodeId': 'node_1',
+          },
+          fetchNodeDocs: (_) async => [
+            const MapEntry('node_1', {'title': 'Root'}),
+          ],
+          callFunction: (name, data) async => {'storyId': 'story_1'},
+        ),
+      );
+      addTearDown(() => _disposeBloc(tester, bloc));
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      await tester.pumpWidget(MaterialApp(home: CreateView(bloc: bloc)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('ribbon-publish')), findsNothing);
+      expect(find.byKey(const ValueKey('ribbon-settings')), findsOneWidget);
+    });
+
     testWidgets('publish problems render as the checklist', (tester) async {
       final bloc = CreateBloc(
         repository: testCreateRepository(

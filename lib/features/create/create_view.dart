@@ -472,6 +472,7 @@ class _CreateViewState extends State<CreateView> {
                 ? () => bloc.add(const StoryPublished())
                 : null,
             canPublish: state.job == CreateJob.none && problems.isEmpty,
+            showPublish: state.story?.status != 'published',
             onClose: () => _go(context, AppRoutes.create),
           ),
           const SizedBox(height: 12),

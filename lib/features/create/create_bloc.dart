@@ -1531,6 +1531,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           job: CreateJob.none,
           jobNodeId: () => null,
           failure: () => null,
+          story: () => story.copy(status: 'published'),
           publishedStoryId: () => story.storyId,
           stories: [
             for (final entry in state.stories)
