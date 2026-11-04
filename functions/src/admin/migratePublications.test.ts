@@ -9,6 +9,7 @@ test("migration projections preserve legacy URLs/counts and omit " +
     title: "Gate",
     videoUrl: "legacy-url",
     durationSeconds: 6,
+    endingBadgeUrl: "badge-url",
     videoPrompt: "private",
     choices: [{choiceId: "c", targetNodeId: "secret", label: "Enter"}],
     choiceCounts: {c: 12},
@@ -23,6 +24,7 @@ test("migration projections preserve legacy URLs/counts and omit " +
   const projected = projectNode("root", root, nodes);
   assert.equal(projected.body.videoUrl, "legacy-url");
   assert.equal(projected.body.durationSeconds, 6);
+  assert.equal(projected.body.endingBadgeUrl, "badge-url");
   assert.equal("videoPrompt" in projected.body, false);
   assert.equal(projected.body.choices[0].target, null);
   assert.deepEqual(projected.stats.choiceCounts, {c: 12});

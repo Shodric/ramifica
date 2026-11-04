@@ -18,8 +18,13 @@ Map<String, dynamic> nodeSavePatch(DraftNode node, String storedText) {
     'isEnding': node.isEnding,
     'endingName': clean(node.endingName),
     'endingType': clean(node.endingType),
+    'endingBadgeUrl': clean(node.endingBadgeUrl),
     'ttsText': node.ttsText.trim(),
     'choices': [for (final choice in node.choices) choice.toJson()],
+    'cutSlots': [
+      for (final slot in const ['A', 'B'])
+        if (node.cutSlots.contains(slot)) slot,
+    ],
     'startImagePrompt': clean(node.startImagePrompt),
     'videoPrompt': clean(node.videoPrompt),
     'sceneDirection': clean(node.sceneDirection),

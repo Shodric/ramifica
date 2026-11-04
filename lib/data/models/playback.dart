@@ -260,6 +260,7 @@ class PlaybackNode {
     this.ttsDurationSeconds,
     this.endingName,
     this.endingType,
+    this.endingBadgeUrl,
     this.rewardCode,
   });
 
@@ -277,6 +278,7 @@ class PlaybackNode {
       ttsDurationSeconds: _optionalDouble(json['ttsDurationSeconds']),
       endingName: _optionalString(json['endingName']),
       endingType: _optionalString(json['endingType']),
+      endingBadgeUrl: _optionalString(json['endingBadgeUrl']),
       rewardCode: _optionalString(json['rewardCode']),
     );
   }
@@ -297,6 +299,7 @@ class PlaybackNode {
   final double? ttsDurationSeconds;
   final String? endingName;
   final String? endingType;
+  final String? endingBadgeUrl;
   final String? rewardCode;
 
   @override
@@ -314,6 +317,7 @@ class PlaybackNode {
         other.ttsDurationSeconds == ttsDurationSeconds &&
         other.endingName == endingName &&
         other.endingType == endingType &&
+        other.endingBadgeUrl == endingBadgeUrl &&
         other.rewardCode == rewardCode;
   }
 
@@ -331,6 +335,7 @@ class PlaybackNode {
     ttsDurationSeconds,
     endingName,
     endingType,
+    endingBadgeUrl,
     rewardCode,
   );
 }

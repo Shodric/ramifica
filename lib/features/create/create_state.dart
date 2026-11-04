@@ -317,7 +317,7 @@ List<String> missingForNode({required DraftNode node, bool isRoot = false}) {
     if (node.endingName == null || node.endingName!.trim().isEmpty) {
       missing.add('Ending $id needs a name.');
     }
-    if (!['abierto', 'tragico', 'secreto'].contains(node.endingType ?? '')) {
+    if (!kEndingTypeCodes.contains(node.endingType ?? '')) {
       missing.add('Ending $id needs a valid type.');
     }
   } else {

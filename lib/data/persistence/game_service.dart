@@ -397,6 +397,10 @@ class ClientGameService {
       if (run == null || run['currentNodeId'] != nodeId) return;
       if (run['status'] == 'ended' && run['endingOutcome'] != null) return;
       final code = earned?['code'] ?? rewardCode(uid, storyId, nodeId);
+      final rawBadge = node['endingBadgeUrl'];
+      final badgeUrl = rawBadge is String && rawBadge.trim().isNotEmpty
+          ? rawBadge.trim()
+          : null;
       final now = _now();
       Json? saga;
       if (unlock != null && unlocked?['sagaUnlocked'] != true) {
@@ -412,9 +416,10 @@ class ClientGameService {
           'nodeId': nodeId,
           'endingName': node['endingName'],
           'endingType': node['endingType'],
+          'badgeUrl': ?badgeUrl,
         },
         'sagaUnlocked': saga,
-        'reward': {'rewardId': reward, 'code': code},
+        'reward': {'rewardId': reward, 'code': code, 'badgeUrl': ?badgeUrl},
       };
       if (earned == null) {
         tx.set(rewardPath, {
@@ -422,12 +427,18 @@ class ClientGameService {
           'endingNodeId': nodeId,
           'sagaId': sagaId,
           'code': code,
+          'badgeUrl': ?badgeUrl,
           'grantedAt': now,
           'requestId':
               jsonMap(run['lastCommit'])['requestId'] ?? 'start:$runId',
         });
-      } else if (earned['code'] == null) {
-        tx.set(rewardPath, {'code': code}, merge: true);
+      } else if (earned['code'] == null ||
+          (badgeUrl != null && earned['badgeUrl'] == null)) {
+        tx.set(rewardPath, {
+          if (earned['code'] == null) 'code': code,
+          if (badgeUrl != null && earned['badgeUrl'] == null)
+            'badgeUrl': badgeUrl,
+        }, merge: true);
       }
       tx.set(runPath, {
         'status': 'ended',

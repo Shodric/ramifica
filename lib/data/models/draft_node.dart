@@ -1,5 +1,19 @@
 import 'package:ramifica/data/models/app_failure.dart';
 
+/// Valid ending-type codes (Firestore `endingType`), in dialog order.
+/// Endings default to `incomplete` until the author picks one.
+const kEndingTypeCodes = [
+  'open',
+  'tragic',
+  'secret',
+  'heroic',
+  'mysterious',
+  'bittersweet',
+  'dark',
+  'epic',
+  'incomplete',
+];
+
 /// One exit of a draft node. Mirrors the server `ValidatableChoice`
 /// shape (see functions/src/publish/validateStory.ts): the label the
 /// player reads, the target node, which exit is the default, and the
@@ -144,6 +158,7 @@ class DraftNode {
     this.isEnding = false,
     this.endingName,
     this.endingType,
+    this.endingBadgeUrl,
     this.videoUrl,
     this.videoStatus = 'idle',
     this.videoSource,
@@ -181,6 +196,7 @@ class DraftNode {
     this.ttsDurationSeconds,
     this.ttsApproved = false,
     this.choices = const [],
+    this.cutSlots = const {},
   });
 
   factory DraftNode.fromMap(String nodeId, Map<String, dynamic> data) {
@@ -190,6 +206,7 @@ class DraftNode {
       throw const AppFailure(.invalid);
     }
     final rawChoices = data['choices'];
+    final rawCut = data['cutSlots'];
     return DraftNode(
       nodeId: nodeId,
       title: _optionalString(data['title']) ?? '',
@@ -197,6 +214,7 @@ class DraftNode {
       isEnding: data['isEnding'] == true,
       endingName: _optionalString(data['endingName']),
       endingType: _optionalString(data['endingType']),
+      endingBadgeUrl: _optionalString(data['endingBadgeUrl']),
       videoUrl: _optionalString(data['videoUrl']),
       videoStatus: _optionalString(data['videoStatus']) ?? 'idle',
       videoSource: _optionalString(data['videoSource']),
@@ -242,6 +260,12 @@ class DraftNode {
                   ),
             ]
           : const [],
+      cutSlots: rawCut is List
+          ? {
+              for (final raw in rawCut)
+                if (raw == 'A' || raw == 'B') raw as String,
+            }
+          : const {},
     );
   }
 
@@ -253,6 +277,10 @@ class DraftNode {
   final bool isEnding;
   final String? endingName;
   final String? endingType;
+
+  /// Public URL of the generated ending badge (`generateEndingBadge`).
+  /// Null until the author generates one.
+  final String? endingBadgeUrl;
   final String? videoUrl;
   final String? videoStatus;
   final String? videoSource;
@@ -326,12 +354,26 @@ class DraftNode {
   final bool ttsApproved;
   final List<DraftChoice> choices;
 
+  /// Branch slots the author cut: `A`/`B` subset. A cut slot never
+  /// renders an add-node mini on the canvas and rejects new options,
+  /// so a node with one cut slot keeps a single child cleanly.
+  final Set<String> cutSlots;
+
   /// True while the map must hide the body from players.
   bool get secret => visibility == 'secret';
 
   /// Destination ids, in choice order. Drives canvas edges and orphans.
   List<String> get childIds => [
     for (final choice in choices) choice.targetNodeId,
+  ];
+
+  /// True when the author cut [slot] (`A`/`B`).
+  bool isSlotCut(String slot) => cutSlots.contains(slot);
+
+  /// Slots still accepting options, in A/B order.
+  List<String> get openSlots => [
+    for (final slot in const ['A', 'B'])
+      if (!cutSlots.contains(slot)) slot,
   ];
 
   /// True when this non-root node's video is stale: it inherited S from
@@ -356,6 +398,7 @@ class DraftNode {
       'isEnding': isEnding,
       'endingName': endingName,
       'endingType': endingType,
+      'endingBadgeUrl': endingBadgeUrl,
       'videoUrl': videoUrl,
       'videoStatus': videoStatus,
       'videoSource': videoSource,
@@ -393,6 +436,10 @@ class DraftNode {
       'ttsDurationSeconds': ttsDurationSeconds,
       'ttsApproved': ttsApproved,
       'choices': [for (final choice in choices) choice.toJson()],
+      'cutSlots': [
+        for (final slot in const ['A', 'B'])
+          if (cutSlots.contains(slot)) slot,
+      ],
     };
   }
 
@@ -402,6 +449,7 @@ class DraftNode {
     bool? isEnding,
     String? Function()? endingName,
     String? Function()? endingType,
+    String? Function()? endingBadgeUrl,
     String? Function()? videoUrl,
     String? videoStatus,
     String? Function()? videoSource,
@@ -439,6 +487,7 @@ class DraftNode {
     double? Function()? ttsDurationSeconds,
     bool? ttsApproved,
     List<DraftChoice>? choices,
+    Set<String>? cutSlots,
   }) {
     return DraftNode(
       nodeId: nodeId,
@@ -447,6 +496,9 @@ class DraftNode {
       isEnding: isEnding ?? this.isEnding,
       endingName: endingName == null ? this.endingName : endingName(),
       endingType: endingType == null ? this.endingType : endingType(),
+      endingBadgeUrl: endingBadgeUrl == null
+          ? this.endingBadgeUrl
+          : endingBadgeUrl(),
       videoUrl: videoUrl == null ? this.videoUrl : videoUrl(),
       videoStatus: videoStatus ?? this.videoStatus,
       videoSource: videoSource == null ? this.videoSource : videoSource(),
@@ -520,6 +572,7 @@ class DraftNode {
           : ttsDurationSeconds(),
       ttsApproved: ttsApproved ?? this.ttsApproved,
       choices: choices ?? this.choices,
+      cutSlots: cutSlots ?? this.cutSlots,
     );
   }
 
@@ -532,6 +585,7 @@ class DraftNode {
         other.isEnding == isEnding &&
         other.endingName == endingName &&
         other.endingType == endingType &&
+        other.endingBadgeUrl == endingBadgeUrl &&
         other.videoUrl == videoUrl &&
         other.videoStatus == videoStatus &&
         other.videoSource == videoSource &&
@@ -567,7 +621,8 @@ class DraftNode {
         other.ttsStatus == ttsStatus &&
         other.ttsDurationSeconds == ttsDurationSeconds &&
         other.ttsApproved == ttsApproved &&
-        _sameChoices(other.choices, choices);
+        _sameChoices(other.choices, choices) &&
+        _sameSlots(other.cutSlots, cutSlots);
   }
 
   @override
@@ -578,6 +633,7 @@ class DraftNode {
     isEnding,
     endingName,
     endingType,
+    endingBadgeUrl,
     videoUrl,
     videoStatus,
     videoSource,
@@ -614,6 +670,7 @@ class DraftNode {
     ttsDurationSeconds,
     ttsApproved,
     Object.hashAll(choices),
+    Object.hashAll(const ['A', 'B'].where(cutSlots.contains)),
   ]);
 }
 
@@ -644,4 +701,9 @@ bool _sameChoices(List<DraftChoice> a, List<DraftChoice> b) {
     if (a[i] != b[i]) return false;
   }
   return true;
+}
+
+bool _sameSlots(Set<String> a, Set<String> b) {
+  if (a.length != b.length) return false;
+  return a.containsAll(b);
 }

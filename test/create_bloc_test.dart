@@ -1793,6 +1793,40 @@ void main() {
       expect(missing, isEmpty);
     });
 
+    test('endings accept every taxonomy type and reject unknown ones', () {
+      const base = DraftNode(
+        nodeId: 'node_9',
+        title: 'Dawn',
+        isEnding: true,
+        endingName: 'Dawn',
+        videoUrl: 'https://example.com/end.mp4',
+        videoStatus: 'ready',
+        videoFrameLastUrl: 'https://example.com/f9.png',
+      );
+      const types = [
+        'open',
+        'tragic',
+        'secret',
+        'heroic',
+        'mysterious',
+        'bittersweet',
+        'dark',
+        'epic',
+        'incomplete',
+      ];
+      for (final type in types) {
+        expect(
+          missingForNode(node: base.copy(endingType: () => type)),
+          isEmpty,
+          reason: type,
+        );
+      }
+      expect(
+        missingForNode(node: base.copy(endingType: () => 'xyz')),
+        contains('Ending node_9 needs a valid type.'),
+      );
+    });
+
     test('orphans are unreachable nodes shown distinctly', () {
       const state = CreateState(
         story: DraftStory(
@@ -2018,7 +2052,7 @@ void main() {
         title: 'Dawn',
         isEnding: true,
         endingName: 'Dawn',
-        endingType: 'abierto',
+        endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
         videoWidth: 480,
@@ -2211,6 +2245,140 @@ void main() {
       expect(choices.single['slot'], 'B');
       expect(choices.single['targetNodeId'], 'node_1');
       expect(choices.single['x'], 0.75);
+    });
+
+    test('cutting a free path marks it and keeps the other open', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, {'B'});
+      expect(node.openSlots, ['A']);
+    });
+
+    test('uncutting restores the path', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(node.openSlots, ['A', 'B']);
+    });
+
+    test('cutting an occupied path fails', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      // The seed choice has no stored slot, so it lands on A.
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(bloc.state.failure, 'That path already has a scene.');
+    });
+
+    test('cutting the last open path fails', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceRemoved(nodeId: 'node_1', choiceId: 'c1'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, {'B'});
+      expect(bloc.state.failure, 'One path must stay open.');
+    });
+
+    test('cut toggles on unknown nodes, endings, and slots do nothing',
+        () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+      final before = bloc.state.nodes;
+
+      bloc
+        ..add(const ChoiceCutToggled(nodeId: 'missing', slot: 'B'))
+        ..add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'C'))
+        ..add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'A'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // Only the ending flip lands; every cut is ignored.
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.cutSlots, isEmpty);
+      expect(node.isEnding, isTrue);
+      expect(bloc.state.failure, isNull);
+      expect(before.any((n) => n.nodeId == 'node_1' && n.isEnding), isFalse);
+    });
+
+    test('marking final drops choices and cut marks', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const ChoiceCutToggled(nodeId: 'node_1', slot: 'B'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.isEnding, isTrue);
+      expect(node.choices, isEmpty);
+      expect(node.cutSlots, isEmpty);
+    });
+
+    test('unmarking final reopens both paths', () async {
+      final bloc = CreateBloc(repository: _repo(null), auth: _auth('uid_1'));
+      addTearDown(bloc.close);
+      bloc.add(const DraftOpened('story_1'));
+      await bloc.stream.firstWhere((state) => state.hasDraft);
+
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      bloc.add(const NodeEndingToggled(nodeId: 'node_1', isEnding: false));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final node = bloc.state.nodes.firstWhere(
+        (candidate) => candidate.nodeId == 'node_1',
+      );
+      expect(node.isEnding, isFalse);
+      expect(node.openSlots, ['A', 'B']);
     });
   });
 
@@ -2613,7 +2781,7 @@ void main() {
         title: 'Dawn',
         isEnding: true,
         endingName: 'Dawn',
-        endingType: 'abierto',
+        endingType: 'open',
         videoUrl: 'https://example.com/end.mp4',
         videoStatus: 'ready',
         videoWidth: 480,
@@ -2787,6 +2955,60 @@ void main() {
       expect(layout.edges.every((edge) => !edge.returns), isTrue);
     });
 
+    test('single-child chains keep a uniform node-to-node pitch', () {
+      const nodes = [
+        DraftNode(
+          nodeId: 'root',
+          choices: [
+            DraftChoice(
+              choiceId: 'c0',
+              label: '',
+              targetNodeId: 's1',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(
+          nodeId: 's1',
+          choices: [
+            DraftChoice(
+              choiceId: 'c1',
+              label: '',
+              targetNodeId: 's2',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(
+          nodeId: 's2',
+          choices: [
+            DraftChoice(
+              choiceId: 'c2',
+              label: '',
+              targetNodeId: 's3',
+              isDefault: true,
+              slot: 'A',
+            ),
+          ],
+        ),
+        DraftNode(nodeId: 's3', title: 'End'),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'root');
+
+      // Every link stacks vertically with the same 320px row pitch, so no
+      // connector looks longer or shorter than the previous one.
+      const chain = ['root', 's1', 's2', 's3'];
+      for (var i = 0; i < chain.length - 1; i++) {
+        final parent = layout.positions[chain[i]]!;
+        final child = layout.positions[chain[i + 1]]!;
+        expect(child.dx, parent.dx);
+        expect(child.dy - parent.dy, 320);
+      }
+    });
+
     test('recenter lands the target at the viewport center', () {
       const viewport = Size(400, 600);
       final transform = recenterTransform(viewport, const Offset(172, 122));
@@ -2923,6 +3145,47 @@ void main() {
         'node_4': '2aa',
         'orphan': '',
       });
+    });
+
+    test('single-child runs stack vertically over the real child', () {
+      // Chain root -A-> node_2 -A-> node_3 with free B slots: `+` minis
+      // keep their leaf spots but must not drag parents sideways, so
+      // every connector is vertical and shares the same length.
+      DraftChoice choice(String id, String target) {
+        return DraftChoice(
+          choiceId: id,
+          label: '',
+          targetNodeId: target,
+          isDefault: true,
+          slot: 'A',
+        );
+      }
+
+      final nodes = [
+        DraftNode(
+          nodeId: 'node_1',
+          title: 'Root',
+          choices: [choice('c1', 'node_2')],
+        ),
+        DraftNode(
+          nodeId: 'node_2',
+          title: 'Mid',
+          choices: [choice('c2', 'node_3')],
+        ),
+        const DraftNode(nodeId: 'node_3', title: 'Leaf'),
+      ];
+
+      final layout = layoutDraft(nodes, rootNodeId: 'node_1');
+      final root = layout.positions['node_1']!;
+      final mid = layout.positions['node_2']!;
+      final leaf = layout.positions['node_3']!;
+      expect(mid.dx, root.dx);
+      expect(leaf.dx, root.dx);
+      expect(mid.dy - root.dy, leaf.dy - mid.dy);
+      // Minis still hang on the free B slot, right of the run.
+      final mini = layout.positions['mini:node_1:B']!;
+      expect(mini.dx, greaterThan(root.dx));
+      expect(mini.dy, root.dy + (mid.dy - root.dy));
     });
   });
 }

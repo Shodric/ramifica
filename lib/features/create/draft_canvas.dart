@@ -10,7 +10,7 @@ import 'package:ramifica/features/create/create_plus_node.dart';
 /// Horizontal sibling gap and vertical row pitch. Gaps fit 170x240 cards
 /// plus connector room, and the pad clears card halves, so nothing clips.
 const _hGap = 220.0;
-const _vGap = 280.0;
+const _vGap = 320.0;
 const _pad = 120.0;
 
 /// One drawn edge. [returns] marks a cycle: the child sits on the same or
@@ -98,7 +98,7 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
       kids.addAll(unslotted);
       if (!node.isEnding) {
         var remaining = 2 - node.choices.length;
-        for (final s in const ['A', 'B']) {
+        for (final s in node.openSlots) {
           final real = bySlot[s];
           if (real != null) {
             kids.add(real);
@@ -135,7 +135,16 @@ DraftLayout layoutDraft(List<DraftNode> nodes, {String? rootNodeId}) {
     for (final kid in kids) {
       if (!left.containsKey(kid)) place(kid);
     }
-    left[id] = (left[kids.first]! + left[kids.last]!) / 2;
+    // Pivot over real children only: `+` minis keep their leaf slots (so
+    // a tapped mini is replaced by its child on the same spot) but never
+    // drag the parent sideways. Single-child runs stack vertically and
+    // every connector keeps the same length.
+    final real = [
+      for (final kid in kids)
+        if (!kid.startsWith('mini:')) kid,
+    ];
+    final span = real.isEmpty ? kids : real;
+    left[id] = (left[span.first]! + left[span.last]!) / 2;
   }
 
   place(root);

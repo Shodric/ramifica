@@ -156,7 +156,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
       },
       child: BlocListener<FeedBloc, FeedState>(
         bloc: bloc,
-        // A preview tap on an unfinished target keeps the scene and raises
+        // A preview hold on an unfinished target keeps the scene and raises
         // a transient notice. The serial replays repeats; the phase is
         // untouched, so this listener never fights the player.
         listenWhen: (previous, current) =>
@@ -671,6 +671,7 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     type: playback.node.endingType,
                                     rewardCode: playback.node.rewardCode,
                                     unlockedTitle: state.sagaUnlocked?.title,
+                                    badgeUrl: playback.node.endingBadgeUrl,
                                     onSeeMap: () {
                                       if (widget.preview) return;
                                       bloc.add(const MapRequested());

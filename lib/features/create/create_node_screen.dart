@@ -920,6 +920,7 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                   _StepScroll(
                                     child: StepHotspots(
                                       node: node,
+                                      bloc: widget.bloc,
                                       busy: busy,
                                       showErrors: _showErrors[4],
                                       active: stepActive(4),
@@ -958,6 +959,50 @@ class _CreateNodeScreenState extends State<CreateNodeScreen> {
                                           ),
                                         ),
                                       ),
+                                      onCutToggled: (slot) => _edited(
+                                        () => widget.bloc.add(
+                                          ChoiceCutToggled(
+                                            nodeId: widget.nodeId,
+                                            slot: slot,
+                                          ),
+                                        ),
+                                      ),
+                                      onEndingToggled: (isEnding) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeEndingToggled(
+                                            nodeId: widget.nodeId,
+                                            isEnding: isEnding,
+                                          ),
+                                        ),
+                                      ),
+                                      onEndingTypeChanged: (type) => _edited(
+                                        () => widget.bloc.add(
+                                          NodeEndingTypeChanged(
+                                            nodeId: widget.nodeId,
+                                            endingType: type,
+                                          ),
+                                        ),
+                                      ),
+                                      onEndingBadgeRequested: () async {
+                                        widget.bloc.add(
+                                          NodeEndingBadgeRequested(
+                                            widget.nodeId,
+                                          ),
+                                        );
+                                        // The dialog loader runs until the
+                                        // job settles; a failure surfaces
+                                        // through the shared snack.
+                                        await widget.bloc.stream
+                                            .firstWhere(
+                                              (state) =>
+                                                  state.job == CreateJob.none,
+                                            )
+                                            .timeout(
+                                              const Duration(seconds: 60),
+                                              onTimeout: () =>
+                                                  widget.bloc.state,
+                                            );
+                                      },
                                       onOpenChild: (targetId) async {
                                         widget.bloc.add(NodeSelected(targetId));
                                         // Covered players must not keep

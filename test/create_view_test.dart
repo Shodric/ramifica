@@ -1332,7 +1332,7 @@ void main() {
           'visibility': 'secret',
           'isEnding': true,
           'endingName': 'Escape',
-          'endingType': 'abierto',
+          'endingType': 'open',
         }),
         MapEntry('node_3', {
           'title': 'Spare',
@@ -2075,7 +2075,7 @@ void main() {
               'visibility': 'visible',
               'isEnding': true,
               'endingName': 'Dawn',
-              'endingType': 'abierto',
+              'endingType': 'open',
               'startFromNodeId': 'node_1',
               'startParentFrameHash': 'hash-f1',
               'videoStatus': 'ready',
@@ -2422,7 +2422,7 @@ List<MapEntry<String, Map<String, dynamic>>> _mediaDocs({
       'visibility': 'visible',
       'isEnding': true,
       'endingName': 'Escape',
-      'endingType': 'abierto',
+      'endingType': 'open',
       'videoStatus': 'idle',
       'startFromNodeId': 'node_1',
       'startParentFrameHash': 'hash-old',
@@ -2457,7 +2457,7 @@ List<MapEntry<String, Map<String, dynamic>>> _defaultDocs() {
       'visibility': 'secret',
       'isEnding': true,
       'endingName': 'Escape',
-      'endingType': 'abierto',
+      'endingType': 'open',
     }),
   ];
 }

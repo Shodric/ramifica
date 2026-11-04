@@ -174,9 +174,11 @@ class ClientDraftPersistence implements DraftPersistence {
       if (raw == null) invalid('Parent scene not found.');
       final parent = DraftNode.fromMap(parentId, raw);
       if (parent.isEnding) invalid('An ending cannot have Options.');
-      final wanted =
-          slot ??
-          (parent.choices.any((c) => _slot(parent, c) == 'A') ? 'B' : 'A');
+      if (slot != null && parent.isSlotCut(slot)) {
+        invalid('That path is cut.');
+      }
+      final wanted = slot ?? _autoSlot(parent);
+      if (wanted == null) invalid('No open path left.');
       if (wanted != 'A' && wanted != 'B') invalid('Invalid Option slot.');
       final occupied = parent.choices.where((c) => _slot(parent, c) == wanted);
       if (occupied.isNotEmpty) {
@@ -277,6 +279,7 @@ class ClientDraftPersistence implements DraftPersistence {
           final label = (proposal['label'] as String? ?? '').trim();
           if (label.isEmpty) continue;
           final slot = index == 0 ? 'A' : 'B';
+          if (node.isSlotCut(slot)) continue;
           final at = choices.indexWhere((c) => _slot(node, c) == slot);
           if (at >= 0) {
             final choice = choices[at];
@@ -390,6 +393,15 @@ class ClientDraftPersistence implements DraftPersistence {
   }
 }
 
+/// First open slot no Option occupies; cut slots never come back here.
+String? _autoSlot(DraftNode parent) {
+  final taken = {for (final c in parent.choices) _slot(parent, c)};
+  for (final slot in parent.openSlots) {
+    if (!taken.contains(slot)) return slot;
+  }
+  return null;
+}
+
 String _slot(DraftNode node, DraftChoice choice) {
   if (choice.slot == 'A' || choice.slot == 'B') return choice.slot!;
   final free = ['A', 'B']
@@ -434,6 +446,11 @@ void validateAuthorNode(Json node) {
       choices.length > 2 ||
       (node['isEnding'] == true && choices.isNotEmpty)) {
     invalid('Invalid Options.');
+  }
+  final cut = node['cutSlots'];
+  if (cut != null &&
+      (cut is! List || cut.any((s) => s != 'A' && s != 'B'))) {
+    invalid('Invalid cut paths.');
   }
   final ids = <String>{};
   final slots = <String>{};

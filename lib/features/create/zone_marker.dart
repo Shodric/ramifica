@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/data/models/draft_node.dart';
+import 'package:ramifica/features/create/create_bloc.dart';
+import 'package:ramifica/features/create/ending_setup_dialog.dart';
 
 /// Hold-zone editor over the node's LAST frame (the E image, which is what
 /// the player holds on). One circle per choice, positioned in 0-1 frame
@@ -38,6 +40,14 @@ class ZoneMarker extends StatefulWidget {
     this.onTune,
     this.onAddOption,
     this.onOpenChild,
+    this.cutSlots = const {},
+    this.isEnding = false,
+    this.endingType,
+    this.endingBadgeUrl,
+    this.onEndingTypeChanged,
+    this.onEndingBadgeRequested,
+    this.bloc,
+    this.onCutToggled,
     this.errorChoiceIds,
     this.focusChoiceId,
   });
@@ -85,9 +95,38 @@ class ZoneMarker extends StatefulWidget {
   /// path. Null keeps the legacy target-picker row instead.
   final void Function(String slot)? onAddOption;
 
-  /// Opens the existing child of an occupied slot. Null hides the
-  /// `Option X ✓` shortcut on occupied slots.
+  /// Opens the existing child of an occupied slot. No affordance for
+  /// now: taken slots render nothing, so this stays wired for the
+  /// shortcut's return.
   final void Function(String targetNodeId)? onOpenChild;
+
+  /// Branch slots (`A`/`B` subset) the author cut: they render a dimmed
+  /// chip instead of an add button, and take no new child until a
+  /// long-press restores them.
+  final Set<String> cutSlots;
+
+  /// Endings render no add row at all.
+  final bool isEnding;
+
+  /// Current ending-type code and badge URL, shown in the setup popup.
+  final String? endingType;
+  final String? endingBadgeUrl;
+
+  /// Fires when the author picks an ending-type code in the setup popup.
+  final ValueChanged<String>? onEndingTypeChanged;
+
+  /// Runs the badge generation from the setup popup; the dialog shows a
+  /// loader until the returned future completes.
+  final Future<void> Function()? onEndingBadgeRequested;
+
+  /// Live source for the ending-setup popup. When set, the dialog listens
+  /// to the node's badge URL and swaps the placeholder for the image as
+  /// soon as generation lands, without closing the popup.
+  final CreateBloc? bloc;
+
+  /// Long-press on a free slot cuts it; long-press on a cut slot
+  /// restores it. Null disables the gesture.
+  final void Function(String slot)? onCutToggled;
 
   /// Choice ids whose label fails the 1-24 rule while errors show: those
   /// cards draw a red border plus a ⚠ hint under the name field.
@@ -407,10 +446,7 @@ class _ZoneMarkerState extends State<ZoneMarker> {
   /// and accent match the puck badge, so the pairing stays obvious.
   Widget _choiceCards() {
     if (widget.choices.isEmpty) {
-      return const Text(
-        'Add a zone below to edit its hotspot.',
-        style: RamificaText.meta,
-      );
+      return const SizedBox.shrink();
     }
     return Column(
       crossAxisAlignment: .stretch,
@@ -844,46 +880,225 @@ class _ZoneMarkerState extends State<ZoneMarker> {
     );
   }
 
-  /// One row per branch slot: free slots show `Add Option A/B` (the
-  /// hotspot path — a tap creates the child and focuses its label),
-  /// occupied slots show `Option X ✓` opening the existing child. The
-  /// two-choice cap hides the row once both slots are taken. Without an
-  /// [onAddOption] callback the legacy target picker renders instead, so
-  /// callers that never wired the hotspot path keep working.
+  /// One styled add button per open branch slot: a tap creates the
+  /// child on that slot and focuses its label (the hotspot path), while
+  /// a long-press cuts the path. Taken slots render nothing — their
+  /// cards sit above — and cut slots render a dimmed chip (long-press
+  /// restores them), so a single open slot spans the full width with a
+  /// top margin, and the row hides once both slots are taken. Without
+  /// an [onAddOption] callback the legacy target picker renders
+  /// instead, so callers that never wired the hotspot path keep
+  /// working. Endings keep the HUD and swap the option buttons for a
+  /// styled final-scene container.
   Widget _addRow(String nodeId) {
+    if (widget.isEnding) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: _endingRow(nodeId),
+      );
+    }
     final add = widget.onAddOption;
     if (add == null) return _legacyAddRow(nodeId);
-    final open = widget.onOpenChild;
-    final taken = <String, DraftChoice>{
+    final taken = <String>{
       for (final choice in widget.choices)
-        if (choice.slot == 'A' || choice.slot == 'B') choice.slot!: choice,
+        if (choice.slot == 'A' || choice.slot == 'B') choice.slot!,
     };
-    if (taken.length >= 2) return const SizedBox.shrink();
+    final cuts = <String>{
+      for (final slot in widget.cutSlots)
+        if (slot == 'A' || slot == 'B') slot,
+    };
+    final buttons = <Widget>[];
+    for (final slot in const ['A', 'B']) {
+      if (taken.contains(slot)) continue;
+      buttons.add(
+        cuts.contains(slot)
+            ? _cutButton(nodeId, slot)
+            : _slotButton(nodeId, slot, add),
+      );
+    }
+    if (buttons.isEmpty) return const SizedBox.shrink();
+    if (buttons.length == 1) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: buttons.single,
+      );
+    }
     return Row(
       children: [
-        for (final slot in const ['A', 'B'])
+        for (var i = 0; i < buttons.length; i++)
           Expanded(
             child: Padding(
               padding: EdgeInsets.only(
-                left: slot == 'B' ? 4 : 0,
-                right: slot == 'A' ? 4 : 0,
+                left: i > 0 ? 4 : 0,
+                right: i < buttons.length - 1 ? 4 : 0,
               ),
-              child: taken.containsKey(slot)
-                  ? OutlinedButton(
-                      key: ValueKey('open-option-$nodeId-$slot'),
-                      onPressed: widget.busy || open == null
-                          ? null
-                          : () => open(taken[slot]!.targetNodeId),
-                      child: Text('Option $slot ✓'),
-                    )
-                  : OutlinedButton(
-                      key: ValueKey('add-option-$nodeId-$slot'),
-                      onPressed: widget.busy ? null : () => add(slot),
-                      child: Text('Add Option $slot'),
-                    ),
+              child: buttons[i],
             ),
           ),
       ],
+    );
+  }
+
+  /// Styled add button for one free [slot]: a 48px filled suite button
+  /// with the hotspot add glyph, matching the former standalone action.
+  /// A tap adds the child; a long-press cuts the path instead.
+  Widget _slotButton(String nodeId, String slot, void Function(String) add) {
+    final cut = widget.onCutToggled;
+    return GestureDetector(
+      onLongPress: widget.busy || cut == null ? null : () => cut(slot),
+      child: SizedBox(
+        height: 48,
+        child: FilledButton(
+        key: ValueKey('add-option-$nodeId-$slot'),
+        onPressed: widget.busy ? null : () => add(slot),
+        style: FilledButton.styleFrom(
+          backgroundColor: RamificaColors.containerBase,
+          foregroundColor: RamificaColors.textPrimary,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        // Half-width slots are tight for glyph + label: the box shrinks
+        // both together instead of clipping, and stays full size with
+        // room to spare.
+        child: FittedBox(
+          fit: .scaleDown,
+          child: Row(
+            mainAxisAlignment: .center,
+            mainAxisSize: .min,
+            children: [
+              const Icon(
+                Icons.add_circle,
+                size: 20,
+                color: RamificaColors.hotspot,
+              ),
+              const SizedBox(width: 8),
+              Text('Option $slot', style: RamificaText.label),
+            ],
+          ),
+        ),
+        ),
+      ),
+    );
+  }
+
+  /// Final-scene container: same 48px height, [containerBase] fill and
+  /// 12px radius as the Add Option buttons, so the HUD keeps its shape
+  /// when the option buttons go away. Tapping it opens the ending setup
+  /// popup (type picker + badge generation).
+  Widget _endingRow(String nodeId) {
+    return SizedBox(
+      height: 48,
+      child: GestureDetector(
+        onTap: widget.busy ? null : () => _openEndingSetup(nodeId),
+        child: DecoratedBox(
+          key: ValueKey('final-scene-$nodeId'),
+          decoration: BoxDecoration(
+            color: RamificaColors.containerBase,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Center(
+            child: Row(
+              mainAxisSize: .min,
+              children: [
+                _endingBadgeThumb(),
+                const SizedBox(width: 8),
+                const Text('Final scene', style: RamificaText.label),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Leading mark for the final-scene button: the generated badge
+  /// image when one exists, otherwise the trophy glyph.
+  Widget _endingBadgeThumb() {
+    final url = widget.endingBadgeUrl;
+    if (url == null || url.isEmpty) {
+      return const Icon(
+        Icons.emoji_events,
+        size: 20,
+        color: RamificaColors.rewardGold,
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 28,
+        height: 28,
+        color: RamificaColors.inputFill,
+        child: Image.network(
+          url,
+          fit: .contain,
+          errorBuilder: (_, _, _) => const Icon(
+            Icons.emoji_events,
+            size: 20,
+            color: RamificaColors.rewardGold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the ending setup popup for [nodeId], carrying the current
+  /// type and badge plus the caller's callbacks.
+  Future<void> _openEndingSetup(String nodeId) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => EndingSetupDialog(
+        nodeId: nodeId,
+        endingType: widget.endingType,
+        endingBadgeUrl: widget.endingBadgeUrl,
+        onEndingTypeChanged: widget.onEndingTypeChanged,
+        onBadgeRequested: widget.onEndingBadgeRequested,
+        bloc: widget.bloc,
+      ),
+    );
+  }
+
+  /// Dimmed chip for a cut [slot]: the path takes no child until a
+  /// long-press restores it.
+  Widget _cutButton(String nodeId, String slot) {
+    final restore = widget.onCutToggled;
+    return GestureDetector(
+      key: ValueKey('cut-option-$nodeId-$slot'),
+      onLongPress: widget.busy || restore == null ? null : () => restore(slot),
+      child: SizedBox(
+        height: 48,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: RamificaColors.containerBase.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: RamificaColors.glassBorder),
+          ),
+          child: Center(
+            child: FittedBox(
+              fit: .scaleDown,
+              child: Row(
+                mainAxisAlignment: .center,
+                mainAxisSize: .min,
+                children: [
+                  const Icon(
+                    Icons.block,
+                    size: 20,
+                    color: RamificaColors.error,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Path $slot cut',
+                    style: RamificaText.label.copyWith(
+                      color: RamificaColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 

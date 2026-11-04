@@ -45,7 +45,7 @@
       "visibility": "visible",
       "isEnding": true,
       "endingName": "Guardian",
-      "endingType": "abierto",
+      "endingType": "open",
       "ttsText": "Jeff crosses the gate. The temple was waiting for him.",
       "voiceId": "Kore",
       "endImagePrompt": "Vertical cinematic still, giant stone guardian statue inside a dark temple, single torch, no text, no people.",
@@ -77,7 +77,7 @@
       "visibility": "visible",
       "isEnding": true,
       "endingName": "The Fall",
-      "endingType": "tragico",
+      "endingType": "tragic",
       "ttsText": "",
       "endImagePrompt": "Vertical cinematic still, broken rope bridge over a jungle abyss at night, no text, no people.",
       "choices": []

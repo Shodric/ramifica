@@ -40,7 +40,7 @@ export const projectNode = (
     ...Object.fromEntries(["title", "videoUrl", "durationSeconds",
       "videoWidth", "videoHeight",
       "ttsText", "ttsAudioUrl", "ttsDurationSeconds", "endingName",
-      "endingType", "thumbnailUrl"]
+      "endingType", "endingBadgeUrl", "thumbnailUrl"]
       .map((key) => [key, node[key] ?? null])),
     isEnding: node.isEnding === true, visibility: node.visibility ?? "visible",
     videoFrameLastBlurData: node.videoFrameLastBlurData ??

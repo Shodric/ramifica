@@ -256,6 +256,53 @@ final class ChoiceRemoved extends CreateEvent {
   final String choiceId;
 }
 
+/// Toggles the cut mark on branch [slot] (`A` or `B`) — the long-press
+/// on an empty Option button. A cut slot grows no child and shows no
+/// add-mini on the canvas, so one cut leaves a single-child node. Only
+/// a free slot can be cut, and the last open slot stays open; occupied
+/// and last-open attempts land as [CreateState.failure]. Unknown nodes,
+/// endings, and invalid slots are ignored. Nothing is sent until
+/// [NodeSaved].
+final class ChoiceCutToggled extends CreateEvent {
+  const ChoiceCutToggled({required this.nodeId, required this.slot});
+
+  final String nodeId;
+  final String slot;
+}
+
+/// Flips the final-node switch at the bottom of Options. Turning final
+/// on drops every Option (the UI confirms first when Options exist) and
+/// clears cut marks, since a final scene has no branches; turning it
+/// off reopens both slots. Unknown nodes are ignored. Nothing is sent
+/// until [NodeSaved].
+final class NodeEndingToggled extends CreateEvent {
+  const NodeEndingToggled({required this.nodeId, required this.isEnding});
+
+  final String nodeId;
+  final bool isEnding;
+}
+
+/// Sets the ending type of [nodeId] to one of [kEndingTypeCodes] and
+/// persists it through the node save path. Unknown nodes and codes
+/// outside the list are ignored.
+final class NodeEndingTypeChanged extends CreateEvent {
+  const NodeEndingTypeChanged({required this.nodeId, required this.endingType});
+
+  final String nodeId;
+  final String endingType;
+}
+
+/// Asks for the ending badge via `generateEndingBadge` and stores the
+/// returned URL on [nodeId] through the node save path. Failures land
+/// as [CreateState.failure] (the shared snack), never inline. Unknown
+/// nodes and missing drafts are ignored. `droppable`: a second tap
+/// while one generation is in flight is dropped.
+final class NodeEndingBadgeRequested extends CreateEvent {
+  const NodeEndingBadgeRequested(this.nodeId);
+
+  final String nodeId;
+}
+
 /// Asks for the node voice via `generateNodeVoice`. GATED server-side on
 /// the non-blank narrator line; the call re-renders the take. The bloc
 /// reloads the nodes after so the take status shows up. `restartable`:

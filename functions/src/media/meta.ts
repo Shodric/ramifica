@@ -217,6 +217,93 @@ export const generateImageMeta = async (args: {
 };
 
 /**
+ * Responses `image_generation_call` result, or null when the output
+ * carries no image. Accepts a bare base64 string or an object holding
+ * it under `b64_json`, `base64`, or `data`.
+ * @param {unknown} payload Decoded provider JSON.
+ * @return {Buffer | null} The PNG bytes, or null.
+ */
+const firstResponsesImageBytes = (payload: unknown): Buffer | null => {
+  const record = asRecord(payload);
+  const output = record === null ? undefined : record.output;
+  if (!Array.isArray(output)) return null;
+  for (const item of output) {
+    const call = asRecord(item);
+    if (call === null || call.type !== "image_generation_call") continue;
+    const result = call.result;
+    if (typeof result === "string" && result !== "") {
+      return Buffer.from(result, "base64");
+    }
+    const holder = asRecord(result);
+    const b64 = holder?.b64_json ?? holder?.base64 ?? holder?.data;
+    if (typeof b64 === "string" && b64 !== "") {
+      return Buffer.from(b64, "base64");
+    }
+  }
+  return null;
+};
+
+/**
+ * Asks Meta `/v1/responses` for one still guided by a reference image:
+ * the frame travels as an `input_image` data URL, the behaviour as
+ * `input_text`, and the returned PNG comes from the
+ * `image_generation_call` output. Reasoning stays low for speed.
+ * @param {Object} args Key, model, frame, instructions, and seams.
+ * @return {Promise<Buffer>} The PNG bytes.
+ */
+export const generateImageWithReferenceMeta = async (args: {
+  apiKey: string;
+  model: string;
+  frameBase64: string;
+  frameMimeType: string;
+  instructions: string;
+  fetchFn?: MetaFetch;
+}): Promise<Buffer> => {
+  const payload = await metaPostJson(metaConfig().responsesUrl, {
+    apiKey: args.apiKey,
+    fetchFn: args.fetchFn,
+    body: {
+      model: args.model,
+      store: false,
+      stream: false,
+      max_output_tokens: 2048,
+      temperature: 0.6,
+      top_p: 0.9,
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_image",
+              image_url:
+                `data:${args.frameMimeType};base64,${args.frameBase64}`,
+            },
+            {type: "input_text", text: args.instructions},
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "image_generation",
+          size: "1024x1024",
+          output_format: "png",
+          reasoning_strength: "low",
+          enable_web_search: false,
+          enable_image_search: false,
+          enable_shell: false,
+        },
+      ],
+    },
+  });
+  const bytes = firstResponsesImageBytes(payload);
+  if (bytes === null) {
+    throw new Error("Image generation returned nothing usable.");
+  }
+  return bytes;
+};
+
+/**
  * Transcribed text from a decoded ASR payload, or blank when the shape
  * carries none. Reads `transcript`, falling back to `text` for drift.
  * @param {unknown} payload Decoded provider JSON.

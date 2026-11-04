@@ -150,7 +150,11 @@ Future<Map<String, dynamic>> _execute(
   bool voice = true,
 }) async {
   if (name == 'startRun') {
-    return {'runId': 'run_1', 'storyId': 'story_temple', 'status': 'active'};
+    return {
+      'runId': 'run_1',
+      'storyId': 'story_temple',
+      'status': 'active',
+    };
   }
   return _playback(secretRidge: secretRidge, voice: voice);
 }

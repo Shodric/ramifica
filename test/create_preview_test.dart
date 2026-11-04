@@ -245,8 +245,8 @@ void main() {
     expect(zone.icon, 'door');
     expect(zone.iconColor, 'amber');
     expect(zone.radius, 0.12);
-    // Tappable: a preview tap jumps to the target scene when its video is
-    // finished, instead of starting a hold like the player feed does.
+    // Tappable: pressing a hotspot starts a hold like the player feed;
+    // only a full hold navigates to the finished target scene.
     expect(zone.enabled, isTrue);
     expect(zone.compact, isTrue);
     expect(zone.video.screen, const Size(390, 844));
@@ -269,10 +269,12 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(find.byType(ChoiceZone), findsOneWidget);
+    // A hold starts like in the feed, so opening another story mid-hold
+    // is ignored just the same.
     preview.add(const HoldStarted('door'));
     preview.add(const StoryOpened(storyId: 'other'));
     await tester.pump();
-    expect(preview.state.phase, FeedPhase.window);
+    expect(preview.state.phase, FeedPhase.holding);
 
     await tester.tap(find.byKey(const ValueKey('close-preview')));
     await tester.pumpAndSettle();
@@ -306,7 +308,7 @@ void main() {
     await tester.pump();
     final card = tester.widget<EndingCard>(find.byType(EndingCard));
     expect(card.name, 'A new dawn');
-    expect(card.type, 'abierto');
+    expect(card.type, 'open');
     expect(find.byType(ChoiceZone), findsNothing);
 
     await tester.binding.handlePopRoute();
@@ -758,7 +760,7 @@ Future<CreateBloc> _openEditor(
           'title': 'The gate',
           'isEnding': ending,
           'endingName': ending ? 'A new dawn' : null,
-          'endingType': ending ? 'abierto' : null,
+          'endingType': ending ? 'open' : null,
           'videoUrl': 'https://example.com/scene.mp4',
           'videoStatus': 'ready',
           'videoWidth': 480,
