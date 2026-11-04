@@ -241,24 +241,22 @@ service cloud.firestore {
           && request.resource.data.get('endings', []) is list
           && request.resource.data.get('sagaUnlocked', false) is bool;
       }
-    match /rewards/{rewardId} {
-      function backfillValid() {
-        let changed = request.resource.data.diff(resource.data).affectedKeys();
-        let codeOk = !changed.hasAny(['code'])
-          || (resource.data.get('code', null) == null
-            && request.resource.data.code is string);
-        let badgeOk = !changed.hasAny(['badgeUrl'])
-          || (resource.data.get('badgeUrl', null) == null
-            && request.resource.data.badgeUrl is string);
-        return changed.hasOnly(['code', 'badgeUrl']) && codeOk && badgeOk;
-      }
-      allow read: if ownProgress(uid);
-      allow create: if ownProgress(uid) && request.resource.data.keys().hasOnly([
-        'storyId', 'endingNodeId', 'sagaId', 'code', 'badgeUrl', 'grantedAt', 'requestId'])
-        && request.resource.data.storyId is string
-        && request.resource.data.endingNodeId is string && request.resource.data.code is string
-        && optionalText(request.resource.data, 'badgeUrl', 2000);
-      allow update: if ownProgress(uid) && backfillValid();
+      match /rewards/{rewardId} {
+        allow read: if ownProgress(uid);
+        allow create: if ownProgress(uid) && request.resource.data.keys().hasOnly([
+          'storyId', 'endingNodeId', 'sagaId', 'code', 'badgeUrl', 'grantedAt', 'requestId'])
+          && request.resource.data.storyId is string
+          && request.resource.data.endingNodeId is string && request.resource.data.code is string
+          && optionalText(request.resource.data, 'badgeUrl', 2000);
+        // Backfill only: a field can be written once, while it is missing.
+        allow update: if ownProgress(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['code', 'badgeUrl'])
+          && (request.resource.data.diff(resource.data).affectedKeys().hasAny(['code']) == false
+            || (resource.data.get('code', null) == null
+              && request.resource.data.code is string))
+          && (request.resource.data.diff(resource.data).affectedKeys().hasAny(['badgeUrl']) == false
+            || (resource.data.get('badgeUrl', null) == null
+              && optionalText(request.resource.data, 'badgeUrl', 2000)));
       }
       match /{document=**} {
         allow read: if ownProgress(uid);

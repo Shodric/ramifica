@@ -3,6 +3,7 @@ import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:ramifica/data/models/app_failure.dart';
 import 'package:ramifica/data/models/auth_exception.dart';
 import 'package:ramifica/data/models/draft_story.dart';
+import 'package:ramifica/data/models/unlocked_ending.dart';
 import 'package:ramifica/data/models/user.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
@@ -21,9 +22,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     required this.users,
     required this.follows,
     this.fetchAuthorStories,
+    this.fetchUnlockedEndings,
   }) : super(const ProfileState()) {
     on<ProfileRequested>(_onRequested, transformer: restartable());
     on<ProfileDraftsRequested>(_onDrafts, transformer: restartable());
+    on<ProfileEndingsRequested>(_onEndings, transformer: restartable());
     on<FollowToggled>(_onToggled);
     on<ProfileSaved>(_onSaved);
     on<SignOutRequested>(_onSignOut);
@@ -38,6 +41,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final Future<List<DraftStory>> Function({required String authorId})?
   fetchAuthorStories;
 
+  /// Lists the signed-in user's unlocked endings, newest first. Null in
+  /// tests or contexts without a story-state source: endings stay empty.
+  /// No author id: the source resolves the viewer's own rows.
+  final Future<List<UnlockedEnding>> Function()? fetchUnlockedEndings;
+
   Future<void> _onDrafts(
     ProfileDraftsRequested event,
     Emitter<ProfileState> emit,
@@ -49,6 +57,23 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       final drafts = await read(authorId: uid);
       if (emit.isDone) return;
       emit(state.copy(drafts: drafts, failure: () => null));
+    } on AppFailure catch (error) {
+      if (emit.isDone) return;
+      emit(state.copy(failure: () => error.hint));
+    }
+  }
+
+  Future<void> _onEndings(
+    ProfileEndingsRequested event,
+    Emitter<ProfileState> emit,
+  ) async {
+    final read = fetchUnlockedEndings;
+    final uid = auth.auth.currentIdentity?.uid.trim() ?? '';
+    if (read == null || uid.isEmpty) return;
+    try {
+      final endings = await read();
+      if (emit.isDone) return;
+      emit(state.copy(endings: endings, failure: () => null));
     } on AppFailure catch (error) {
       if (emit.isDone) return;
       emit(state.copy(failure: () => error.hint));

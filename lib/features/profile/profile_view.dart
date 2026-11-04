@@ -11,6 +11,7 @@ import 'package:ramifica/data/models/draft_story.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
 import 'package:ramifica/data/repositories/follow_repository.dart';
+import 'package:ramifica/data/repositories/run_repository.dart';
 import 'package:ramifica/features/profile/ending_list.dart';
 import 'package:ramifica/features/profile/install_guide.dart';
 import 'package:ramifica/features/profile/install_guide_banner.dart';
@@ -39,6 +40,7 @@ class ProfileView extends StatefulWidget {
     this.sagaStories = const [],
     this.onSagaOpen,
     this.fetchAuthorStories,
+    this.fetchUnlockedEndings,
     this.onDraftOpen,
     this.initialTab = 0,
   });
@@ -51,9 +53,9 @@ class ProfileView extends StatefulWidget {
   /// Test seam for the install banner. Production uses the platform check.
   final bool Function()? showInstallGuide;
 
-  /// Unlocked endings to list. Profile state carries no endings today, so
-  /// the owner passes them in until a readable source exists (see
-  /// [UnlockedEnding]; wiring gap noted for the reviewer).
+  /// Unlocked endings to list before the bloc's own fetch lands.
+  /// Bloc state wins once loaded; this prop stays as the test seam and
+  /// the empty-state fallback.
   final List<UnlockedEnding> unlockedEndings;
 
   /// Test seam for ending taps. Null navigates to the graph route.
@@ -74,6 +76,12 @@ class ProfileView extends StatefulWidget {
   /// Production wires `CreateRepository.fetchAuthorStories`.
   final Future<List<DraftStory>> Function({required String authorId})?
   fetchAuthorStories;
+
+  /// Lists the signed-in user's own unlocked endings for the Endings tab.
+  /// Null in tests without a story-state source: the tab keeps the
+  /// [unlockedEndings] prop. Production wires
+  /// `RunRepository.fetchUnlockedEndingRows` mapped to [UnlockedEnding]s.
+  final Future<List<UnlockedEnding>> Function()? fetchUnlockedEndings;
 
   /// Test seam for creation taps. Null navigates to the canvas editor
   /// through the `/create/:id` deep link.
@@ -150,10 +158,14 @@ class _ProfileViewState extends State<ProfileView> {
         fetchAuthorStories:
             widget.fetchAuthorStories ??
             createFirebaseCreateRepository().fetchAuthorStories,
+        fetchUnlockedEndings:
+            widget.fetchUnlockedEndings ?? _fetchUnlockedEndings,
       )..add(ProfileRequested(authorId: widget.authorId));
-      // Own profile only: foreign viewers never see these drafts.
+      // Own profile only: foreign viewers never see these drafts nor
+      // these endings.
       if (widget.authorId == null) {
         _bloc!.add(const ProfileDraftsRequested());
+        _bloc!.add(const ProfileEndingsRequested());
       }
     } catch (_) {
       _bloc = null;
@@ -254,6 +266,11 @@ class _ProfileViewState extends State<ProfileView> {
     final editing = _editing && state.isOwn;
     final sagas = widget.sagaStories;
     final featured = _firstUnlocked(sagas);
+    // Bloc state wins once the own-profile fetch lands; before that (or
+    // in tests with an injected bloc) the owner's prop shows instead.
+    final endings = state.endings.isEmpty
+        ? widget.unlockedEndings
+        : state.endings;
     return Column(
       crossAxisAlignment: .stretch,
       mainAxisSize: .min,
@@ -323,7 +340,7 @@ class _ProfileViewState extends State<ProfileView> {
         const SizedBox(height: 16),
         _MetricsRow(
           sagas: sagas.length,
-          endings: widget.unlockedEndings.length,
+          endings: endings.length,
           following: state.followingCount,
         ),
         const SizedBox(height: 16),
@@ -349,7 +366,7 @@ class _ProfileViewState extends State<ProfileView> {
         ],
         if (_tab == 1)
           EndingList(
-            endings: widget.unlockedEndings,
+            endings: endings,
             onOpen: (storyId) => _openEnding(context, storyId),
           ),
         if (_tab == 2)
@@ -416,6 +433,14 @@ class _ProfileViewState extends State<ProfileView> {
     context.read<ProfileBloc>().add(
       ProfileRequested(authorId: widget.authorId),
     );
+  }
+
+  /// Production endings source: the viewer's unlocked rows mapped to
+  /// display models, skipping the unreadable ones.
+  static Future<List<UnlockedEnding>> _fetchUnlockedEndings() async {
+    final rows = await createFirebaseRunRepository()
+        .fetchUnlockedEndingRows();
+    return UnlockedEnding.listFromRows(rows);
   }
 
   void _save(
