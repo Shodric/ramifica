@@ -20,6 +20,7 @@ class FeedState {
     this.playback,
     this.sagaUnlocked,
     this.failure,
+    this.missing = false,
     this.muted = true,
     this.autoMuted = true,
     this.holdChoiceId,
@@ -50,6 +51,10 @@ class FeedState {
   final SagaUnlocked? sagaUnlocked;
 
   final String? failure;
+
+  /// The requested story cannot be opened. The view shows the 404
+  /// instead of retrying the same id.
+  final bool missing;
 
   /// Clip and narrator. Starts muted so the browser can autoplay.
   final bool muted;
@@ -115,6 +120,7 @@ class FeedState {
     int? previewNoticeSerial,
     String? previewNoticeTarget,
     bool clearPreviewNoticeTarget = false,
+    bool? missing,
   }) {
     return FeedState(
       phase: phase ?? this.phase,
@@ -124,6 +130,7 @@ class FeedState {
       nextPlayback: nextPlayback == null ? this.nextPlayback : nextPlayback(),
       sagaUnlocked: sagaUnlocked ?? this.sagaUnlocked,
       failure: failure,
+      missing: missing ?? this.missing,
       muted: muted ?? this.muted,
       autoMuted: autoMuted ?? this.autoMuted,
       holdChoiceId: clearHold ? null : holdChoiceId ?? this.holdChoiceId,
@@ -151,6 +158,7 @@ class FeedState {
         other.nextPlayback == nextPlayback &&
         other.sagaUnlocked == sagaUnlocked &&
         other.failure == failure &&
+        other.missing == missing &&
         other.muted == muted &&
         other.autoMuted == autoMuted &&
         other.holdChoiceId == holdChoiceId &&
@@ -174,6 +182,7 @@ class FeedState {
     nextPlayback,
     sagaUnlocked,
     failure,
+    missing,
     muted,
     autoMuted,
     holdChoiceId,

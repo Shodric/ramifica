@@ -57,7 +57,14 @@ void main() {
       'https://meta-ramifica.firebaseapp.com',
       'http://localhost:5000',
     ]);
-    expect(entry['method'], ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS']);
+    expect(entry['method'], [
+      'GET',
+      'HEAD',
+      'POST',
+      'PUT',
+      'DELETE',
+      'OPTIONS',
+    ]);
     expect(entry['responseHeader'], [
       'Content-Type',
       'Content-Length',
@@ -99,6 +106,9 @@ void main() {
     expect(firestore, contains('authorOwnsDraft(storyId)'));
     expect(firestore, contains('allow write: if false'));
     expect(firestore, contains('authorId == request.auth.uid'));
+    expect(firestore, contains('function creator()'));
+    expect(firestore, contains("'__CREATOR_EMAIL__'"));
+    expect(firestore, contains('email_verified == true'));
 
     final storage = File('storage.rules').readAsStringSync();
     expect(storage, contains('match /stories/{storyId}/{allPaths=**}'));

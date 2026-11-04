@@ -411,11 +411,14 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
         job: CreateJob.loading,
         jobNodeId: () => null,
         failure: () => null,
+        missing: false,
       ),
     );
     try {
       final story = await repository.fetchDraft(storyId);
-      if (story == null) throw const AppFailure(.invalid);
+      if (story == null) {
+        throw const AppFailure(.invalid, detail: 'Story not found.');
+      }
       final nodes = await repository.fetchNodes(storyId);
       final root = story.rootNodeId;
       final open = nodes.any((node) => node.nodeId == root)
@@ -440,6 +443,7 @@ class CreateBloc extends Bloc<CreateEvent, CreateState> {
           job: CreateJob.none,
           jobNodeId: () => null,
           failure: () => error.hint,
+          missing: error.unavailable,
         ),
       );
     }

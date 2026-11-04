@@ -63,12 +63,16 @@ void main() {
     expect(find.text('Explore'), findsNWidgets(2));
   });
 
-  testWidgets('opens Create at /create', (tester) async {
+  testWidgets('opens Explore at /create when there is no session', (
+    tester,
+  ) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/create'));
+    await tester.pump();
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.byType(CreateView), findsOneWidget);
-    expect(find.text('Create'), findsOneWidget);
+    expect(find.byType(ExploreView), findsOneWidget);
+    expect(find.byType(CreateView), findsNothing);
+    expect(find.text('Create'), findsNothing);
   });
 
   testWidgets('opens Profile at /profile', (tester) async {
@@ -82,6 +86,14 @@ void main() {
   testWidgets('unknown path says the page does not exist', (tester) async {
     await tester.pumpWidget(const RamificaApp(initialRoute: '/nope'));
 
+    expect(find.text('404'), findsOneWidget);
     expect(find.text('This page does not exist.'), findsOneWidget);
+    expect(find.text('Go to the feed'), findsOneWidget);
+
+    await tester.tap(find.text('Go to the feed'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('This page does not exist.'), findsNothing);
+    expect(find.text('Continue with Google'), findsOneWidget);
   });
 }

@@ -12,7 +12,7 @@ import {
   docData,
   isEmulator,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {ComfyClient} from "../media/comfy";
@@ -176,7 +176,7 @@ export const generateNodeImage = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateNodeImageWith(
       admin.firestore() as unknown as Db,
       uid,
@@ -199,7 +199,7 @@ export const generateNodeVideo = onCallSafe(
     secrets: [openRouterApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateNodeVideoWith(
       admin.firestore() as unknown as Db,
       uid,

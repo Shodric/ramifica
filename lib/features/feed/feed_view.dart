@@ -10,6 +10,7 @@ import 'package:ramifica/core/browser_gesture.dart';
 import 'package:ramifica/data/models/playback.dart';
 import 'package:ramifica/core/widgets/choice_icon.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
+import 'package:ramifica/core/widgets/not_found_view.dart';
 import 'package:ramifica/features/feed/choice_zone.dart';
 import 'package:ramifica/features/feed/ending_card.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
@@ -431,7 +432,11 @@ class _FeedViewState extends State<FeedView> with WidgetsBindingObserver {
                                     const ColoredBox(
                                       color: RamificaColors.surface,
                                     ),
-                                    if (state.phase == .failed &&
+                                    if (state.missing)
+                                      const Positioned.fill(
+                                        child: NotFoundView(),
+                                      )
+                                    else if (state.phase == .failed &&
                                         state.failure != null)
                                       Center(
                                         child: FailureText(

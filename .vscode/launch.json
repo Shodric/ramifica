@@ -7,6 +7,9 @@
       "type": "dart",
       "program": "lib/main.dart",
       "deviceId": "chrome",
+      "args": [
+        "--dart-define-from-file=dart_defines.json"
+      ],
       "toolArgs": [
         "--web-hostname=localhost",
         "--web-port=5000"
@@ -24,7 +27,8 @@
       "deviceId": "chrome",
       "args": [
         "--dart-define=EMULATOR=true",
-        "--dart-define=ASR_RELAY_URL=ws://localhost:8081"
+        "--dart-define=ASR_RELAY_URL=ws://localhost:8081",
+        "--dart-define-from-file=dart_defines.json"
       ],
       "toolArgs": [
         "--web-hostname=localhost",

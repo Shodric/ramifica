@@ -9,7 +9,7 @@ import {
   docData,
   isEmulator,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {completeChatMeta, MetaFetch, MetaHttpError} from "../media/meta";
@@ -103,7 +103,7 @@ export const proposeStoryOutline = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return proposeStoryOutlineWith(
       admin.firestore() as unknown as Db,
       uid,

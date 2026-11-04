@@ -16,6 +16,7 @@ class GraphState {
     this.currentNodeId,
     this.selectedId,
     this.failure,
+    this.missing = false,
     this.acting = false,
   });
 
@@ -31,6 +32,10 @@ class GraphState {
   final String? currentNodeId;
   final String? selectedId;
   final String? failure;
+
+  /// The requested story cannot be opened. The view shows the 404
+  /// instead of retrying the same id.
+  final bool missing;
 
   /// A rewind or approach is in flight. Stubs stay on screen meanwhile.
   final bool acting;
@@ -69,6 +74,7 @@ class GraphState {
     String? Function()? currentNodeId,
     String? Function()? selectedId,
     String? Function()? failure,
+    bool? missing,
     bool? acting,
   }) {
     return GraphState(
@@ -94,6 +100,7 @@ class GraphState {
           : currentNodeId(),
       selectedId: selectedId == null ? this.selectedId : selectedId(),
       failure: failure == null ? this.failure : failure(),
+      missing: missing ?? this.missing,
       acting: acting ?? this.acting,
     );
   }
@@ -113,6 +120,7 @@ class GraphState {
         other.currentNodeId == currentNodeId &&
         other.selectedId == selectedId &&
         other.failure == failure &&
+        other.missing == missing &&
         other.acting == acting;
   }
 
@@ -130,6 +138,7 @@ class GraphState {
     currentNodeId,
     selectedId,
     failure,
+    missing,
     acting,
   );
 }

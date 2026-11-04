@@ -9,7 +9,7 @@ import {
   isEmulator,
   optionalId,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {
@@ -258,7 +258,7 @@ export const generateNodeText = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateNodeTextWith(
       admin.firestore() as unknown as Db,
       uid,

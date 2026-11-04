@@ -20,6 +20,7 @@ hosting/.cache
 **/*app-check-debug-token*
 
 # Environment files (local configs)
+dart_defines.json
 .env
 .env.*
 **/.env

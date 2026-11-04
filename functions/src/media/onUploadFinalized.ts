@@ -6,6 +6,7 @@ import {tmpdir} from "os";
 import {join} from "path";
 import {promisify} from "util";
 import {onObjectFinalized} from "firebase-functions/v2/storage";
+import {ensureAdmin} from "../callable";
 import {draftTransaction, writeMedia} from "./draftWrites";
 import {Db, docData} from "../feed/shared";
 import {ffmpegBin} from "./bin";
@@ -95,9 +96,7 @@ export const onUploadFinalized = onObjectFinalized(
     concurrency: 2,
   },
   async (event) => {
-    if (admin.apps.length === 0) {
-      admin.initializeApp();
-    }
+    ensureAdmin();
     const data = event.data;
     await finalizeUploadWith(admin.firestore() as unknown as Db, {
       name: data.name ?? null,

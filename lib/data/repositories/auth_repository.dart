@@ -7,12 +7,16 @@ class AuthIdentity {
     this.displayName,
     this.photoUrl,
     this.providers = const [],
+    this.email,
+    this.emailVerified = false,
   });
 
   final String uid;
   final String? displayName;
   final String? photoUrl;
   final List<String> providers;
+  final String? email;
+  final bool emailVerified;
 }
 
 abstract class AuthGateway {

@@ -193,6 +193,24 @@ void main() {
       expect(bloc.state.failure, 'That action is not valid');
     });
 
+    test('DraftOpened on a missing story is a 404', () async {
+      final bloc = CreateBloc(
+        repository: testCreateRepository(
+          createDraftDoc: ({required authorId, required title}) async => 'x',
+          fetchStoryDoc: (_) async => null,
+          fetchNodeDocs: (_) async => const [],
+          callFunction: (_, _) async => <String, dynamic>{},
+        ),
+      );
+      addTearDown(bloc.close);
+
+      bloc.add(const DraftOpened('missing_story'));
+      await bloc.stream.firstWhere((state) => state.missing);
+
+      expect(bloc.state.hasDraft, isFalse);
+      expect(bloc.state.failure, 'Story not found.');
+    });
+
     test('DraftOpened loads the story and opens the root', () async {
       final bloc = CreateBloc(repository: _repo(null));
       addTearDown(bloc.close);

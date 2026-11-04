@@ -7,7 +7,7 @@ import {
   docData,
   isEmulator,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 
@@ -42,7 +42,7 @@ const uploadContentTypes = ["video/mp4", "video/quicktime"];
 export const createVideoUploadUrl = onCallSafe(
   {enforceAppCheck: !isEmulator(), maxInstances: 10},
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return createVideoUploadUrlWith(
       admin.firestore() as unknown as Db,
       uid,

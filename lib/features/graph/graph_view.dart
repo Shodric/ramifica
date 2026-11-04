@@ -7,6 +7,7 @@ import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/app/theme.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
+import 'package:ramifica/core/widgets/not_found_view.dart';
 import 'package:ramifica/data/repositories/graph_repository.dart';
 import 'package:ramifica/features/create/draft_canvas.dart';
 import 'package:ramifica/features/feed/feed_bloc.dart';
@@ -144,6 +145,7 @@ class _GraphViewState extends State<GraphView> {
       return const Center(child: CircularProgressIndicator());
     }
     if (state.phase == .failed) {
+      if (state.missing) return const NotFoundView();
       return Center(
         child: FailureText(
           message: state.failure ?? 'Something failed',

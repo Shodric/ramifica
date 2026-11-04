@@ -11,7 +11,7 @@ import {
   docData,
   isEmulator,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {beginMedia, writeMedia} from "./draftWrites";
@@ -65,7 +65,7 @@ export const generateNodeVoice = onCallSafe(
     secrets: [openRouterApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateNodeVoiceWith(
       admin.firestore() as unknown as Db,
       uid,

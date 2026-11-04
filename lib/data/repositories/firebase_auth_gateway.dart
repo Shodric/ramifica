@@ -73,6 +73,8 @@ class FirebaseAuthGateway implements AuthGateway {
       uid: user.uid,
       displayName: user.displayName,
       photoUrl: user.photoURL,
+      email: user.email,
+      emailVerified: user.emailVerified,
       providers: [
         for (final info in user.providerData)
           if (info.providerId.isNotEmpty) info.providerId,

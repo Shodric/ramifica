@@ -1,7 +1,7 @@
 import {HttpsError} from "firebase-functions/v2/https";
 import {onCallSafe} from "../callable";
 import {metaApiKey, metaConfig} from "../config/ai";
-import {isEmulator, optString, requireUid, toRecord} from "../feed/shared";
+import {isEmulator, optString, requireCreator, toRecord} from "../feed/shared";
 import {
   MetaFetch,
   MetaHttpError,
@@ -36,7 +36,7 @@ export const transcribeVoice = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return transcribeVoiceWith(uid, req.data ?? {});
   }
 );

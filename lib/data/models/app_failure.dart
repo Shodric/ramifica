@@ -25,6 +25,14 @@ class AppFailure implements Exception {
     return phrase;
   }
 
+  /// Missing, or hidden by the rules. Firestore answers an absent story
+  /// with permission-denied, so a bad id looks like [AppFailureCode.denied].
+  bool get unavailable {
+    if (code == .denied) return true;
+    final text = detail?.toLowerCase() ?? '';
+    return text.contains('not found');
+  }
+
   @override
   String toString() => 'AppFailure(${code.name})';
 }

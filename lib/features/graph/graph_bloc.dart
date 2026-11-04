@@ -65,6 +65,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
           storyId: story,
           runId: run.isEmpty ? null : run,
           failure: error.hint,
+          missing: error.unavailable,
         ),
       );
     }
@@ -85,10 +86,7 @@ class GraphBloc extends Bloc<GraphEvent, GraphState> {
     emit(state.copy(selectedId: () => id, failure: () => null));
   }
 
-  Future<void> _onPlay(
-    PlayRequested event,
-    Emitter<GraphState> emit,
-  ) async {
+  Future<void> _onPlay(PlayRequested event, Emitter<GraphState> emit) async {
     if (state.phase != .loaded || state.acting) return;
     final run = state.runId;
     final story = state.storyId;

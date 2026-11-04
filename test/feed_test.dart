@@ -181,6 +181,7 @@ void main() {
     fail = true;
     bloc.add(const StoryOpened(storyId: 'story_temple'));
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
+    expect(bloc.state.missing, isFalse);
     expect(bloc.state.muted, isFalse);
 
     fail = false;
@@ -213,6 +214,41 @@ void main() {
     await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
 
     expect(bloc.state.failure, 'That action is not valid');
+    expect(bloc.state.missing, isFalse);
+  });
+
+  test('a hidden story id is a missing page', () async {
+    final bloc = FeedBloc(
+      repository: RunRepository(
+        execute: FunctionsClient(
+          call: (_, _) async => throw const AppFailure(.denied),
+        ).call,
+      ),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'missing_story'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
+
+    expect(bloc.state.missing, isTrue);
+    expect(bloc.state.failure, 'Not allowed');
+  });
+
+  test('an unknown story id is a missing page', () async {
+    final bloc = FeedBloc(
+      repository: RunRepository(
+        execute: FunctionsClient(
+          call: (_, _) async =>
+              throw const AppFailure(.invalid, detail: 'Story not found.'),
+        ).call,
+      ),
+    );
+    addTearDown(bloc.close);
+
+    bloc.add(const StoryOpened(storyId: 'missing_story'));
+    await bloc.stream.firstWhere((state) => state.phase == FeedPhase.failed);
+
+    expect(bloc.state.missing, isTrue);
   });
 
   test('an empty story id lets the server choose', () async {

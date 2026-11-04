@@ -50,16 +50,40 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     final identity = event.identity;
     if (identity == null) {
       if (state.phase == .signingIn) return;
-      emit(state.copyWith(phase: .signedOut));
+      emit(
+        state.copyWith(
+          phase: .signedOut,
+          sessionReady: true,
+          clearEmail: true,
+          emailVerified: false,
+        ),
+      );
       return;
     }
     try {
       await repository.ensureUser();
       emit(
-        state.copyWith(phase: .signedIn, clearFailure: true, clearNotice: true),
+        state.copyWith(
+          phase: .signedIn,
+          email: identity.email,
+          clearEmail: identity.email == null,
+          emailVerified: identity.emailVerified,
+          sessionReady: true,
+          clearFailure: true,
+          clearNotice: true,
+        ),
       );
     } on AuthException catch (error) {
-      emit(state.copyWith(phase: .signedIn, failure: error.phrase));
+      emit(
+        state.copyWith(
+          phase: .signedIn,
+          email: identity.email,
+          clearEmail: identity.email == null,
+          emailVerified: identity.emailVerified,
+          sessionReady: true,
+          failure: error.phrase,
+        ),
+      );
     }
   }
 
@@ -107,7 +131,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       await action();
     } on AuthException catch (error) {
-      emit(state.copyWith(phase: .signedOut, failure: error.phrase));
+      emit(
+        state.copyWith(
+          phase: .signedOut,
+          failure: error.phrase,
+          sessionReady: true,
+          clearEmail: true,
+          emailVerified: false,
+        ),
+      );
     }
   }
 

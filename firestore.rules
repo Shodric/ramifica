@@ -2,6 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    // Authoring is this verified ID-token email, never a Firestore field.
+    function creator() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == '__CREATOR_EMAIL__';
+    }
     function storyOf(id) {
       return get(/databases/$(database)/documents/stories/$(id)).data;
     }
@@ -11,12 +18,14 @@ service cloud.firestore {
     function author(id) {
       return signedIn() && storyOf(id).authorId == request.auth.uid;
     }
-    function authorOwnsDraft(id) { return author(id) && storyOf(id).status == 'draft'; }
+    function authorOwnsDraft(id) {
+      return creator() && author(id) && storyOf(id).status == 'draft';
+    }
     function revisionAdvanced(id) {
       return afterStory(id).revision == storyOf(id).get('revision', 0) + 1;
     }
     function draftWrite(id) {
-      return signedIn() && afterStory(id).authorId == request.auth.uid
+      return creator() && afterStory(id).authorId == request.auth.uid
         && afterStory(id).status == 'draft';
     }
     function ownProgress(uid) { return signedIn() && request.auth.uid == uid; }
@@ -126,7 +135,7 @@ service cloud.firestore {
     match /stories/{storyId} {
       allow read: if signedIn() && (resource.data.status == 'published'
         || resource.data.authorId == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.authorId == request.auth.uid
+      allow create: if creator() && request.resource.data.authorId == request.auth.uid
         && request.resource.data.status == 'draft' && request.resource.data.revision == 0
         && request.resource.data.keys().hasOnly(['authorId', 'title', 'synopsis',
           'status', 'rootNodeId', 'revision', 'createdAt', 'updatedAt'])
@@ -146,7 +155,7 @@ service cloud.firestore {
             && request.resource.data.activePublicationId is string
             && getAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)).data.sourceRevision == resource.data.get('revision', 0)
             && existsAfter(/databases/$(database)/documents/stories/$(storyId)/publications/$(request.resource.data.activePublicationId)/nodes/$(resource.data.rootNodeId))))
-      ) || (author(storyId)
+      ) || (creator() && author(storyId)
         && request.resource.data.authorId == resource.data.authorId
         && request.resource.data.rootNodeId == resource.data.rootNodeId
         && resource.data.status == 'published'

@@ -21,6 +21,7 @@ class CreateState {
     this.operationPhase,
     this.uploadProgress,
     this.failure,
+    this.missing = false,
     this.publishedStoryId,
     this.deletedStoryId,
     this.focusChoiceId,
@@ -64,6 +65,10 @@ class CreateState {
   /// The phrase the bloc already emitted, or null. Retry sends the same
   /// event again.
   final String? failure;
+
+  /// The routed creation cannot be opened. The canvas shows the 404
+  /// instead of the empty-drafts prompt.
+  final bool missing;
 
   /// The story id once `publishStory` succeeds, or null while a draft.
   /// The view navigates to Explore exactly once per value.
@@ -213,6 +218,7 @@ class CreateState {
     String? Function()? jobNodeId,
     double? Function()? uploadProgress,
     String? Function()? failure,
+    bool? missing,
     String? Function()? publishedStoryId,
     String? Function()? deletedStoryId,
     String? Function()? focusChoiceId,
@@ -234,6 +240,7 @@ class CreateState {
           ? this.uploadProgress
           : uploadProgress(),
       failure: failure == null ? this.failure : failure(),
+      missing: missing ?? this.missing,
       publishedStoryId: publishedStoryId == null
           ? this.publishedStoryId
           : publishedStoryId(),
@@ -259,6 +266,7 @@ class CreateState {
         other.jobNodeId == jobNodeId &&
         other.uploadProgress == uploadProgress &&
         other.failure == failure &&
+        other.missing == missing &&
         other.publishedStoryId == publishedStoryId &&
         other.deletedStoryId == deletedStoryId &&
         other.focusChoiceId == focusChoiceId;
@@ -276,6 +284,7 @@ class CreateState {
     jobNodeId,
     uploadProgress,
     failure,
+    missing,
     publishedStoryId,
     deletedStoryId,
     focusChoiceId,

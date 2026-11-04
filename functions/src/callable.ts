@@ -27,6 +27,18 @@ export const exposeCallableError = (error: unknown): HttpsError => {
 };
 
 /**
+ * The Functions SDK may already hold a named app for App Check.
+ * `firestore()` still needs the default app, so a non-empty `apps`
+ * list is not enough.
+ */
+export function ensureAdmin(): void {
+  const ready = admin.apps.some((app) => app?.name === "[DEFAULT]");
+  if (!ready) {
+    admin.initializeApp();
+  }
+}
+
+/**
  * `onCall` that logs the real failure and sends its message to the
  * client instead of a bare INTERNAL.
  * @param {CallableOptions} opts Callable options.
@@ -39,9 +51,7 @@ export const onCallSafe = (
 ) => {
   return onCall(opts, async (request) => {
     try {
-      if (admin.apps.length === 0) {
-        admin.initializeApp();
-      }
+      ensureAdmin();
       return await handler(request);
     } catch (error) {
       throw exposeCallableError(error);

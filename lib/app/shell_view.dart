@@ -9,6 +9,8 @@ import 'package:ramifica/app/shell_bloc.dart';
 import 'package:ramifica/app/shell_event.dart';
 import 'package:ramifica/app/shell_state.dart';
 import 'package:ramifica/app/theme.dart';
+import 'package:ramifica/core/creator.dart';
+import 'package:ramifica/core/widgets/not_found_view.dart';
 import 'package:ramifica/features/access/access_bloc.dart';
 import 'package:ramifica/features/access/access_event.dart';
 import 'package:ramifica/features/access/access_state.dart';
@@ -67,7 +69,12 @@ class _ShellViewState extends State<ShellView> {
       case ExploreLocation():
         shell.add(const TabSelected(.explore));
       case CreateLocation() || CreateCanvasLocation():
-        shell.add(const TabSelected(.create));
+        if (_holdsCreate()) {
+          shell.add(const TabSelected(.create));
+        } else {
+          shell.add(const TabSelected(.explore));
+          _redirect = AppRoutes.explore;
+        }
       case GraphLocation(:final storyId):
         shell.add(TabSelected(.graph, storyId: storyId));
       case ProfileLocation():
@@ -135,6 +142,26 @@ class _ShellViewState extends State<ShellView> {
     });
   }
 
+  /// Signed-out tests have no [AuthBloc] and leave at once. A real
+  /// session waits for the first auth event so a cold `/create` does
+  /// not bounce the author before the token is restored.
+  bool _holdsCreate() {
+    final auth = _authOf(context);
+    if (auth == null) return false;
+    final session = auth.state;
+    if (!session.sessionReady) return true;
+    return isStoryCreator(
+      email: session.email,
+      emailVerified: session.emailVerified,
+    );
+  }
+
+  void _leaveCreate() {
+    context.read<ShellBloc>().add(const TabSelected(.explore));
+    _redirect = AppRoutes.explore;
+    _scheduleRedirect();
+  }
+
   void _select(ShellState state, ShellTab tab) {
     context.read<ShellBloc>().add(TabSelected(tab));
     final storyId = state.storyId;
@@ -151,8 +178,10 @@ class _ShellViewState extends State<ShellView> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<ShellBloc, ShellState>(
+    final page = BlocBuilder<ShellBloc, ShellState>(
       builder: (context, state) {
+        final session = _authOf(context, listen: true)?.state;
+        final showCreate = _showCreate(session);
         return Scaffold(
           extendBody: true,
           // The feed and the tree page like cards: a leftward drag
@@ -210,20 +239,66 @@ class _ShellViewState extends State<ShellView> {
                     }),
                   ),
                   child: NavigationBar(
-                    selectedIndex: state.tab.index,
+                    selectedIndex: _selectedTab(state.tab, showCreate),
                     labelBehavior: .alwaysShow,
                     destinations: [
-                      for (final tab in ShellTab.values) _destination(tab),
+                      for (final tab in _visibleTabs(showCreate))
+                        _destination(tab),
                     ],
                     onDestinationSelected: (index) {
-                      _select(state, ShellTab.values[index]);
+                      _select(state, _visibleTabs(showCreate)[index]);
                     },
                   ),
                 ),
         );
       },
     );
+    final auth = _authOf(context);
+    if (auth == null) return page;
+    return BlocListener<AuthBloc, AuthState>(
+      bloc: auth,
+      listenWhen: (previous, next) {
+        return previous.sessionReady != next.sessionReady ||
+            previous.email != next.email ||
+            previous.emailVerified != next.emailVerified ||
+            previous.phase != next.phase;
+      },
+      listener: (context, state) {
+        final onCreate =
+            widget.location is CreateLocation ||
+            widget.location is CreateCanvasLocation;
+        if (!onCreate || !state.sessionReady) return;
+        if (isStoryCreator(
+          email: state.email,
+          emailVerified: state.emailVerified,
+        )) {
+          return;
+        }
+        _leaveCreate();
+      },
+      child: page,
+    );
   }
+}
+
+bool _showCreate(AuthState? session) {
+  if (session == null || !session.sessionReady) return false;
+  return isStoryCreator(
+    email: session.email,
+    emailVerified: session.emailVerified,
+  );
+}
+
+List<ShellTab> _visibleTabs(bool showCreate) {
+  return [
+    for (final tab in ShellTab.values)
+      if (tab != .create || showCreate) tab,
+  ];
+}
+
+int _selectedTab(ShellTab tab, bool showCreate) {
+  final index = _visibleTabs(showCreate).indexOf(tab);
+  return index < 0 ? 0 : index;
 }
 
 NavigationDestination _destination(ShellTab tab) {
@@ -341,7 +416,7 @@ class _ShellGateState extends State<ShellGate> {
     final location = widget.location;
     final Widget page;
     if (location is UnknownLocation) {
-      page = const _UnknownPage();
+      page = const Scaffold(body: NotFoundView());
     } else if (location is AccessLocation) {
       page = const AccessView();
     } else {
@@ -358,17 +433,6 @@ class _ShellGateState extends State<ShellGate> {
       },
       listener: (context, state) => _feedOf(context)?.prefetcher.clear(),
       child: page,
-    );
-  }
-}
-
-class _UnknownPage extends StatelessWidget {
-  const _UnknownPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: Text('This page does not exist.')),
     );
   }
 }

@@ -545,11 +545,20 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
           phase: .failed,
           storyId: storyId,
           failure: error.phrase,
+          missing: _missingStory(storyId, error),
           muted: state.muted,
           autoMuted: state.autoMuted,
         ),
       );
     }
+  }
+
+  /// A concrete id that cannot be opened. The home feed (no id) keeps
+  /// the failure so a real outage can still be retried.
+  bool _missingStory(String? storyId, AppFailure error) {
+    final id = storyId?.trim();
+    if (id == null || id.isEmpty) return false;
+    return error.unavailable;
   }
 
   void _onPause(PauseReached event, Emitter<FeedState> emit) {

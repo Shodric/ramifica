@@ -10,7 +10,7 @@ import {
   isEmulator,
   optionalId,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {
@@ -57,7 +57,7 @@ export const decideChoiceIcon = onCallSafe(
     secrets: [openRouterApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return decideChoiceIconWith(
       admin.firestore() as unknown as Db,
       uid,

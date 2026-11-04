@@ -13,7 +13,7 @@ import {
   isEmulator,
   isoNow,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {convertCover} from "../media/images";
@@ -71,7 +71,7 @@ export const generateStoryCover = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateStoryCoverWith(
       admin.firestore() as unknown as Db,
       uid,

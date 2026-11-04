@@ -18,6 +18,18 @@ export function requireUid(auth: unknown): string {
 }
 
 /**
+ * Verified author from CREATOR_EMAIL. Empty when the env var is unset,
+ * which denies every create callable.
+ * @param {NodeJS.ProcessEnv} env Process environment.
+ * @return {string} The trimmed, lowercased address.
+ */
+export function creatorEmail(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.CREATOR_EMAIL;
+  if (typeof raw !== "string") return "";
+  return raw.trim().toLowerCase();
+}
+
+/**
  * True inside the Functions emulator (FUNCTIONS_EMULATOR is set
  * automatically there; never true in prod). Callables skip App Check
  * enforcement locally so emulator testing works without tokens.
@@ -75,6 +87,31 @@ export const asRecord = (
   // Only the container shape is asserted; field reads stay unknown.
   return value as unknown as {[field: string]: unknown};
 };
+
+/**
+ * Authoring uid, or permission-denied. Player paths stay on
+ * {@link requireUid}; only create and voice wrappers use this.
+ * @param {unknown} auth Callable auth payload.
+ * @return {string} The uid.
+ */
+export function requireCreator(auth: unknown): string {
+  const uid = requireUid(auth);
+  const token = auth && typeof auth === "object" && "token" in auth ?
+    (auth as {token?: unknown}).token :
+    null;
+  const record = asRecord(token);
+  const raw = record?.email;
+  const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  const verified = record?.email_verified === true;
+  const expected = creatorEmail();
+  if (expected === "" || !verified || email !== expected) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only the author can create.",
+    );
+  }
+  return uid;
+}
 
 /**
  * Now as the ISO strings the run docs store.

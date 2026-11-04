@@ -21,7 +21,7 @@ class RestDocumentStore implements DocumentStore {
     String part(Object data) =>
         base64Url.encode(utf8.encode(jsonEncode(data))).replaceAll('=', '');
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    return '${part({'alg': 'none', 'typ': 'JWT'})}.${part({
+    final claims = <String, Object?>{
       'iss': 'https://securetoken.google.com/demo-ramifica-plan',
       'aud': 'demo-ramifica-plan',
       'sub': uid,
@@ -29,7 +29,26 @@ class RestDocumentStore implements DocumentStore {
       'iat': now,
       'exp': now + 3600,
       'firebase': {'sign_in_provider': 'custom', 'identities': {}},
-    })}.';
+    };
+    // The author token matches whatever creator() was stamped with.
+    if (uid == 'author') {
+      final email = _creatorEmail();
+      if (email != null) {
+        claims['email'] = email;
+        claims['email_verified'] = true;
+      }
+    }
+    return '${part({'alg': 'none', 'typ': 'JWT'})}.${part(claims)}.';
+  }
+
+  String? _creatorEmail() {
+    final rules = File('firestore.rules').readAsStringSync();
+    final match = RegExp(
+      "request\\.auth\\.token\\.email\\.lower\\(\\) == '([^']*)'",
+    ).firstMatch(rules);
+    final email = match?.group(1);
+    if (email == null || email.isEmpty) return null;
+    return email;
   }
 
   String name(String path) =>

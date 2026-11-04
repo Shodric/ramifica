@@ -14,7 +14,7 @@ import {
   docData,
   isEmulator,
   optString,
-  requireUid,
+  requireCreator,
   toRecord,
 } from "../feed/shared";
 import {ffmpegBin} from "../media/bin";
@@ -91,7 +91,7 @@ export const generateEndingBadge = onCallSafe(
     secrets: [metaApiKey],
   },
   async (req) => {
-    const uid = requireUid(req.auth);
+    const uid = requireCreator(req.auth);
     return generateEndingBadgeWith(
       admin.firestore() as unknown as Db,
       uid,

@@ -174,6 +174,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.phase == .failed);
 
       expect(bloc.state.failure, 'No connection');
+      expect(bloc.state.missing, isFalse);
     });
 
     test('a load failure preserves the specific diagnostic', () async {
@@ -188,6 +189,7 @@ void main() {
       await bloc.stream.firstWhere((state) => state.phase == .failed);
 
       expect(bloc.state.failure, 'Story not found.');
+      expect(bloc.state.missing, isTrue);
     });
 
     test('selects known nodes and ignores unknown ones', () async {
@@ -500,6 +502,25 @@ void main() {
       });
     });
 
+    testWidgets('a missing map is the 404', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GraphView(
+            storyId: 'missing',
+            repository: _graphs([], (_, _) async {
+              throw const AppFailure(.denied);
+            }),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('This page does not exist.'), findsOneWidget);
+      expect(find.text('Retry'), findsNothing);
+      expect(find.text('Not allowed'), findsNothing);
+    });
+
     testWidgets('follows the feed story and progress after mounting', (
       tester,
     ) async {
@@ -572,11 +593,11 @@ void main() {
       // asking the feed to reload or stealing the tab. Only a tapped
       // card play navigates.
       FeedState playing(String nodeId) => FeedState(
-            phase: .playing,
-            storyId: 'story_temple',
-            runId: 'run_1',
-            playback: Playback.fromJson(_playback(nodeId: nodeId)),
-          );
+        phase: .playing,
+        storyId: 'story_temple',
+        runId: 'run_1',
+        playback: Playback.fromJson(_playback(nodeId: nodeId)),
+      );
       feed.show(playing('node_001'));
       await tester.pumpAndSettle();
       feed.show(playing('node_002'));

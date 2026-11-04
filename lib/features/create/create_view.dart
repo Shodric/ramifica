@@ -7,6 +7,7 @@ import 'package:ramifica/app/navigation.dart';
 import 'package:ramifica/app/routes.dart';
 import 'package:ramifica/core/widgets/empty_state.dart';
 import 'package:ramifica/core/widgets/failure_text.dart';
+import 'package:ramifica/core/widgets/not_found_view.dart';
 import 'package:ramifica/data/repositories/auth_repository.dart';
 import 'package:ramifica/data/repositories/create_repository.dart';
 import 'package:ramifica/data/repositories/firebase_auth_gateway.dart';
@@ -177,6 +178,19 @@ class _CreateViewState extends State<CreateView> {
       center = layout.positions[story.rootNodeId];
     }
     _canvasController.value = recenterTransform(viewport, center);
+  }
+
+  /// The creation id on `/create/<id>`, or null on the list, on
+  /// `/create/new-creation`, and on bare widget mounts.
+  String? _routedStoryId(BuildContext context) {
+    context.dependOnInheritedWidgetOfExactType<AppNavigation>();
+    try {
+      final location = AppNavigation.read(context).location;
+      if (location is CreateCanvasLocation) return location.storyId;
+    } on FlutterError {
+      return null;
+    }
+    return null;
   }
 
   /// True on the fullscreen canvas route — or on bare mounts: widget tests
@@ -443,6 +457,12 @@ class _CreateViewState extends State<CreateView> {
     final canvas = _isCanvasRoute(context);
     if (!canvas) return _creations(context, state, bloc);
     if (!state.hasDraft) {
+      final routed = _routedStoryId(context);
+      final deepLink = routed != null && routed.isNotEmpty;
+      if (deepLink && state.missing) return const NotFoundView();
+      if (deepLink && state.job == CreateJob.loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
       return Padding(
         padding: const .all(16),
         child: Column(
