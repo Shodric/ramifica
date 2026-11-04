@@ -56,7 +56,8 @@ AppLocation parseLocation(String? name) {
     if (AppRoutes.profileTabs.contains(profileTab)) {
       return ProfileLocation(tab: profileTab);
     }
-    return UnknownLocation(path);
+    // Any other single segment is a creator uid: `/profile/<uid>`.
+    return ProfileLocation(authorId: profileTab);
   }
 
   return UnknownLocation(path);
@@ -78,7 +79,10 @@ String pathOf(AppLocation location) {
             ? AppRoutes.createNew
             : AppRoutes.createFor(Uri.encodeComponent(storyId)),
     AccessLocation() => AppRoutes.access,
-    ProfileLocation(:final tab) => AppRoutes.profileTab(tab),
+    ProfileLocation(:final tab, :final authorId) =>
+      authorId != null && authorId.isNotEmpty
+          ? AppRoutes.profileOf(authorId)
+          : AppRoutes.profileTab(tab),
     UnknownLocation(:final path) => path.isEmpty ? '/' : path,
   };
 }
@@ -132,6 +136,9 @@ abstract final class AppRoutes {
   static String profileTab(String? tab) =>
       tab != null && profileTabs.contains(tab) ? '$profile/$tab' : profile;
 
+  /// Public creator profile: `/profile/<uid>`.
+  static String profileOf(String uid) => '$profile/$uid';
+
   /// Deep link that opens a creation straight on the canvas editor.
   static String createFor(String storyId) => '$create/$storyId';
 }
@@ -166,11 +173,14 @@ final class GraphLocation extends AppLocation {
 }
 
 final class ProfileLocation extends AppLocation {
-  const ProfileLocation({this.tab});
+  const ProfileLocation({this.tab, this.authorId});
 
   /// Content tab to select (`sagas`, `endings`, `creations`), or null
   /// for the default tab.
   final String? tab;
+
+  /// The viewed creator uid, or null for the signed-in person.
+  final String? authorId;
 }
 
 final class UnknownLocation extends AppLocation {

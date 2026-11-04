@@ -270,6 +270,8 @@ class PlaybackStory {
     required this.storyId,
     required this.title,
     required this.authorName,
+    this.authorId,
+    this.authorPhotoUrl,
   });
 
   factory PlaybackStory.fromJson(Map<String, dynamic> json) {
@@ -277,23 +279,30 @@ class PlaybackStory {
       storyId: _requiredString(json['storyId']),
       title: _requiredString(json['title']),
       authorName: _requiredString(json['authorName']),
+      authorId: _optionalString(json['authorId']),
+      authorPhotoUrl: _optionalString(json['authorPhotoUrl']),
     );
   }
 
   final String storyId;
   final String title;
   final String authorName;
+  final String? authorId;
+  final String? authorPhotoUrl;
 
   @override
   bool operator ==(Object other) {
     return other is PlaybackStory &&
         other.storyId == storyId &&
         other.title == title &&
-        other.authorName == authorName;
+        other.authorName == authorName &&
+        other.authorId == authorId &&
+        other.authorPhotoUrl == authorPhotoUrl;
   }
 
   @override
-  int get hashCode => Object.hash(storyId, title, authorName);
+  int get hashCode =>
+      Object.hash(storyId, title, authorName, authorId, authorPhotoUrl);
 }
 
 class PlaybackNode {

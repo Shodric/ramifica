@@ -121,6 +121,9 @@ class _ShellViewState extends State<ShellView> {
     return index < 0 ? 0 : index;
   }
 
+  String? _profileAuthor(AppLocation location) =>
+      location is ProfileLocation ? location.authorId : null;
+
   void _scheduleRedirect() {
     final path = _redirect;
     _redirect = null;
@@ -165,7 +168,11 @@ class _ShellViewState extends State<ShellView> {
               FeedGraphPager(storyId: state.storyId),
               const CreateView(pickVideo: pickBrowserVideo),
               const ExploreView(),
-              ProfileView(initialTab: _profileTab(widget.location)),
+              ProfileView(
+                key: ValueKey(_profileAuthor(widget.location) ?? ''),
+                authorId: _profileAuthor(widget.location),
+                initialTab: _profileTab(widget.location),
+              ),
             ],
           ),
           // The feed is fullscreen: no navbar there, a leftward drag

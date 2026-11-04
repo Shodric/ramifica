@@ -269,6 +269,7 @@ class ClientPublisher {
         'activePublicationId': pubId,
         'authorName':
             author?['displayName'] ?? story['authorName'] ?? 'Unknown',
+        'authorPhotoUrl': author?['photoUrl'],
         'revision': revisionOf(live) + 1,
         'publishedAt': commitTime,
         'updatedAt': commitTime,

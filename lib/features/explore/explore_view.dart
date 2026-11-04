@@ -221,7 +221,7 @@ class _ExploreViewState extends State<ExploreView> {
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 16,
-              mainAxisExtent: 220,
+              mainAxisExtent: 400,
             ),
             itemCount: stories.length,
             itemBuilder: (context, index) {
